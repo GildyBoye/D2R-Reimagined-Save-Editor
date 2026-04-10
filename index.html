@@ -2289,7 +2289,8 @@ function buildRunewordTable() {
 // Find runeword name by matching socketed rune codes
 function resolveRunewordName(item) {
   if (!item.runeword || !parsedChar?.items) return null;
-  // Collect socketed children (parent=6) that follow this item in the array
+  // Collect socketed children (parent=6) that follow this item in the binary
+  // and have a higher byte offset (ensuring they belong to this item, not another)
   const myOff = item.byteOffset;
   const children = [];
   let found = false;
@@ -2297,8 +2298,8 @@ function resolveRunewordName(item) {
     if (it === item) { found = true; continue; }
     if (!found) continue;
     const p = it.parent ?? it.location ?? 0;
-    if (p === 6) children.push(it);
-    else break; // stop at next non-socketed item
+    if (p === 6 && it.byteOffset > myOff) children.push(it);
+    else if (p !== 6) break;
   }
   if (children.length === 0) return null;
   const runeCodes = children.map(c => c.typeCode || '');
@@ -3833,6 +3834,10 @@ function parseD2S(buf) {
     for (const byteOff of itemBounds) {
       if (jm2Off > 0 && byteOff >= jm2Off) break;
 
+      // Decode type code and validate — skip false positive item boundaries
+      const [typeCode] = huffDecodeType(byteOff);
+      if (!itemNameByCode[typeCode]) continue;
+
       const item = {
         byteOffset:   byteOff,
         identified:   rb(byteOff, 4,  1),
@@ -3848,7 +3853,7 @@ function parseD2S(buf) {
         y:            rb(byteOff, 46, 3),  // row
         storage:      rb(byteOff, 50, 3),  // 1=inv,4=cube,5=pstash
         typeIndex:    0,      // unused (typeCode string is used instead)
-        typeCode:     (() => { const [c] = huffDecodeType(byteOff); return c; })(),
+        typeCode:     typeCode,
         location:     rb(byteOff, 35, 3),  // alias for parent (routing compat)
         numSockets:   0,
         itemLevel:    0,
@@ -5893,31 +5898,18 @@ function renderInventory(c) {
   const INV_CELL = CELL;  // same scale as paperdoll
   const invGrid = buildInvGrid(inventory, dims.invW, dims.invH, INV_CELL, {mode:'inventory', storage:1});
 
-  // ── Special/quest items ──
-  let specHtml = '';
-  if (special.length) {
-    specHtml = `<div style="margin-top:12px">${h2('Quest / Special Items')}<div style="display:flex;flex-wrap:wrap;gap:6px">`;
-    for (const item of special) {
-      const {name,cls}=itemDisplayName(item);
-      specHtml+=`<div class="pd-slot has-item" style="width:auto;padding:4px 10px;height:auto" onclick="showItemDetail(${item.byteOffset},this);pinTooltip()" onmouseenter="showItemDetail(${item.byteOffset},this)" onmouseleave="closeTooltip(false)">
-        <div class="pd-name ${cls}">${esc(name)}</div>
-      </div>`;
-    }
-    specHtml += '</div></div>';
-  }
 
   c.innerHTML = html + `
-    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
-      <div>
+    <div style="display:flex;gap:20px;align-items:flex-start">
+      <div style="flex-shrink:0">
         ${h2('Equipped')}
         ${paperdoll}
         <div style="margin-top:8px">${h2('Belt')}${beltHtml}</div>
       </div>
-      <div>
+      <div style="flex-shrink:0">
         ${h2(`Inventory (${dims.invW}×${dims.invH})`)}
         ${invGrid}
         ${inventory.length===0?'<p class="note" style="margin-top:4px">Empty</p>':''}
-        ${specHtml}
       </div>
     </div>
     `;
@@ -6189,7 +6181,7 @@ function ensureItemProps(item) {
   if (ext.simple) return;
   // Copy decoded fields even if there was a partial decode error —
   // the runeword ID, quality, ilvl etc. are read before the property list
-  if (ext.quality)  item.quality  = ext.quality;
+  if (ext.quality !== undefined) item.quality = ext.quality;
   if (ext.ilvl)     item.itemLevel = ext.ilvl;
   if (ext.uniqueId !== null) item.uniqueId = ext.uniqueId;
   if (ext.setId    !== null) { item.setId = ext.setId; item.setItemId = ext.setId; }
