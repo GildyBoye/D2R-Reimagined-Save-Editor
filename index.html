@@ -4600,16 +4600,21 @@ function renderChar(c) {
   const expEl = document.getElementById('inpExp');
   const maxExp = EXP_TABLE[EXP_TABLE.length - 1] || 4029625968;
   if (lvlEl && expEl) {
-    let prevLevel = parseInt(lvlEl.value, 10) || 1;
+    const loadedLevel = parseInt(lvlEl.value, 10) || 1;  // level when file was loaded
+    let prevLevel = loadedLevel;
+    const loadedStatPts = parsedChar.stats.statpts || 0;
+    const loadedSkillPts = parsedChar.stats.newskills || 0;
 
-    // Helper: apply level delta to stat/skill point pools
-    function applyLevelDelta(delta) {
-      if (delta === 0) return;
+    // Helper: apply level change relative to the LOADED level
+    // Only grants points for levels ABOVE the original loaded level
+    function applyLevelChange(newLevel) {
       const cr = getCharStats(parsedChar.header.cls);
       const statPerLvl = parseInt(cr?.StatPerLevel || '5', 10);
       const skillPerLvl = parseInt(cr?.SkillsPerLevel || '1', 10);
-      parsedChar.stats.statpts = Math.min(999, Math.max(0, (parsedChar.stats.statpts || 0) + delta * statPerLvl));
-      parsedChar.stats.newskills = Math.min(250, Math.max(0, (parsedChar.stats.newskills || 0) + delta * skillPerLvl));
+      // Levels gained above loaded level
+      const levelsAboveLoaded = Math.max(0, newLevel - loadedLevel);
+      parsedChar.stats.statpts = Math.min(999, loadedStatPts + levelsAboveLoaded * statPerLvl);
+      parsedChar.stats.newskills = Math.min(250, loadedSkillPts + levelsAboveLoaded * skillPerLvl);
       const spEl = document.getElementById('stStatpts');
       if (spEl) spEl.value = parsedChar.stats.statpts;
     }
@@ -4619,7 +4624,7 @@ function renderChar(c) {
       let lvl = Math.min(100, Math.max(1, parseInt(lvlEl.value, 10) || 1));
       lvlEl.value = lvl;
       expEl.value = getExpForLevel(lvl);
-      applyLevelDelta(lvl - prevLevel);
+      applyLevelChange(lvl);
       prevLevel = lvl;
       // Update gold cap
       const goldCap = lvl * 10000;
@@ -4643,7 +4648,7 @@ function renderChar(c) {
       }
       newLvl = Math.min(100, newLvl);
       if (newLvl !== prevLevel) {
-        applyLevelDelta(newLvl - prevLevel);
+        applyLevelChange(newLvl);
         lvlEl.value = newLvl;
         prevLevel = newLvl;
         // Update gold cap
