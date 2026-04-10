@@ -633,7 +633,7 @@
 
   <!-- Header -->
   <div class="editor-header">
-    <div class="editor-title">D2R Hero Editor <span>Reimagined Mod</span></div>
+    <div class="editor-title">HERO EDITOR: REIMAGINED</div>
     <div class="header-controls">
       <input type="file" id="fileInput" accept=".d2s" style="display:none" onchange="handleFile(this)">
       <a class="btn-discord" href="https://discord.gg/9zZkYrSA8C" target="_blank" rel="noopener">
@@ -788,6 +788,7 @@
     for (let x = 0; x < w; x++) {
       const r = Math.random();
       grid[(h-1)*w+x] = r < 0.12 ? 0 : r < 0.3 ? Math.floor(Math.random()*20)+10 : 36;
+      grid[(h-2)*w+x] = r < 0.15 ? 0 : r < 0.35 ? Math.floor(Math.random()*18)+10 : 36;
     }
     for (let y = 0; y < h-1; y++) {
       for (let x = 0; x < w; x++) {
@@ -1733,11 +1734,13 @@ function propToDisplay(code, min, max, par) {
                      code.includes('/dex') ? '(Based on Dexterity)' :
                      code.includes('/vit') ? '(Based on Vitality)' :
                      code.includes('/enr') ? '(Based on Energy)' : '';
-      // Try to resolve through the base property
-      const baseLines = propToDisplay(baseProp, min, max, par);
-      if (baseLines.length) {
-        lines.push(baseLines[0] + (suffix ? ' ' + suffix : ''));
-        return lines;
+      // Try to resolve through the base property (guard against infinite recursion)
+      if (baseProp !== code) {
+        const baseLines = propToDisplay(baseProp, min, max, par);
+        if (baseLines.length) {
+          lines.push(baseLines[0] + (suffix ? ' ' + suffix : ''));
+          return lines;
+        }
       }
     }
 
@@ -2263,6 +2266,54 @@ function buildWeaponAndBeltMeta() {
   console.log(`buildWeaponAndBeltMeta: ${IS_2HANDED.size} 2h weapons, ${Object.keys(BELT_ROWS_BY_CODE).length} belt types`);
 }
 
+// ── Runeword lookup: match socketed rune codes → runeword name ──
+let RUNEWORD_TABLE = []; // [{name, runes:['r15','r11',...]}, ...]
+
+function buildRunewordTable() {
+  RUNEWORD_TABLE = [];
+  const rows = baseData['runes']?.rows;
+  if (!rows) return;
+  for (const row of rows) {
+    const name = row['*Rune Name'] || row.Name || '';
+    if (!name) continue;
+    const runes = [];
+    for (let i = 1; i <= 6; i++) {
+      const r = (row['Rune' + i] || '').trim();
+      if (r) runes.push(r);
+    }
+    if (runes.length > 0) RUNEWORD_TABLE.push({ name, runes });
+  }
+  console.log(`buildRunewordTable: ${RUNEWORD_TABLE.length} runewords`);
+}
+
+// Find runeword name by matching socketed rune codes
+function resolveRunewordName(item) {
+  if (!item.runeword || !parsedChar?.items) return null;
+  // Collect socketed children (parent=6) that follow this item in the array
+  const myOff = item.byteOffset;
+  const children = [];
+  let found = false;
+  for (const it of parsedChar.items) {
+    if (it === item) { found = true; continue; }
+    if (!found) continue;
+    const p = it.parent ?? it.location ?? 0;
+    if (p === 6) children.push(it);
+    else break; // stop at next non-socketed item
+  }
+  if (children.length === 0) return null;
+  const runeCodes = children.map(c => c.typeCode || '');
+  // Match against runeword table
+  for (const rw of RUNEWORD_TABLE) {
+    if (rw.runes.length !== runeCodes.length) continue;
+    let match = true;
+    for (let i = 0; i < rw.runes.length; i++) {
+      if (rw.runes[i] !== runeCodes[i]) { match = false; break; }
+    }
+    if (match) return rw.name;
+  }
+  return null;
+}
+
 // ── Item type → allowed equip slots, plus requirement lookups ──
 let ITEM_BODYLOC = {};     // itemTypeCode → Set of bodyLoc strings ('head','tors','rarm','larm',etc)
 let ITEM_REQS_BY_CODE = {};  // itemCode → { reqstr, reqdex, levelreq }
@@ -2486,6 +2537,7 @@ function buildItemNameMap() {
   buildSocketAndTypeMap();
   buildEquipRestrictions();
   buildWeaponAndBeltMeta();
+  buildRunewordTable();
   buildSkillTreeData();
   buildExpTable();
 }
@@ -2667,24 +2719,24 @@ const CLASS_SPRITES = [
       '..........',
     ]
   },
-  { // 3: Paladin — dark skin, plate armor, quartered shield, gold cross
+  { // 3: Paladin — dark skin, plate armor, quartered shield, gold cross (faces left)
     pal: [null,'#4a3828','#8b6848','#6b4830','#353540','#505058','#c8a84b','#808080','#c8c0a8','#2a2830'],
     rows: [
       '..........',
-      '...111....',
-      '...122....',
-      '...232....',
-      '...232....',
-      '...23.....',
-      '.456655...',
-      '.4555678..',
-      '.4555678..',
-      '.3555876..',
-      '..75477...',
-      '..54.45...',
-      '..47.44...',
-      '..44.44...',
-      '..99.99...',
+      '....111...',
+      '....221...',
+      '....232...',
+      '....232...',
+      '.....32...',
+      '...556654.',
+      '..8765554.',
+      '..8765554.',
+      '..6785553.',
+      '...77457..',
+      '...54.45..',
+      '...44.74..',
+      '...44.44..',
+      '...99.99..',
       '..........',
     ]
   },
@@ -2751,24 +2803,24 @@ const CLASS_SPRITES = [
       '..........',
     ]
   },
-  { // 7: Warlock — dark hair, red+gray robes, gold trim, high collar
+  { // 7: Warlock — dark hair, red+gray robes, gold trim, high collar (faces left)
     pal: [null,'#2a1a18','#c0a888','#907860','#8b2030','#601020','#808890','#c8a84b','#505058','#4a3828'],
     rows: [
-      '...111....',
-      '..11111...',
-      '..11221...',
-      '..12321...',
-      '...232....',
-      '..5.23.5..',
-      '.5464645..',
-      '.4464644..',
-      '.3464643..',
-      '..47774...',
-      '..46464...',
-      '..46464...',
-      '.4464644..',
-      '.5544455..',
-      '..99.99...',
+      '....111...',
+      '...11111..',
+      '...12211..',
+      '...12321..',
+      '....232...',
+      '..5.32.5..',
+      '..5464645.',
+      '..4464644.',
+      '..3464643.',
+      '...47774..',
+      '...46464..',
+      '...46464..',
+      '..4464644.',
+      '..5544455.',
+      '...99.99..',
       '..........',
     ]
   },
@@ -3736,7 +3788,7 @@ function parseD2S(buf) {
       const b2 = buf[itemStart+i+2];
       const b3 = buf[itemStart+i+3];
       const b4 = buf[itemStart+i+4];
-      if ((b0===0x10 || b0===0x00) && (b1===0x00 || b1===0x08) && (b2&0x80) && b3===0x00) {
+      if ((b0&0xE0)===0x00 && (b2&0x80) && (b4&0x05)===0x05) {
         itemBounds.push(itemStart+i);
       }
     }
@@ -4434,14 +4486,11 @@ function renderItemWarning(c, tabId) {
     <div style="max-width:480px;margin:60px auto;text-align:center">
       <div style="font-size:36px;margin-bottom:16px">⚠️</div>
       <div style="font-family:'Cinzel',serif;font-size:18px;color:var(--d2-gold);letter-spacing:2px;margin-bottom:12px">
-        NOT CURRENTLY SUPPORTED
+        WARNING
       </div>
       <p style="color:var(--d2-text-dim);font-size:13px;line-height:1.7;margin-bottom:24px">
-        The item binary format for D2R Reimagined has not been fully verified.
-        Loading ${label} data may display incorrect items or corrupt your save if written back.
-        <br><br>
-        <strong style="color:var(--d2-text)">Your save file will NOT be modified</strong> unless you
-        click Save after making changes.
+        Inventory editing is supported but errors can happen.
+        Only continue if you understand and accept this.
       </p>
       <button onclick="window.unlockItemTab('${tabId}')"
         style="font-family:'Cinzel',serif;font-size:12px;letter-spacing:2px;padding:12px 28px;
@@ -4449,7 +4498,7 @@ function renderItemWarning(c, tabId) {
                cursor:pointer;border-radius:2px;transition:all 0.2s"
         onmouseenter="this.style.background='rgba(180,30,30,0.3)'"
         onmouseleave="this.style.background='rgba(180,30,30,0.15)'">
-        DANGER — LOAD ${label.toUpperCase()} ANYWAY
+        CONTINUE
       </button>
     </div>`;
 }
@@ -4535,7 +4584,7 @@ function renderChar(c) {
     ${h2('Gold')}
     <div class="stat-grid">
       ${card('<span id="goldCapLabel">Gold in Inventory (max ' + ((parsedChar.header.level||1)*10000).toLocaleString() + ')</span>', numIn(g('gold'),0,(parsedChar.header.level||1)*10000,'','id="stGold"'))}
-      ${card('Gold in Stash',     numIn(g('goldbank'),0,33554432,'','id="stGoldbank"'))}
+      ${card('Gold in Stash (max 33,554,432)', numIn(g('goldbank'),0,33554432,'','id="stGoldbank"'))}
     </div>`;
 
   // Wire Vit→Life and Enr→Mana auto-calculation
@@ -4654,16 +4703,26 @@ function _hookStatScaling(cls) {
   const lifeEl = document.getElementById('stLifeDisplay');
   const manaEl = document.getElementById('stManaDisplay');
 
+  const cr = getCharStats(cls);
+  const lifePerVit = parseInt(cr?.LifePerVitality || '12', 10) / 4;
+  const manaPerEnr = parseInt(cr?.ManaPerMagic || '8', 10) / 4;
+  const origVit = parsedChar.stats.vitality || 0;
+  const origEnr = parsedChar.stats.energy || 0;
+  const baseMaxHp   = parsedChar.stats.maxhp || 0;
+  const baseMaxMana = parsedChar.stats.maxmana || 0;
+
   function updateDisplays() {
     const vit = parseInt(vitEl?.value || '0', 10) || 0;
     const enr = parseInt(enrEl?.value || '0', 10) || 0;
-    if (lifeEl) lifeEl.textContent = _calcLife(cls, vit);
-    if (manaEl) manaEl.textContent = _calcMana(cls, enr);
+    const vitDelta = vit - origVit;
+    const enrDelta = enr - origEnr;
+    if (lifeEl) lifeEl.textContent = baseMaxHp + Math.round(vitDelta * lifePerVit);
+    if (manaEl) manaEl.textContent = baseMaxMana + Math.round(enrDelta * manaPerEnr);
   }
 
   if (vitEl) vitEl.addEventListener('input', updateDisplays);
   if (enrEl) enrEl.addEventListener('input', updateDisplays);
-  updateDisplays(); // set initial values
+  updateDisplays();
 }
 
 window.applyStats = function() {
@@ -5039,27 +5098,34 @@ function itemDisplayName(item) {
     return { name: baseName, cls: 'iq-quest' };
   }
 
+  // Decode extended properties so we have uniqueId, setItemId, _runewordId
+  ensureItemProps(item);
+
   const q   = ITEM_QUALITY[item.quality];
   const cls = q ? q.cls : 'iq-norm';
 
-  // Unique name (quality=7): runtime array from loaded uniqueitems.txt takes priority
-  if (item.quality === 7) {
-    if (item.uniqueId !== undefined) {
-      const fromTxt = uniqueItemNames[item.uniqueId];
-      if (fromTxt) return { name: fromTxt, cls };
-      const fromHard = UNIQUE_NAMES[item.uniqueId];
-      if (fromHard) return { name: fromHard, cls };
-    }
+  // Runeword: show the runeword name (e.g. "Spirit", "Chains of Honor")
+  if (item.runeword) {
+    const rwName = resolveRunewordName(item);
+    if (rwName) return { name: rwName, cls: 'iq-unique' };
+    const baseName = item.typeCode ? itemNameFromCode(item.typeCode) : '?';
+    return { name: baseName, cls: 'iq-unique' };
   }
 
-  // Set item name (quality=5): runtime array from loaded setitems.txt takes priority
-  if (item.quality === 5) {
-    if (item.setItemId !== undefined) {
-      const fromTxt = setItemNames[item.setItemId];
-      if (fromTxt) return { name: fromTxt, cls };
-      const fromHard = SET_ITEM_NAMES[item.setItemId];
-      if (fromHard) return { name: fromHard, cls };
-    }
+  // Unique name (quality=7)
+  if (item.quality === 7 && item.uniqueId !== undefined) {
+    const fromTxt = uniqueItemNames[item.uniqueId];
+    if (fromTxt) return { name: fromTxt, cls };
+    const fromHard = UNIQUE_NAMES[item.uniqueId];
+    if (fromHard) return { name: fromHard, cls };
+  }
+
+  // Set item name (quality=5)
+  if (item.quality === 5 && item.setItemId !== undefined) {
+    const fromTxt = setItemNames[item.setItemId];
+    if (fromTxt) return { name: fromTxt, cls };
+    const fromHard = SET_ITEM_NAMES[item.setItemId];
+    if (fromHard) return { name: fromHard, cls };
   }
 
   const parent = item.parent ?? item.location ?? 0;
@@ -5778,14 +5844,19 @@ function renderInventory(c) {
     </div>`;
 
   // ── Belt grid (4 columns × 4 rows, active rows highlighted based on equipped belt) ──
-  const beltItems = {};
-  for (const item of belt) {
-    const s = Math.min(Math.max(item.x,0),15);
-    if (!beltItems[s]) beltItems[s] = item;
-  }
-  // Determine active belt rows from equipped belt item
   const beltEquip = equipped[8]; // slot 8 = belt
   const beltRows = beltEquip ? (BELT_ROWS_BY_CODE[beltEquip.typeCode] || 1) : 1;
+  const maxBeltSlot = beltRows * 4 - 1;
+  const POTION_CODES = new Set(['hp1','hp2','hp3','hp4','hp5','mp1','mp2','mp3','mp4','mp5',
+    'hpo','mpo','hpf','mpf','rvs','rvl','yps','wms','vps',
+    'gps','ops','gpm','opm','gpl','opl']);
+  const beltItems = {};
+  for (const item of belt) {
+    const s = item.x;
+    if (s < 0 || s > maxBeltSlot) continue;
+    if (!POTION_CODES.has(item.typeCode)) continue;
+    if (!beltItems[s]) beltItems[s] = item;
+  }
   const BELT_CELL = Math.round(CELL * 0.75);
   let beltHtml = `<div style="display:grid;grid-template-columns:repeat(4,${BELT_CELL}px);gap:2px">`;
   // Render bottom-up: row 3 (top) to row 0 (bottom), so slot indices map correctly
@@ -5804,6 +5875,12 @@ function renderInventory(c) {
           onmouseenter="showItemDetail(${item.byteOffset},this)"
           onmouseleave="closeTooltip(false)">
           <div class="pd-name ${cls}" style="font-size:8px">${esc(name.slice(0,5))}</div>
+        </div>`;
+      } else if (isActive) {
+        beltHtml+=`<div class="pd-slot empty" style="width:${BELT_CELL}px;height:${BELT_CELL}px;cursor:pointer"
+          onclick="showBeltPotionPicker(${slotIdx},this)"
+          title="Insert potion">
+          <div style="font-size:10px;color:var(--d2-text-dim);opacity:0.4">+</div>
         </div>`;
       } else {
         beltHtml+=`<div class="pd-slot empty" style="width:${BELT_CELL}px;height:${BELT_CELL}px;${dimStyle}"></div>`;
@@ -5845,6 +5922,86 @@ function renderInventory(c) {
     </div>
     `;
 }
+// ── Belt potion picker ──
+const BELT_POTIONS = [
+  {code:'hpo',name:'Healing Potion'},
+  {code:'hpf',name:'Full Healing'},
+  {code:'mpo',name:'Mana Potion'},
+  {code:'mpf',name:'Full Mana'},
+  {code:'rvs',name:'Rejuv Potion'},
+  {code:'rvl',name:'Full Rejuv'},
+  {code:'yps',name:'Antidote'},
+  {code:'wms',name:'Thawing'},
+  {code:'vps',name:'Stamina'},
+];
+
+window.showBeltPotionPicker = function(slotIdx, el) {
+  // Close any existing picker
+  const old = document.getElementById('beltPotionPicker');
+  if (old) old.remove();
+
+  const picker = document.createElement('div');
+  picker.id = 'beltPotionPicker';
+  picker.style.cssText = 'position:fixed;z-index:20000;background:linear-gradient(180deg,#1c1409,#110d06);border:1px solid var(--d2-gold-dim);border-radius:3px;padding:6px;box-shadow:0 4px 24px rgba(0,0,0,0.8);min-width:140px';
+
+  for (const p of BELT_POTIONS) {
+    const row = document.createElement('div');
+    row.textContent = p.name;
+    row.style.cssText = 'padding:5px 10px;font-family:"Cinzel",serif;font-size:11px;letter-spacing:0.5px;color:var(--d2-text);cursor:pointer;border-bottom:1px solid rgba(61,46,24,0.3);white-space:nowrap';
+    row.onmouseenter = () => row.style.background = 'rgba(200,168,75,0.1)';
+    row.onmouseleave = () => row.style.background = '';
+    row.onclick = () => { insertBeltPotion(slotIdx, p.code); picker.remove(); };
+    picker.appendChild(row);
+  }
+
+  document.body.appendChild(picker);
+
+  // Position near the clicked slot
+  const rect = el.getBoundingClientRect();
+  picker.style.left = Math.min(rect.left, window.innerWidth - picker.offsetWidth - 8) + 'px';
+  picker.style.top = Math.max(0, rect.bottom + 4) + 'px';
+
+  // Close on outside click
+  setTimeout(() => {
+    const close = (e) => { if (!picker.contains(e.target)) { picker.remove(); document.removeEventListener('mousedown', close); } };
+    document.addEventListener('mousedown', close);
+  }, 0);
+};
+
+function insertBeltPotion(slotIdx, code) {
+  if (!parsedChar || !parsedChar.items) return;
+
+  const fakeOffset = -(Date.now() & 0x7FFFFFFF);
+  const newItem = {
+    byteOffset:   fakeOffset,
+    identified:   1,
+    socketed:     0,
+    simple:       1,
+    ethereal:     0,
+    personalized: 0,
+    runeword:     0,
+    typeIndex:    0,
+    typeCode:     code,
+    numSockets:   0,
+    itemLevel:    1,
+    quality:      2,
+    isMerc:       false,
+    isVirtual:    true,
+    parent:       2,      // belt
+    location:     2,
+    equipSlot:    0,
+    storage:      0,
+    x:            slotIdx,
+    y:            0,
+  };
+
+  parsedChar.items.push(newItem);
+  markDirty();
+  const active = document.querySelector('.tab.active');
+  if (active) active.click();
+  setStatus(`Added ${itemNameByCode[code]||code} to belt slot ${slotIdx}`, 'modified');
+}
+
 function renderStash(c) {
   if (!parsedChar.items) { c.innerHTML=`<p class="parse-error">No item data.</p>`; return; }
 
@@ -6029,7 +6186,9 @@ function ensureItemProps(item) {
   item._propsDecoded = true;
   if (item.simple || item.isVirtual || !workBytes || item.byteOffset < 0) return;
   const ext = decodeItemProperties(workBytes, item.byteOffset, item);
-  if (ext.simple || ext.decodeError) return;
+  if (ext.simple) return;
+  // Copy decoded fields even if there was a partial decode error —
+  // the runeword ID, quality, ilvl etc. are read before the property list
   if (ext.quality)  item.quality  = ext.quality;
   if (ext.ilvl)     item.itemLevel = ext.ilvl;
   if (ext.uniqueId !== null) item.uniqueId = ext.uniqueId;
@@ -6406,7 +6565,7 @@ function decodeItemProperties(buf, byteOff, item) {
         if(flag){r.rareAffixes.push({slot:i,id:rbL(bit,12)});bit+=12;}
       }
     }
-    if(item.runeword)bit+=16;
+    if(item.runeword)bit+=16; // runeword padding (name resolved by matching socketed runes)
     if(item.personalized){for(let i=0;i<50;i++){const c=rbL(bit,7);bit+=7;if(!c)break;}}
     const tc=(item.typeCode||'').slice(0,3).toLowerCase();
     if(tc==='tbk'||tc==='tsc')bit+=5;
@@ -6574,10 +6733,9 @@ function buildItemTooltipHtml(item) {
     const setName = setEntry ? (stringTable[setEntry.set] || setEntry.set) : '';
     if(setName)headerLines+=`<div class="tt-row" style="color:#00c800;font-size:11px">${esc(setName)}</div>`;
   }
-  if(item.runeword&&item._runewordId!==undefined){
-    const rwRow=baseData['runes']?.rows[item._runewordId];
-    if(rwRow){const rwName=rwRow.Name||rwRow['*Rune Name']||'';
-      if(rwName)headerLines+=`<div class="tt-row" style="color:#c8a030;font-size:11px">${esc(rwName)}</div>`;}
+  if(item.runeword){
+    const rwName=resolveRunewordName(item);
+    if(rwName)headerLines+=`<div class="tt-row" style="color:#c8a030;font-size:11px">${esc(rwName)}</div>`;
   }
   return `
     <div class="tt-name ${cls}">${esc(name)}</div>
