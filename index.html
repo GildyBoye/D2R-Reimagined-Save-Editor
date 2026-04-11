@@ -679,9 +679,9 @@
   <div id="uploadView">
     <div class="fire-bottom" id="fireBottom"><canvas id="fireCanvasB"></canvas></div>
     <div class="ornament">— ✦ —</div>
-    <div class="upload-title">Diablo II: Resurrected<span style="display:block;font-size:17px;letter-spacing:4px;color:var(--d2-gold-dim);margin-top:4px;font-weight:400">REIMAGINED</span></div>
-    <div class="base-badge">✓ Reimagined data loaded</div>
-    <div class="upload-sub">Load a Reimagined character save file to begin editing. Your original file will never be overwritten — always save to a new location first.</div>
+    <div class="upload-title" id="uploadTitle">Diablo II: Resurrected<span style="display:block;font-size:17px;letter-spacing:4px;color:var(--d2-gold-dim);margin-top:4px;font-weight:400">REIMAGINED</span></div>
+    <div class="base-badge" id="uploadBadge">✓ Reimagined data loaded</div>
+    <div class="upload-sub" id="uploadSub">Load a Reimagined character save file to begin editing. Your original file will never be overwritten — always save to a new location first.</div>
     <div class="upload-drop" id="dropZone"
       ondragover="event.preventDefault();this.classList.add('drag-over')"
       ondragleave="this.classList.remove('drag-over')"
@@ -871,7 +871,8 @@ const STRING_FILES = [
   'item-modifiers.json',     // magic prefix/suffix display strings (affix names in tooltips)
   'skills.json',             // skill display names (resolves str name keys from skilldesc.txt)
   'mercenaries.json',        // mercenary names (merc01=Aliza, merca201=Hazade, etc.)
-  'GildLocalization.json',   // UI strings for the editor interface
+  'levels.json',             // area/waypoint names (Rogue Encampment, Lut Gholein, etc.)
+  'ui.json',                 // game UI strings
 ];
 
 // Flat map: string key -> cleaned localized string (populated at load time)
@@ -1162,6 +1163,8 @@ async function startBaseFileLoad() {
           const raw = entry[_currentLang] || entry.enUS || entry['en-US'] || '';
           if (!raw) continue;
           const val = cleanStringValue(raw);
+          const isUI = key.startsWith('ui_');
+          if (isUI) { if (val) { stringTable[key] = val; added++; } continue; }
           if (val && val.length > 2 && !/^[A-Z]{2,3}\d?$/.test(val) && !val.includes('%')) {
             stringTable[key] = val;
             added++;
@@ -1175,7 +1178,35 @@ async function startBaseFileLoad() {
     }
   }
 
+  // Load GildLocalization.json — try GitHub first, fall back to local
+  const GILD_LOC_URLS = [
+    'https://raw.githubusercontent.com/GildyBoye/D2R-Reimagined-Save-Editor/main/base/strings/GildLocalization.json',
+    STR_FALLBACK_URL + 'GildLocalization.json',
+  ];
+  for (const url of GILD_LOC_URLS) {
+    try {
+      const res = await fetchTimed(url, 5000);
+      const arr = JSON.parse(await res.text());
+      if (Array.isArray(arr)) {
+        let added = 0;
+        for (const entry of arr) {
+          const key = entry.Key || entry.key;
+          if (!key) continue;
+          _rawStringEntries.push(entry);
+          const raw = entry[_currentLang] || entry.enUS || '';
+          if (raw) { stringTable[key] = raw; added++; }
+        }
+        strLoaded++;
+        addLog('ok', `✓ GildLocalization.json  (${added} UI keys)${url.startsWith('http')?'':' (local)'}`);
+        break; // success — don't try fallback
+      }
+    } catch(err) {
+      // try next URL
+    }
+  }
+
   buildItemNameMap();
+  _updateStaticUIStrings();
 
   showOnly('uploadView');
   const sk = warned.length > 0 ? `  (${warned.length} non-critical skipped)` : '';
@@ -1218,6 +1249,9 @@ function rebuildStringsForLang(lang) {
     const raw = entry[lang] || entry.enUS || entry['en-US'] || '';
     if (!raw) continue;
     const val = cleanStringValue(raw);
+    // UI strings (ui_ prefix) bypass strict filters — they're always valid
+    const isUI = key.startsWith('ui_');
+    if (isUI) { if (val) stringTable[key] = val; continue; }
     if (val && val.length > 2 && !/^[A-Z]{2,3}\d?$/.test(val) && !val.includes('%')) {
       stringTable[key] = val;
     }
@@ -1232,6 +1266,8 @@ function rebuildStringsForLang(lang) {
   _updateStaticUIStrings();
   // Re-render current view if a character is loaded
   if (parsedChar) {
+    // Clear cached decoded props so item names re-resolve with new language
+    for (const item of (parsedChar.items || [])) { item._propsDecoded = false; }
     buildTabs();
     updateCharStrip();
     renderTab();
@@ -1259,6 +1295,13 @@ function _updateStaticUIStrings() {
   if (modalTitle) modalTitle.textContent = L('ui_create_new_char', 'Create New Character');
   const charNameLabel = document.querySelector('#newCharModal .modal-label');
   if (charNameLabel) charNameLabel.textContent = L('ui_char_name', 'Character Name');
+  // Upload/browse page
+  const uploadTitle = el('uploadTitle');
+  if (uploadTitle) uploadTitle.innerHTML = L('ui_browse_title', 'Diablo II: Resurrected') + '<span style="display:block;font-size:17px;letter-spacing:4px;color:var(--d2-gold-dim);margin-top:4px;font-weight:400">REIMAGINED</span>';
+  const uploadBadge = el('uploadBadge');
+  if (uploadBadge) uploadBadge.textContent = '✓ ' + L('ui_browse_badge', 'Reimagined data loaded');
+  const uploadSub = el('uploadSub');
+  if (uploadSub) uploadSub.textContent = L('ui_browse_sub', 'Load a Reimagined character save file to begin editing. Your original file will never be overwritten — always save to a new location first.');
   // Footer credits
   const credits = document.querySelector('.footer-credits');
   if (credits) credits.innerHTML = L('ui_made_by', 'Made by') + ' <span>GildyBoye</span>';
@@ -2420,7 +2463,7 @@ function resolveRunewordName(item) {
     for (let i = 0; i < rw.runes.length; i++) {
       if (rw.runes[i] !== runeCodes[i]) { match = false; break; }
     }
-    if (match) return rw.name;
+    if (match) return stringTable[rw.name] || rw.name;
   }
   return null;
 }
@@ -2597,11 +2640,10 @@ function buildItemNameMap() {
     let resolved = 0;
     for (const [code] of ITEM_INDEX) {
       if (!code) continue;
-      const key = codeLookup[code];
-      if (key) {
-        const val = stringTable[key];
-        if (val) { itemNameByCode[code] = val; resolved++; }
-      }
+      // Try namestr key from TSV first, then item code directly (item-names.json uses codes as keys)
+      const namestrKey = codeLookup[code];
+      const val = (namestrKey && stringTable[namestrKey]) || stringTable[code];
+      if (val) { itemNameByCode[code] = val; resolved++; }
     }
     console.log(`buildItemNameMap: resolved ${resolved} base item names via string table`);
   }
@@ -2613,8 +2655,8 @@ function buildItemNameMap() {
   const uData = baseData['uniqueitems'];
   if (uData) {
     for (const row of uData.rows) {
-      const name = (row['index'] || '').trim();
-      uniqueItemNames.push(name || null);
+      const key = (row['index'] || '').trim();
+      uniqueItemNames.push(key ? (stringTable[key] || key) : null);
     }
     console.log(`buildItemNameMap: loaded ${uniqueItemNames.filter(Boolean).length} unique item names`);
   }
@@ -2625,8 +2667,8 @@ function buildItemNameMap() {
   const sData = baseData['setitems'];
   if (sData) {
     for (const row of sData.rows) {
-      const name = (row['index'] || '').trim();
-      setItemNames.push(name || null);
+      const key = (row['index'] || '').trim();
+      setItemNames.push(key ? (stringTable[key] || key) : null);
     }
     console.log(`buildItemNameMap: loaded ${setItemNames.filter(Boolean).length} set item names`);
   }
@@ -7598,7 +7640,7 @@ function renderQuests(c) {
         <input type="checkbox" class="quest-check"
           ${q.done?'checked':''} ${disabledAttr}
           onchange="toggleQuest(${diff},${q.index},this.checked)">
-        <span class="quest-name">${esc(q.name)}${rewardTag}</span>
+        <span class="quest-name">${esc(L('q_'+q.name.replace(/[^a-zA-Z0-9]/g,'_'), q.name))}${rewardTag}</span>
         <span style="font-size:11px;font-family:'Cinzel',serif;color:${statusColor};letter-spacing:1px;white-space:nowrap">${statusLabel}</span>
       </div>`;
     });
@@ -7725,7 +7767,7 @@ function renderWaypoints(c) {
         style="${townStyle}"
         onclick="${wp.isTown ? '' : `toggleWaypoint(${diff},${wp.index},this)`}"
         title="${wp.isTown ? 'Town waypoint — always active' : ''}"
-      >${esc(wp.name)}${wp.isTown?' ★':''}</button>`;
+      >${esc(L(wp.name, wp.name))}${wp.isTown?' ★':''}</button>`;
     });
     html += '</div>';
   });
