@@ -3234,6 +3234,9 @@ function _doReset() {
   document.getElementById('resetBtn').style.display = 'none';
   document.getElementById('openBtn').classList.remove('disabled');
 
+  // Clear all file inputs so the same file can be re-selected
+  document.querySelectorAll('input[type="file"]').forEach(el => { el.value = ''; });
+
   // Reset fire decorations
   document.querySelectorAll('.fire-side').forEach(el => el.classList.remove('active'));
 
