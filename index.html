@@ -2782,6 +2782,7 @@ function onFileLoaded() {
   workBytes  = new Uint8Array(rawBytes); // mutable copy
   parsedChar = parseD2S(workBytes);
   snapshotQuestState();
+  snapshotSkillState();
   isDirty    = false;
   inventoryUnlocked = false;  // reset — must re-confirm for each loaded file
   showOnly('editorView');
@@ -3173,6 +3174,7 @@ window.createNewCharacter = function() {
   closeNewCharModal();
   parsedChar = parseD2S(workBytes);
   snapshotQuestState();
+  snapshotSkillState();
   isDirty = true;
   inventoryUnlocked = false;
   showOnly('editorView');
@@ -3186,16 +3188,45 @@ window.createNewCharacter = function() {
 };
 
 function _doReset() {
+  // Clear all file/parse state
   rawBytes = null;
   workBytes = null;
   parsedChar = null;
   fileName = '';
   isDirty = false;
   activeTab = 'char';
+
+  // Clear all tracked state from the session
   _deletedItemOffsets.clear();
+  inventoryUnlocked = false;
+  _questsCompletedOnLoad = [[],[],[]];
+  _skillsOnLoad = [];
+  questActiveDiff = 0;
+  wpActiveDiff = 0;
+
+  // Close any open tooltips/popups/modals
+  closeTooltip(true);
+  const confirmOvl = document.getElementById('confirmOverlay');
+  if (confirmOvl) confirmOvl.style.display = 'none';
+  const popupOvl = document.getElementById('popupOverlay');
+  if (popupOvl) popupOvl.style.display = 'none';
+  const itemModal = document.getElementById('itemModal');
+  if (itemModal) itemModal.classList.remove('visible');
+
+  // Clear the tab bar and content
+  const tabBar = document.getElementById('tabBar');
+  if (tabBar) tabBar.innerHTML = '';
+  const tabContent = document.getElementById('tabContent');
+  if (tabContent) tabContent.innerHTML = '';
+
+  // Reset footer buttons
   document.getElementById('saveBtn').classList.add('disabled');
   document.getElementById('resetBtn').style.display = 'none';
+  document.getElementById('openBtn').classList.remove('disabled');
+
+  // Reset fire decorations
   document.querySelectorAll('.fire-side').forEach(el => el.classList.remove('active'));
+
   showOnly('uploadView');
   setStatus('Reimagined data ready — load a .d2s file to begin', 'ready');
 }
@@ -4326,11 +4357,19 @@ function commitStats(newStats) {
   markDirty();
 }
 
+// Snapshot of skill levels when the file was loaded — used to allow values > 25 if already present
+let _skillsOnLoad = [];
+function snapshotSkillState() {
+  _skillsOnLoad = parsedChar.skills ? [...parsedChar.skills] : [];
+}
+
 // Write a single skill level byte at the skills section
 function commitSkill(skillIndex, level) {
   const off = parsedChar.skillsOffset;
   if (off < 0 || skillIndex >= 30) return;
-  level = Math.max(0,Math.min(25,level|0));
+  const loadedMax = (_skillsOnLoad[skillIndex] || 0);
+  const cap = Math.max(25, loadedMax);
+  level = Math.max(0, Math.min(cap, level|0));
   workBytes[off+2+skillIndex] = level;
   parsedChar.skills[skillIndex] = level;
   markDirty();
@@ -5013,12 +5052,13 @@ function renderSkills(c) {
         const classIds = SKILL_IDS_BY_CLASS[classTag];
         const globalId = (classIds && idx >= 0 && idx < classIds.length) ? classIds[idx] : -1;
         const dynName = (globalId >= 0 && skillNameById[globalId]) ? skillNameById[globalId] : cell.name;
+        const skillMax = Math.max(25, _skillsOnLoad[idx] || 0);
         html += `<div class="skill-cell">
           <div class="skill-cell-name">${esc(dynName)}</div>
-          <input class="skill-cell-input" type="number" min="0" max="25"
+          <input class="skill-cell-input" type="number" min="0" max="${skillMax}"
             value="${lvl}" data-skill-idx="${idx}"
             title="Save index: ${idx}"
-            oninput="if(this.value!==''&&+this.value>25)this.value=25;if(this.value!==''&&+this.value<0)this.value=0;this.classList.add('modified')"
+            oninput="if(this.value!==''&&+this.value>${skillMax})this.value=${skillMax};if(this.value!==''&&+this.value<0)this.value=0;this.classList.add('modified')"
             onchange="this.classList.add('modified')">
         </div>`;
       }
