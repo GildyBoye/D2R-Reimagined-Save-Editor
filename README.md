@@ -1,150 +1,91 @@
 # D2R Hero Editor — Reimagined
 
-A browser-based editor for modifying Diablo II: Resurrected character save files (`.d2s`) using data from the Reimagined mod.
+Browser-based editor for Diablo II: Resurrected `.d2s` save files using Reimagined mod data.
 
-This tool allows you to load a character, edit stats, skills, inventory, quests, and more, then export a modified save file.
+---
+
+## Overview
+
+This tool loads a character save file, parses its data, and provides an interface to edit stats, skills, inventory, quests, and other character properties. Changes can be exported as a new `.d2s` file.
+
+The editor depends on external Reimagined data files loaded at runtime.
+
+---
+
+## Usage
+
+### 1. Load Base Data
+- Open the HTML file in a browser
+- The editor will automatically download required data files
+- Wait until loading completes
+
+### 2. Load Character
+- Drag and drop a `.d2s` file  
+  or  
+- Click to browse and select a file
+
+### 3. Edit Character
+Use the tabbed interface to modify:
+
+- **Stats**: Attributes, health, mana, gold, experience
+- **Skills**: Individual skill levels or tree layout
+- **Inventory**: Items, equipment, stash
+- **Quests**: Completion flags
+- **Waypoints**: Activated locations
+
+### 4. Save
+- Click **Save .d2s**
+- A new file is generated; original is unchanged
+
+---
+
+## Features
+
+- Full character stat editing
+- Skill editing (list and grid views)
+- Inventory and equipment editor
+- Item inspection and insertion
+- Quest and waypoint toggles
+- New character creation
+- Visual character preview and layout
 
 ---
 
 ## Requirements
 
-- A Diablo II: Resurrected `.d2s` character file
-- Internet connection (required to load Reimagined data files)
+- Modern web browser
+- Internet connection (for data file loading)
+- Valid `.d2s` save file
 
 ---
 
-## Getting Started
+## Behavior
 
-### 1. Open the Editor
-- Load the HTML file in a browser.
-- The editor will automatically begin downloading required data files from the Reimagined repository.
-
-### 2. Wait for Data to Load
-- A loading screen will show progress as files are fetched.
-- If critical files fail to load, the editor will not function.
-- Once complete, the interface will switch to the upload screen.
-
-### 3. Load Your Character
-- Drag and drop your `.d2s` file into the upload area  
-  **or**
-- Click the upload area to browse and select your file
+- All edits are performed in memory
+- Changes are tracked until saved
+- Save operation exports a modified file without overwriting the original
+- Critical data load failures prevent editor use
+- Non-critical failures may be ignored
 
 ---
 
-## Editing Features
+## Notes
 
-Once a character is loaded, the editor interface becomes available.
-
-### Character Overview
-Displays:
-- Character name
-- Class
-- Level
-- Difficulty
-- Status flags (hardcore, expansion, etc.)
-
----
-
-### Tabs
-
-The editor is divided into multiple tabs:
-
-#### Character Stats
-Modify:
-- Strength, Dexterity, Vitality, Energy
-- Health, Mana, Stamina
-- Gold and experience
-
-#### Skills
-- Edit skill levels individually
-- Includes both list view and skill tree layout
-
-#### Inventory
-- View and modify:
-  - Inventory grid
-  - Equipped items (paperdoll view)
-- Click items to inspect details
-- Insert or modify items via modal
-
-#### Items
-Supports:
-- Item names resolved from game data
-- Quality types (normal, magic, rare, unique, etc.)
-- Socketed and stacked items
-
-#### Quests
-- Toggle quest completion states
-
-#### Waypoints
-- Enable/disable discovered waypoints
-
----
-
-## Saving Changes
-
-- Click **"Save .d2s"** to export your modified character
-- The original file is not overwritten
-- Always save to a new location as a backup
-
----
-
-## Important Notes
-
-- The editor depends on external data files hosted online
-- If required files fail to load, editing is disabled
-- Some non-critical files may fail without breaking functionality
-- Changes are applied directly to a working copy of the save data in memory
-
----
-
-## File Handling
-
-- Input: `.d2s` character save file
-- Output: Modified `.d2s` file
-
----
-
-## Technical Overview
-
-### Data Loading
-- Fetches `.txt` data files from the Reimagined repository
-- Parses TSV-formatted game data into usable structures
-- Loads string tables for item names and UI text
-
-### Parsing
-- Reads binary `.d2s` structure
-- Extracts:
-  - Stats via bit-level decoding
-  - Inventory and item data
-  - Character metadata
-
-### Editing
-- Maintains a working byte array for modifications
-- Tracks changes (dirty state)
-- Updates UI dynamically based on edits
-
----
-
-## Error Handling
-
-- Critical file failures block the editor
-- Non-critical file failures are logged but ignored
-- Timeout protection prevents hanging requests
+- Tool relies on external Reimagined data sources
+- Item names and properties are resolved from loaded data
+- Inventory uses grid-based layout matching in-game structure
+- Editing invalid or unsupported values may result in broken saves
 
 ---
 
 ## Controls
 
-- **Open .d2s** — Load a character file
-- **Save .d2s** — Export modified file
-- Status indicator shows:
-  - Loading
-  - Ready
-  - Modified
-  - Error states
+- Open file: load `.d2s`
+- Save file: export changes
+- Status indicator shows loading, ready, modified, or error states
 
 ---
 
 ## Credits
 
-- Created by GildyBoye
+- Author: GildyBoye
