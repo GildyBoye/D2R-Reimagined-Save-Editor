@@ -2625,6 +2625,7 @@ function loadFile(file) {
 function onFileLoaded() {
   workBytes  = new Uint8Array(rawBytes); // mutable copy
   parsedChar = parseD2S(workBytes);
+  snapshotQuestState();
   isDirty    = false;
   inventoryUnlocked = false;  // reset — must re-confirm for each loaded file
   showOnly('editorView');
@@ -3013,6 +3014,7 @@ window.createNewCharacter = function() {
   fileName = name + '.d2s';
   closeNewCharModal();
   parsedChar = parseD2S(workBytes);
+  snapshotQuestState();
   isDirty = true;
   inventoryUnlocked = false;
   showOnly('editorView');
@@ -3025,8 +3027,7 @@ window.createNewCharacter = function() {
   setStatus(`New character: ${name} (${CLASS_NAMES[cls]}) — save to create .d2s file`, 'modified');
 };
 
-window.resetEditor = function() {
-  if (isDirty && !confirm('You have unsaved changes. Are you sure you want to reset?')) return;
+function _doReset() {
   rawBytes = null;
   workBytes = null;
   parsedChar = null;
@@ -3039,7 +3040,34 @@ window.resetEditor = function() {
   document.querySelectorAll('.fire-side').forEach(el => el.classList.remove('active'));
   showOnly('uploadView');
   setStatus('Reimagined data ready — load a .d2s file to begin', 'ready');
+}
+
+window.resetEditor = function() {
+  if (!isDirty) { _doReset(); return; }
+  showConfirm('You have unsaved changes. Are you sure you want to reset?', _doReset, 'Reset');
 };
+
+function showConfirm(msg, onYes, yesLabel) {
+  let overlay = document.getElementById('confirmOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'confirmOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:30000;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center';
+    overlay.innerHTML = `<div style="background:linear-gradient(180deg,#1c1409,#0f0b06);border:1px solid var(--d2-gold-dim);border-radius:3px;padding:20px 28px;max-width:420px;min-width:260px;box-shadow:0 8px 40px rgba(0,0,0,0.9);text-align:center">
+      <div id="confirmMsg" style="font-family:'Crimson Text',serif;font-size:14px;color:var(--d2-text);line-height:1.6;margin-bottom:16px;white-space:pre-line"></div>
+      <div style="display:flex;gap:10px;justify-content:center">
+        <button id="confirmYes" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 22px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-green);background:linear-gradient(180deg,#0e2a0e,#081a08);color:var(--d2-green-bright);transition:all 0.15s">Confirm</button>
+        <button id="confirmNo" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 22px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-red);background:linear-gradient(180deg,#2a0e0e,#1a0808);color:#d46060;transition:all 0.15s">Cancel</button>
+      </div>
+    </div>`;
+    document.body.appendChild(overlay);
+  }
+  document.getElementById('confirmMsg').textContent = msg;
+  document.getElementById('confirmYes').textContent = yesLabel || 'Confirm';
+  overlay.style.display = 'flex';
+  document.getElementById('confirmNo').onclick = () => { overlay.style.display = 'none'; };
+  document.getElementById('confirmYes').onclick = () => { overlay.style.display = 'none'; onYes(); };
+}
 
 // ═══════════════════════════════════════════════════════════
 //  ITEM BINARY ENCODER
@@ -4181,14 +4209,22 @@ function commitQuest(diff, questIndex, flags) {
 
 // bit 0 = complete, bit 12 = swirling-fire animation seen
 function completeAllQuests(diff) {
-  for (let i=0;i<QUEST_BYTE_OFFSETS.length;i++) commitQuest(diff,i,0x1001);
-  // Set act intro and transition flags so all act tabs are unlocked
+  for (let i = 0; i < QUEST_BYTE_OFFSETS.length; i++) {
+    const wasComplete = !!((parsedChar.quests[diff]?.[i] || 0) & 0x0001);
+    commitQuest(diff, i, 0x1001);
+    if (!wasComplete) applyQuestReward(i, true);
+  }
   _setActProgressionFlags(diff, true);
   renderTab();
 }
 function clearAllQuests(diff) {
-  for (let i=0;i<QUEST_BYTE_OFFSETS.length;i++) commitQuest(diff,i,0x0000);
-  _setActProgressionFlags(diff, false);
+  for (let i = 0; i < QUEST_BYTE_OFFSETS.length; i++) {
+    // Skip quests that were completed on load — they can't be reset
+    if (_questsCompletedOnLoad[diff]?.[i]) continue;
+    const wasComplete = !!((parsedChar.quests[diff]?.[i] || 0) & 0x0001);
+    commitQuest(diff, i, 0x0000);
+    if (wasComplete) applyQuestReward(i, false);
+  }
   renderTab();
 }
 
@@ -6051,27 +6087,6 @@ function renderStash(c) {
       if (!stacks[k]) stacks[k] = [];
       stacks[k].push(item);
     }
-    html += `<div style="margin-top:16px">${h2('Item List')}</div>`;
-    html += '<table class="item-table"><thead><tr><th>Location</th><th>Pos</th><th>Name</th><th>Count</th><th>Flags</th></tr></thead><tbody>';
-    for (const [, items] of Object.entries(stacks)) {
-      const item = items[0];
-      const {name,cls} = itemDisplayName(item);
-      let loc = item.storage === 1 ? 'Inventory'
-              : item.storage === 4 ? 'Horadric Cube'
-              : item.storage === 5 ? 'Personal Stash'
-              : 'Unknown';
-      const offs = items.map(it=>it.byteOffset).join(',');
-      ensureItemProps(item);
-      const rowCls = itemQualityCls(item);
-      const rowColor = rowCls==='iq-magic'?'#6666ff':rowCls==='iq-rare'?'#c8c800':rowCls==='iq-unique'?'#c88030':rowCls==='iq-set'?'#00c800':rowCls==='iq-quest'?'#c8a800':rowCls==='iq-craft'?'#ff8000':'';
-      html += `<tr onclick="showItemDetailStack([${offs}])" style="cursor:pointer${rowColor?';color:'+rowColor:''}">
-        <td>${loc}</td><td>(${item.x},${item.y})</td>
-        <td class="${cls}">${esc(name)}${!item.identified?' <span style="color:var(--d2-text-dim)">[Unid]</span>':''}</td>
-        <td>${items.length>1?`<b style="color:var(--d2-gold)">×${items.length}</b>`:'1'}</td>
-        <td>${itemFlags(item)}</td>
-      </tr>`;
-    }
-    html += '</tbody></table>';
   }
 
   html += '';
@@ -6861,16 +6876,16 @@ window.removeItemByOffset = function(byteOffset) {
   if (!parsedChar || !parsedChar.items) return;
   const idx = parsedChar.items.findIndex(it => it.byteOffset === byteOffset);
   if (idx < 0) return;
-  if (!confirm('Remove this item from the save? This cannot be undone until you reload.')) return;
-  const item = parsedChar.items[idx];
-  // Track for binary removal on save (skip virtual items — they're not in the binary yet)
-  if (byteOffset >= 0 && !item.isVirtual) {
-    _deletedItemOffsets.add(byteOffset);
-  }
-  parsedChar.items.splice(idx, 1);
-  closeTooltip(true);
-  renderTab();
-  markDirty();
+  showConfirm('Remove this item from the save? This cannot be undone until you reload.', () => {
+    const item = parsedChar.items[idx];
+    if (byteOffset >= 0 && !item.isVirtual) {
+      _deletedItemOffsets.add(byteOffset);
+    }
+    parsedChar.items.splice(idx, 1);
+    closeTooltip(true);
+    renderTab();
+    markDirty();
+  });
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -6952,13 +6967,21 @@ function buildItemCatalog() {
         ITEM_CATALOG.push({ code, name, tier, normCode: norm||code, normName, qual:2, category, typeName, typeCode,
           searchKey: (name + ' ' + normName + ' ' + code + ' ' + typeName).toLowerCase() });
       } else {
+        // Skip known invalid/debug items
+        if (code === 'dys') continue;
+
         const isJewelry = /^(rin|amu|jew)$/.test(code) || typeCode === 'ring' || typeCode === 'amul';
+        const isOrb = /^(oos|ooc|ooa|ooi|ooe|oor|ka3|1os|1oc|1oa|1oi|1oe|1or|1ka)$/.test(code) || name.includes('Orb of');
+        const isSpecialMod = /^(rup|jwp|dwd|abd|bdd|ird|dkg|gmo|1so|1gc|mfp|xpp|php)$/.test(code)
+          || name.includes('Pliers') || name.includes('Dye') || name.includes('Grabber') || name.includes('Cluster');
         let miscCat = 'Miscellaneous';
-        if (isJewelry) miscCat = 'Jewelry';
+        if (QUEST_ITEM_CODES.has(code)) miscCat = 'Quest Items';
+        else if (isJewelry) miscCat = 'Jewelry';
         else if (isRune) miscCat = 'Runes';
         else if (isGem) miscCat = 'Gems';
         else if (isCharm) miscCat = 'Charms';
-        else if (QUEST_ITEM_CODES.has(code)) miscCat = 'Quest Items';
+        else if (isOrb) miscCat = 'Orbs';
+        else if (isSpecialMod) miscCat = 'Special Items';
         ITEM_CATALOG.push({ code, name, tier:'misc', normCode:code, normName:name, qual:2, category:'misc', typeName:miscCat, typeCode:'',
           searchKey: (name + ' ' + code + ' ' + miscCat).toLowerCase() });
       }
@@ -7135,7 +7158,7 @@ window.filterModalItems = function() {
   if (Object.keys(setGroups).length) renderCategory('Set Items', '#00c800', setGroups);
 
   // Misc subcategories (Runes, Gems, Charms, Jewelry, etc.)
-  const miscOrder = ['Jewelry','Runes','Gems','Charms','Quest Items','Miscellaneous'];
+  const miscOrder = ['Jewelry','Runes','Gems','Charms','Orbs','Special Items','Quest Items','Miscellaneous'];
   const sortedMisc = {};
   for (const k of miscOrder) { if (miscGroups[k]) sortedMisc[k] = miscGroups[k]; }
   for (const k of Object.keys(miscGroups).sort()) { if (!sortedMisc[k]) sortedMisc[k] = miscGroups[k]; }
@@ -7355,40 +7378,72 @@ function markDirty() {
 // Quest definitions: flat list matching QUEST_BYTE_OFFSETS order
 const QUEST_DEFS = [
   // Act I (indices 0-5)
-  {act:'Act I',   name:"Den of Evil"},
+  {act:'Act I',   name:"Den of Evil",               reward:{skill:1}, rewardDesc:'+1 Skill Point'},
   {act:'Act I',   name:"Sisters' Burial Grounds"},
   {act:'Act I',   name:"Tools of the Trade"},
   {act:'Act I',   name:"The Search for Cain"},
   {act:'Act I',   name:"The Forgotten Tower"},
   {act:'Act I',   name:"Sisters to the Slaughter"},
   // Act II (indices 6-11)
-  {act:'Act II',  name:"Radament's Lair"},
+  {act:'Act II',  name:"Radament's Lair",            reward:{skill:1}, rewardDesc:'+1 Skill Point'},
   {act:'Act II',  name:"The Horadric Staff"},
   {act:'Act II',  name:"Tainted Sun"},
   {act:'Act II',  name:"Arcane Sanctuary"},
   {act:'Act II',  name:"The Summoner"},
   {act:'Act II',  name:"The Seven Tombs"},
   // Act III (indices 12-17)
-  {act:'Act III', name:"Lam Esen's Tome"},
+  {act:'Act III', name:"Lam Esen's Tome",            reward:{stat:5}, rewardDesc:'+5 Stat Points'},
   {act:'Act III', name:"Khalim's Will"},
   {act:'Act III', name:"Blade of the Old Religion"},
-  {act:'Act III', name:"The Golden Bird"},
+  {act:'Act III', name:"The Golden Bird",            reward:{life:20}, rewardDesc:'+20 Life'},
   {act:'Act III', name:"The Blackened Temple"},
   {act:'Act III', name:"The Guardian"},
   // Act IV (indices 18-20)
-  {act:'Act IV',  name:"The Fallen Angel"},
+  {act:'Act IV',  name:"The Fallen Angel",           reward:{skill:2}, rewardDesc:'+2 Skill Points'},
   {act:'Act IV',  name:"Terror's End"},
   {act:'Act IV',  name:"Hell's Forge"},
   // Act V (indices 21-26)
   {act:'Act V',   name:"Siege on Harrogath"},
   {act:'Act V',   name:"Rescue on Mount Arreat"},
-  {act:'Act V',   name:"Prison of Ice"},
+  {act:'Act V',   name:"Prison of Ice",             reward:{allres:10}, rewardDesc:'+10 All Resistances'},
   {act:'Act V',   name:"Betrayal of Harrogath"},
   {act:'Act V',   name:"Rite of Passage"},
   {act:'Act V',   name:"Eve of Destruction"},
 ];
 
 let questActiveDiff = 0;
+// Track which quests were completed when the file was loaded — per difficulty [diff][questIndex] = true/false
+let _questsCompletedOnLoad = [[],[],[]];
+
+function snapshotQuestState() {
+  _questsCompletedOnLoad = [[],[],[]];
+  for (let d = 0; d < 3; d++) {
+    const qf = parsedChar.quests[d] || [];
+    for (let i = 0; i < QUEST_DEFS.length; i++) {
+      _questsCompletedOnLoad[d][i] = !!((qf[i] || 0) & 0x0001);
+    }
+  }
+}
+
+function applyQuestReward(questIndex, completing) {
+  const qd = QUEST_DEFS[questIndex];
+  if (!qd || !qd.reward) return;
+  const r = qd.reward;
+  const dir = completing ? 1 : -1;
+  if (r.skill) {
+    parsedChar.stats.newskills = Math.max(0, (parsedChar.stats.newskills || 0) + r.skill * dir);
+    commitStats({ newskills: parsedChar.stats.newskills });
+  }
+  if (r.stat) {
+    parsedChar.stats.statpts = Math.max(0, (parsedChar.stats.statpts || 0) + r.stat * dir);
+    commitStats({ statpts: parsedChar.stats.statpts });
+  }
+  if (r.life) {
+    parsedChar.stats.maxhp = Math.max(1, (parsedChar.stats.maxhp || 0) + r.life * dir);
+    parsedChar.stats.hitpoints = Math.max(1, (parsedChar.stats.hitpoints || 0) + r.life * dir);
+    commitStats({ maxhp: parsedChar.stats.maxhp, hitpoints: parsedChar.stats.hitpoints });
+  }
+}
 
 function renderQuests(c) {
   const noData = parsedChar.questsOffset < 0;
@@ -7422,15 +7477,18 @@ function renderQuests(c) {
   acts.forEach(act => {
     html += h2(act) + '<div class="quest-grid">';
     byAct[act].forEach(q => {
+      const lockedOnLoad = _questsCompletedOnLoad[diff]?.[q.index];
       const statusColor = q.done ? 'var(--d2-green-bright)' : q.started ? '#c8a030' : 'var(--d2-text-dim)';
-      const statusLabel = q.done ? 'Complete' : q.started ? 'Started' : 'Incomplete';
+      const statusLabel = q.done ? (lockedOnLoad ? 'Complete' : 'Complete ✦') : q.started ? 'Started' : 'Incomplete';
+      const qd = QUEST_DEFS[q.index];
+      const rewardTag = qd.rewardDesc ? `<span style="font-size:10px;color:var(--d2-gold);opacity:0.7;margin-left:4px">${qd.rewardDesc}</span>` : '';
+      const disabledAttr = (q.done && lockedOnLoad) ? 'disabled title="Was completed when file was loaded — cannot reset"' : '';
       html += `<div class="quest-row">
         <input type="checkbox" class="quest-check"
-          ${q.done?'checked':''}
+          ${q.done?'checked':''} ${disabledAttr}
           onchange="toggleQuest(${diff},${q.index},this.checked)">
-        <span class="quest-name">${esc(q.name)}</span>
+        <span class="quest-name">${esc(q.name)}${rewardTag}</span>
         <span style="font-size:11px;font-family:'Cinzel',serif;color:${statusColor};letter-spacing:1px;white-space:nowrap">${statusLabel}</span>
-        <span style="font-size:11px;font-family:monospace;color:var(--d2-text-dim);opacity:0.6">0x${q.flags.toString(16).padStart(4,'0').toUpperCase()}</span>
       </div>`;
     });
     html += '</div>';
@@ -7445,12 +7503,26 @@ window.setQuestDiff = function(d) {
 };
 
 window.toggleQuest = function(diff, index, complete) {
+  // Prevent resetting quests that were completed when the file was loaded
+  if (!complete && _questsCompletedOnLoad[diff]?.[index]) {
+    showPopup('This quest was already completed when the save was loaded. It cannot be reset.');
+    renderTab();
+    return;
+  }
+  const wasComplete = !!((parsedChar.quests[diff]?.[index] || 0) & 0x0001);
   const flags = complete ? 0x1001 : 0x0000;
   commitQuest(diff, index, flags);
+
+  // Apply quest rewards when completing (not already complete) or revoking (was complete via editor)
+  if (complete && !wasComplete) {
+    applyQuestReward(index, true);
+  } else if (!complete && wasComplete) {
+    applyQuestReward(index, false);
+  }
+
   // If completing the final quest of an act, unlock the next act's progression flags
-  // Act I final = index 5, Act II final = index 11, Act III final = index 17, Act IV final = index 20
   if (complete) {
-    const ACT_FINALS = [5, 11, 17, 20, 26]; // last quest index per act
+    const ACT_FINALS = [5, 11, 17, 20, 26];
     if (ACT_FINALS.includes(index)) {
       _setActProgressionFlags(diff, true);
     }
