@@ -2765,7 +2765,7 @@ function showOnly(id) {
 // ═══════════════════════════════════════════════════════════
 //  FILE I/O
 // ═══════════════════════════════════════════════════════════
-function handleFile(input) { const f=input.files[0]; if(f) loadFile(f); }
+function handleFile(input) { const f=input.files[0]; if(f) loadFile(f); input.value=''; }
 function handleDrop(e) {
   e.preventDefault();
   document.getElementById('dropZone').classList.remove('drag-over');
@@ -3677,10 +3677,13 @@ function BitReader(buf, byteOffset) {
       for (let i=0;i<n;i++) {
         const byte=Math.floor(pos/8);
         const bit =(pos%8);
-        val |= ((buf[byte]>>bit)&1)<<i;
+        if ((buf[byte]>>bit)&1) {
+          if (i < 31) val |= (1 << i);
+          else val = (val >>> 0) + 2147483648; // bit 31: add 2^31 without sign issues
+        }
         pos++;
       }
-      return val;
+      return n >= 32 ? val >>> 0 : val;
     },
     get bytePos() { return Math.ceil(pos/8); },
     get bitPos()  { return pos; },
@@ -7855,7 +7858,9 @@ window.toggleWaypoint = function(diff, index, btn) {
 function _getMercInfo(typeId) {
   const h = baseData['hireling'];
   if (!h) return { name:'Unknown', sub:'', rows:[], expPerLvl:100 };
-  const rows = h.rows.filter(r => parseInt(r['Id']||'',10) === typeId && (r['Version']||'').trim() === '0');
+  const v0 = h.rows.filter(r => parseInt(r['Id']||'',10) === typeId && (r['Version']||'').trim() === '0');
+  const v100 = h.rows.filter(r => parseInt(r['Id']||'',10) === typeId && (r['Version']||'').trim() === '100');
+  const rows = v0.length ? v0 : v100;
   const first = rows[0] || {};
   return {
     name: (first['Hireling']||'').trim() || 'Mercenary',
