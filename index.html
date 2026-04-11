@@ -752,6 +752,24 @@
       </div>
     </div>
     <div class="footer-right">
+      <select id="langSelect" onchange="switchLanguage(this.value)"
+        style="font-family:'Cinzel',serif;font-size:10px;letter-spacing:0.5px;padding:4px 8px;
+               background:var(--d2-surface2);border:1px solid var(--d2-border);color:var(--d2-text);
+               border-radius:2px;cursor:pointer;outline:none">
+        <option value="enUS">English</option>
+        <option value="zhTW">繁體中文</option>
+        <option value="zhCN">简体中文</option>
+        <option value="deDE">Deutsch</option>
+        <option value="esES">Español (ES)</option>
+        <option value="esMX">Español (MX)</option>
+        <option value="frFR">Français</option>
+        <option value="itIT">Italiano</option>
+        <option value="koKR">한국어</option>
+        <option value="plPL">Polski</option>
+        <option value="ptBR">Português</option>
+        <option value="ruRU">Русский</option>
+        <option value="jaJP">日本語</option>
+      </select>
       <div class="footer-credits">Made by <span>GildyBoye</span></div>
     </div>
   </div>
@@ -853,10 +871,28 @@ const STRING_FILES = [
   'item-modifiers.json',     // magic prefix/suffix display strings (affix names in tooltips)
   'skills.json',             // skill display names (resolves str name keys from skilldesc.txt)
   'mercenaries.json',        // mercenary names (merc01=Aliza, merca201=Hazade, etc.)
+  'GildLocalization.json',   // UI strings for the editor interface
 ];
 
-// Flat map: string key -> cleaned enUS string (populated at load time)
+// Flat map: string key -> cleaned localized string (populated at load time)
 let stringTable = {};
+let _rawStringEntries = []; // all parsed JSON entries with all language fields
+let _currentLang = 'enUS';
+const SUPPORTED_LANGS = [
+  {code:'enUS', label:'English'},
+  {code:'zhTW', label:'繁體中文'},
+  {code:'zhCN', label:'简体中文'},
+  {code:'deDE', label:'Deutsch'},
+  {code:'esES', label:'Español (ES)'},
+  {code:'esMX', label:'Español (MX)'},
+  {code:'frFR', label:'Français'},
+  {code:'itIT', label:'Italiano'},
+  {code:'koKR', label:'한국어'},
+  {code:'plPL', label:'Polski'},
+  {code:'ptBR', label:'Português'},
+  {code:'ruRU', label:'Русский'},
+  {code:'jaJP', label:'日本語'},
+];
 
 // Strip D2 color codes, tier tags, stack prefixes, and pickup text from raw strings
 function cleanStringValue(s) {
@@ -869,6 +905,11 @@ function cleanStringValue(s) {
   s = s.replace(/\n[\s\S]*/g, '');          // literal newline and after
   s = s.replace(/~[^~]*~/g, '');            // ~Pick Up~ style annotations
   return s.trim();
+}
+
+// Localization lookup: returns the UI string for the given key, or the fallback
+function L(key, fallback) {
+  return stringTable[key] || fallback || key;
 }
 
 const ALL_FILES = [
@@ -1085,6 +1126,7 @@ async function startBaseFileLoad() {
 
   // ── Phase 2: fetch strings JSONs ──
   document.getElementById('loadingSub').textContent = `Fetching item string tables...${usingFallback?' [local]':''}`;
+  _rawStringEntries = [];
   stringTable = {};
   let strLoaded = 0;
   for (const file of STRING_FILES) {
@@ -1092,8 +1134,6 @@ async function startBaseFileLoad() {
       const res = await fetchTimed(srcStr + file, timeout);
       let text = await res.text();
       if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-      // Fix broken JSON from mod repo: literal control chars inside string values.
-      // Strategy: split on double-quote boundaries, sanitize content inside strings.
       let inString = false, escaped = false, clean = '';
       for (let ci = 0; ci < text.length; ci++) {
         const ch = text[ci];
@@ -1101,7 +1141,6 @@ async function startBaseFileLoad() {
         if (ch === '\\' && inString) { clean += ch; escaped = true; continue; }
         if (ch === '"') { inString = !inString; clean += ch; continue; }
         if (inString && ch.charCodeAt(0) < 32) {
-          // Replace control chars inside strings with escaped versions
           if (ch === '\n') clean += '\\n';
           else if (ch === '\r') clean += '\\r';
           else if (ch === '\t') clean += '\\t';
@@ -1110,15 +1149,18 @@ async function startBaseFileLoad() {
         }
         clean += ch;
       }
-      // Also fix trailing commas
       clean = clean.replace(/,\s*([}\]])/g, '$1');
       const arr = JSON.parse(clean);
       if (Array.isArray(arr)) {
         let added = 0;
         for (const entry of arr) {
           const key = entry.Key || entry.key;
-          const raw = entry.enUS || entry['en-US'] || '';
-          if (!key || !raw) continue;
+          if (!key) continue;
+          // Store raw entry for language switching
+          _rawStringEntries.push(entry);
+          // Build initial stringTable from current language
+          const raw = entry[_currentLang] || entry.enUS || entry['en-US'] || '';
+          if (!raw) continue;
           const val = cleanStringValue(raw);
           if (val && val.length > 2 && !/^[A-Z]{2,3}\d?$/.test(val) && !val.includes('%')) {
             stringTable[key] = val;
@@ -1165,6 +1207,68 @@ let setItemNames    = [];  // index -> display name (from setitems.txt)
 let skillNameById = {};  // numeric skill ID → display name string
 // Per-class ordered skill IDs: SKILL_IDS_BY_CLASS['ama'] = [6,7,8,...35] (30 entries)
 let SKILL_IDS_BY_CLASS = {};
+
+// Rebuild stringTable from raw entries for a given language, then rebuild all derived maps
+function rebuildStringsForLang(lang) {
+  _currentLang = lang;
+  stringTable = {};
+  for (const entry of _rawStringEntries) {
+    const key = entry.Key || entry.key;
+    if (!key) continue;
+    const raw = entry[lang] || entry.enUS || entry['en-US'] || '';
+    if (!raw) continue;
+    const val = cleanStringValue(raw);
+    if (val && val.length > 2 && !/^[A-Z]{2,3}\d?$/.test(val) && !val.includes('%')) {
+      stringTable[key] = val;
+    }
+  }
+  // Rebuild all maps that depend on stringTable
+  buildSkillNameMap();
+  buildMagicAffixMaps();
+  buildSetNameMap();
+  buildItemNameMap();
+  buildItemCatalog();
+  // Update static HTML elements
+  _updateStaticUIStrings();
+  // Re-render current view if a character is loaded
+  if (parsedChar) {
+    buildTabs();
+    updateCharStrip();
+    renderTab();
+  }
+}
+
+function _updateStaticUIStrings() {
+  const el = (id) => document.getElementById(id);
+  // Header
+  const title = document.querySelector('.editor-title');
+  if (title) title.textContent = L('ui_title', 'HERO EDITOR: REIMAGINED');
+  // Footer buttons
+  const openBtn = el('openBtn');  if (openBtn) openBtn.textContent = L('ui_open', 'Open .d2s');
+  const saveBtn = el('saveBtn');  if (saveBtn) saveBtn.textContent = L('ui_save', 'Save .d2s');
+  const resetBtn = el('resetBtn'); if (resetBtn) resetBtn.textContent = L('ui_reset', 'Reset');
+  // Upload page
+  const dropStrong = document.querySelector('.upload-drop-text strong');
+  if (dropStrong) dropStrong.textContent = L('ui_drop_file', 'Drop your .d2s file here');
+  const dropSub = document.querySelector('.upload-drop-text span');
+  if (dropSub) dropSub.textContent = L('ui_or_browse', 'or click to browse');
+  const newCharBtn = document.querySelector('#uploadView .btn-primary');
+  if (newCharBtn) newCharBtn.textContent = L('ui_make_new_char', 'Make a New Character');
+  // New char modal
+  const modalTitle = document.querySelector('#newCharModal .modal-title');
+  if (modalTitle) modalTitle.textContent = L('ui_create_new_char', 'Create New Character');
+  const charNameLabel = document.querySelector('#newCharModal .modal-label');
+  if (charNameLabel) charNameLabel.textContent = L('ui_char_name', 'Character Name');
+  // Footer credits
+  const credits = document.querySelector('.footer-credits');
+  if (credits) credits.innerHTML = L('ui_made_by', 'Made by') + ' <span>GildyBoye</span>';
+}
+
+window.switchLanguage = function(lang) {
+  if (lang === _currentLang) return;
+  rebuildStringsForLang(lang);
+  setStatus(`Language switched to ${SUPPORTED_LANGS.find(l=>l.code===lang)?.label||lang}`, 'ready');
+};
 
 function buildSkillNameMap() {
   skillNameById = {};
@@ -4490,11 +4594,11 @@ function getHirelingTypes() {
 // ═══════════════════════════════════════════════════════════
 //  TABS
 // ═══════════════════════════════════════════════════════════
-const TABS=[
-  {id:'char',label:'Character'},{id:'skills',label:'Skills'},
-  {id:'inventory',label:'Inventory',danger:true},{id:'stash',label:'Stash',danger:true},
-  {id:'quests',label:'Quests'},{id:'waypoints',label:'Waypoints'},{id:'mercenary',label:'Mercenary'},
-];
+function getTabs() { return [
+  {id:'char',label:L('ui_tab_char','Character')},{id:'skills',label:L('ui_tab_skills','Skills')},
+  {id:'inventory',label:L('ui_tab_inventory','Inventory'),danger:true},{id:'stash',label:L('ui_tab_stash','Stash'),danger:true},
+  {id:'quests',label:L('ui_tab_quests','Quests')},{id:'waypoints',label:L('ui_tab_waypoints','Waypoints')},{id:'mercenary',label:L('ui_tab_mercenary','Mercenary')},
+];}
 
 // Inventory/stash item parsing is gated behind an explicit unlock to prevent
 // accidental corruption — the item binary format is not fully verified.
@@ -4502,7 +4606,7 @@ let inventoryUnlocked = false;
 
 function buildTabs() {
   const bar=document.getElementById('tabBar'); bar.innerHTML='';
-  TABS.forEach(t=>{
+  getTabs().forEach(t=>{
     const b=document.createElement('button');
     const isDanger = t.danger && !inventoryUnlocked;
     b.className='tab'+(t.id===activeTab?' active':'')+(isDanger?' tab-danger':'');
@@ -4535,11 +4639,10 @@ function renderItemWarning(c, tabId) {
     <div style="max-width:480px;margin:60px auto;text-align:center">
       <div style="font-size:36px;margin-bottom:16px">⚠️</div>
       <div style="font-family:'Cinzel',serif;font-size:18px;color:var(--d2-gold);letter-spacing:2px;margin-bottom:12px">
-        WARNING
+        ${L('ui_warning','WARNING')}
       </div>
       <p style="color:var(--d2-text-dim);font-size:13px;line-height:1.7;margin-bottom:24px">
-        Inventory editing is supported but errors can happen.
-        Only continue if you understand and accept this.
+        ${L('ui_warning_text','Inventory editing is supported but errors can happen. Only continue if you understand and accept this.')}
       </p>
       <button onclick="window.unlockItemTab('${tabId}')"
         style="font-family:'Cinzel',serif;font-size:12px;letter-spacing:2px;padding:12px 28px;
@@ -4603,37 +4706,37 @@ function renderChar(c) {
 
   c.innerHTML = `
     ${parsedChar.error?`<p class="parse-error">Parse warning: ${esc(parsedChar.error)}</p>`:''}
-    ${h2('Character Info')}
+    ${h2(L('ui_char_info','Character Info'))}
     <div class="stat-grid">
-      ${card('Name',  txtIn(h.name,'inpName'))}
-      ${card('Class', `<div class="stat-input" style="cursor:default;opacity:0.8">${esc(CLASS_NAMES[cls]||'Unknown')}</div>`)}
-      ${card('Level', numIn(h.level,1,100,'inpLevel'))}
-      ${card('Experience', numIn(parsedChar.stats.experience||0,0,'','inpExp'))}
+      ${card(L('ui_name','Name'),  txtIn(h.name,'inpName'))}
+      ${card(L('ui_class','Class'), `<div class="stat-input" style="cursor:default;opacity:0.8">${esc(CLASS_NAMES[cls]||'Unknown')}</div>`)}
+      ${card(L('ui_level','Level'), numIn(h.level,1,100,'inpLevel'))}
+      ${card(L('ui_experience','Experience'), numIn(parsedChar.stats.experience||0,0,'','inpExp'))}
     </div>
     <div style="display:flex;align-items:center;gap:16px;margin:16px 0 12px;padding:8px 12px;background:var(--d2-surface2);border:1px solid var(--d2-border);border-radius:2px">
-      <span style="font-family:'Cinzel',serif;font-size:11px;color:var(--d2-text-dim);letter-spacing:0.5px">STAT POINTS REMAINING</span>
+      <span style="font-family:'Cinzel',serif;font-size:11px;color:var(--d2-text-dim);letter-spacing:0.5px">${L('ui_stat_points','STAT POINTS REMAINING')}</span>
       <input type="number" min="0" max="999" value="${g('statpts')}"
         id="stStatpts"
         style="width:60px;background:var(--d2-surface);border:1px solid var(--d2-border);color:var(--d2-text);font-family:'Crimson Text',serif;font-size:14px;padding:3px 6px;border-radius:2px;text-align:center"
         title="Unspent stat points"
         oninput="if(this.value!==''&&+this.value>999)this.value=999;if(this.value!==''&&+this.value<0)this.value=0">
     </div>
-    ${h2('Core Attributes')}
+    ${h2(L('ui_core_attributes','Core Attributes'))}
     <div class="stat-grid">
-      ${card('Strength',  numIn(g('strength'),0,999,'','id="stStrength"'))}
-      ${card('Dexterity', numIn(g('dexterity'),0,999,'','id="stDexterity"'))}
-      ${card('Vitality',  numIn(g('vitality'),0,999,'','id="stVitality"'))}
-      ${card('Energy',    numIn(g('energy'),0,999,'','id="stEnergy"'))}
+      ${card(L('ui_strength','Strength'),  numIn(g('strength'),0,999,'','id="stStrength"'))}
+      ${card(L('ui_dexterity','Dexterity'), numIn(g('dexterity'),0,999,'','id="stDexterity"'))}
+      ${card(L('ui_vitality','Vitality'),  numIn(g('vitality'),0,999,'','id="stVitality"'))}
+      ${card(L('ui_energy','Energy'),    numIn(g('energy'),0,999,'','id="stEnergy"'))}
     </div>
-    ${h2('Resources')}
+    ${h2(L('ui_resources','Resources'))}
     <div class="stat-grid">
-      ${card('Life', `<div class="stat-input" style="cursor:default;opacity:0.8" id="stLifeDisplay">${g('maxhp')}</div>`)}
-      ${card('Mana', `<div class="stat-input" style="cursor:default;opacity:0.8" id="stManaDisplay">${g('maxmana')}</div>`)}
+      ${card(L('ui_life','Life'), `<div class="stat-input" style="cursor:default;opacity:0.8" id="stLifeDisplay">${g('maxhp')}</div>`)}
+      ${card(L('ui_mana','Mana'), `<div class="stat-input" style="cursor:default;opacity:0.8" id="stManaDisplay">${g('maxmana')}</div>`)}
     </div>
-    ${h2('Gold')}
+    ${h2(L('ui_gold','Gold'))}
     <div class="stat-grid">
-      ${card('<span id="goldCapLabel">Gold in Inventory (max ' + ((parsedChar.header.level||1)*10000).toLocaleString() + ')</span>', numIn(g('gold'),0,(parsedChar.header.level||1)*10000,'','id="stGold"'))}
-      ${card('Gold in Stash (max 33,554,432)', numIn(g('goldbank'),0,33554432,'','id="stGoldbank"'))}
+      ${card('<span id="goldCapLabel">' + L('ui_gold_inventory','Gold in Inventory') + ' (max ' + ((parsedChar.header.level||1)*10000).toLocaleString() + ')</span>', numIn(g('gold'),0,(parsedChar.header.level||1)*10000,'','id="stGold"'))}
+      ${card(L('ui_gold_stash','Gold in Stash') + ' (max 33,554,432)', numIn(g('goldbank'),0,33554432,'','id="stGoldbank"'))}
     </div>`;
 
   // Wire Vit→Life and Enr→Mana auto-calculation
@@ -5951,12 +6054,12 @@ function renderInventory(c) {
   c.innerHTML = html + `
     <div style="display:flex;gap:20px;align-items:flex-start">
       <div style="flex-shrink:0">
-        ${h2('Equipped')}
+        ${h2(L('ui_equipped','Equipped'))}
         ${paperdoll}
-        <div style="margin-top:8px">${h2('Belt')}${beltHtml}</div>
+        <div style="margin-top:8px">${h2(L('ui_belt','Belt'))}${beltHtml}</div>
       </div>
       <div style="flex-shrink:0">
-        ${h2(`Inventory (${dims.invW}×${dims.invH})`)}
+        ${h2(L('ui_tab_inventory','Inventory') + ` (${dims.invW}×${dims.invH})`)}
         ${invGrid}
         ${inventory.length===0?'<p class="note" style="margin-top:4px">Empty</p>':''}
       </div>
@@ -7473,8 +7576,8 @@ function renderQuests(c) {
     <div class="diff-tabs" style="margin-bottom:0">
       ${DIFF_NAMES.map((d,i)=>`<button class="diff-tab${i===diff?' active':''}" onclick="setQuestDiff(${i})">${d}</button>`).join('')}
     </div>
-    <button class="btn-apply" onclick="completeAllQuests(${diff})">Complete All</button>
-    <button class="btn-apply" style="border-color:var(--d2-red);color:#d46060" onclick="clearAllQuests(${diff})">Clear All</button>
+    <button class="btn-apply" onclick="completeAllQuests(${diff})">${L('ui_complete_all','Complete All')}</button>
+    <button class="btn-apply" style="border-color:var(--d2-red);color:#d46060" onclick="clearAllQuests(${diff})">${L('ui_clear_all','Clear All')}</button>
   </div>`;
 
   if (noData) {
@@ -7604,8 +7707,8 @@ function renderWaypoints(c) {
     <div class="diff-tabs" style="margin-bottom:0">
       ${DIFF_NAMES.map((d,i)=>`<button class="diff-tab${i===diff?' active':''}" onclick="setWpDiff(${i})">${d}</button>`).join('')}
     </div>
-    <button class="btn-apply" onclick="activateAllWaypoints(${diff})">Activate All</button>
-    <button class="btn-apply" style="border-color:var(--d2-red);color:#d46060" onclick="clearAllWaypoints(${diff})">Clear All</button>
+    <button class="btn-apply" onclick="activateAllWaypoints(${diff})">${L('ui_activate_all','Activate All')}</button>
+    <button class="btn-apply" style="border-color:var(--d2-red);color:#d46060" onclick="clearAllWaypoints(${diff})">${L('ui_clear_all','Clear All')}</button>
   </div>`;
 
   if (noData) {
