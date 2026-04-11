@@ -1260,6 +1260,7 @@ function rebuildStringsForLang(lang) {
   }
   // Rebuild all maps that depend on stringTable
   buildSkillNameMap();
+  buildSkillTreeData();
   buildMagicAffixMaps();
   buildSetNameMap();
   buildItemNameMap();
@@ -4598,6 +4599,7 @@ function getSkillsForClass(cls) {
   const treeNames = CLASS_TREE_NAMES[cls] || ['Tree I','Tree II','Tree III'];
   const trees = [0,1,2].map(i => ({
     name: treeNames[i],
+    page: i + 1,
     grid: {},
     maxRow: 0,
     maxCol: 0,
@@ -4611,7 +4613,9 @@ function getSkillsForClass(cls) {
     if (col > t.maxCol) t.maxCol = col;
   });
 
-  return trees.filter(t => Object.keys(t.grid).length > 0);
+  // D2 displays skill tabs right-to-left: Tab3 is leftmost in-game, Tab1 is rightmost.
+  // Reverse to match in-game visual order (left to right).
+  return trees.filter(t => Object.keys(t.grid).length > 0).reverse();
 }
 
 function getSkillListForClass(cls) {
