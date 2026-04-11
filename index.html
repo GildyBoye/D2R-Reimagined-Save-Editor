@@ -1165,8 +1165,8 @@ async function startBaseFileLoad() {
           const raw = entry[_currentLang] || entry.enUS || entry['en-US'] || '';
           if (!raw) continue;
           const val = cleanStringValue(raw);
-          const isUI = key.startsWith('ui_') || key.startsWith('q_');
-          if (isUI) { if (val) { stringTable[key] = val; added++; } continue; }
+          const isSpecial = key.startsWith('ui_') || key.startsWith('q_') || key.startsWith('SkillCategory');
+          if (isSpecial) { if (val) { stringTable[key] = val; added++; } continue; }
           if (val && val.length > 1 && !val.includes('%')) {
             stringTable[key] = val;
             added++;
@@ -1251,9 +1251,9 @@ function rebuildStringsForLang(lang) {
     const raw = entry[lang] || entry.enUS || entry['en-US'] || '';
     if (!raw) continue;
     const val = cleanStringValue(raw);
-    // UI strings (ui_ prefix) bypass strict filters — they're always valid
-    const isUI = key.startsWith('ui_');
-    if (isUI) { if (val) stringTable[key] = val; continue; }
+    // UI/quest/skill-tab strings bypass strict filters — they're always valid
+    const isSpecial = key.startsWith('ui_') || key.startsWith('q_') || key.startsWith('SkillCategory');
+    if (isSpecial) { if (val) stringTable[key] = val; continue; }
     if (val && val.length > 1 && !val.includes('%')) {
       stringTable[key] = val;
     }
@@ -4553,15 +4553,15 @@ function buildSkillTreeData() {
     if (desc && page > 0) descGrid[desc] = { page, row: srow, col: scol };
   }
 
-  // Build skill tree names from charstats.txt StrSkillTab1-3 → string table
+  // Build skill tree names from SkillCategory keys in skills.json string table
+  // Keys follow pattern: SkillCategory{Prefix}{1-3} where prefix = Am,So,Ne,Pa,Ba,Dr,As,Wa
+  const SKILL_CAT_PREFIX = ['Am','So','Ne','Pa','Ba','Dr','As','Wa'];
   for (let ci = 0; ci < CLASS_NAMES.length; ci++) {
-    const cr = getCharStats(ci);
+    const prefix = SKILL_CAT_PREFIX[ci] || '';
     const tabs = [];
     for (let t = 1; t <= 3; t++) {
-      const key = cr ? (cr[`StrSkillTab${t}`]||'').trim() : '';
-      let name = stringTable[key] || '';
-      // Clean: remove "%+d to " prefix and " Skills" suffix
-      name = name.replace(/^%\+d\s+to\s+/i,'').replace(/\s+Skills?\s*$/i,'').trim();
+      const key = `SkillCategory${prefix}${t}`;
+      let name = (stringTable[key] || '').replace(/\n/g, ' ').trim();
       tabs.push(name || `Tree ${t}`);
     }
     CLASS_TREE_NAMES.push(tabs);
