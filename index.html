@@ -712,6 +712,12 @@
         <div class="modal-label">Character Name</div>
         <input class="modal-input" id="newCharName" placeholder="Enter name…" maxlength="15" autocomplete="off">
       </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:4px 0">
+          <input type="checkbox" id="newCharHC" style="accent-color:var(--d2-red-bright);cursor:pointer;width:16px;height:16px">
+          <span style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;color:#d46060">Hardcore</span>
+        </label>
+      </div>
       <div class="modal-footer">
         <button class="btn btn-primary" onclick="closeNewCharModal()" style="opacity:0.7">Cancel</button>
         <button class="btn btn-primary" onclick="createNewCharacter()">Create</button>
@@ -2999,10 +3005,12 @@ window.createNewCharacter = function() {
   // Decode the real base save for this class
   const buf = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
 
-  // Only patch: name and timestamp. Everything else stays byte-identical to the real save.
+  // Patch: name, timestamp, and HC flag
   for (let i = 0; i < 64; i++) buf[299 + i] = i < name.length ? name.charCodeAt(i) : 0;
   const now = Math.floor(Date.now() / 1000);
   buf[32] = now & 0xff; buf[33] = (now >> 8) & 0xff; buf[34] = (now >> 16) & 0xff; buf[35] = (now >> 24) & 0xff;
+  const isHC = document.getElementById('newCharHC')?.checked;
+  if (isHC) buf[20] |= 0x04; else buf[20] &= ~0x04;
 
   // Recalculate checksum
   writeU32LE(buf, 8, buf.length);
