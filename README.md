@@ -8,7 +8,7 @@ Browser-based editor for Diablo II: Resurrected `.d2s` save files using Reimagin
 
 This tool loads a character save file, parses its data, and provides an interface to edit stats, skills, inventory, quests, and other character properties. Changes can be exported as a new `.d2s` file.
 
-The editor depends on external Reimagined data files loaded at runtime. :contentReference[oaicite:0]{index=0}
+The editor depends on external Reimagined data files loaded at runtime.
 
 ---
 
