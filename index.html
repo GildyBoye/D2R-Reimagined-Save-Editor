@@ -7181,6 +7181,10 @@ function buildItemCatalog() {
       const isGem = /^(gm[a-z]|gc[a-z]|gf[a-z]|gs[a-z]|gl[a-z]|gp[a-z]|1[a-z]{2})$/.test(code) || (name.includes('Stack') && !isRune);
       const isCharm = /^cm[1-5]$/.test(code) || /^cs[12]$/.test(code);
 
+      // Respect spawnable column — items marked spawnable=0 are excluded from insertion
+      const spawnable = (row['spawnable'] || '').trim();
+      if (spawnable === '0') continue;
+
       if (hasTiers) {
         const norm  = (row['normcode']||'').trim();
         const uber  = (row['ubercode']||'').trim();
@@ -7192,11 +7196,6 @@ function buildItemCatalog() {
         ITEM_CATALOG.push({ code, name, tier, normCode: norm||code, normName, qual:2, category, typeName, typeCode,
           searchKey: (name + ' ' + normName + ' ' + code + ' ' + typeName).toLowerCase() });
       } else {
-        // Skip invalid/debug items and dyes (not insertable)
-        if (code === 'dys') continue;
-        const isDye = /^(dwd|abd|bdd|ird|ngd|cyd|ryd|hod|drm)$/.test(code) || name.includes('Dye');
-        if (isDye) continue;
-
         const isJewelry = /^(rin|amu|jew)$/.test(code) || typeCode === 'ring' || typeCode === 'amul';
         const isOrb = /^(oos|ooc|ooa|ooi|ooe|oor|ka3|1os|1oc|1oa|1oi|1oe|1or|1ka)$/.test(code) || name.includes('Orb of');
         const isSpecialMod = /^(rup|jwp|dkg|gmo|1so|1gc|mfp|xpp|php)$/.test(code)
