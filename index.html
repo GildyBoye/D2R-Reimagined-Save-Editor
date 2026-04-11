@@ -2625,6 +2625,9 @@ function getExpForLevel(level) {
 }
 
 function buildItemNameMap() {
+  // First build sizes and seed English fallback names
+  buildItemSizeMap();
+
   // Build code -> namestr lookup from loaded weapons/armor/misc txt
   const codeLookup = {};
   for (const src of ['weapons','armor','misc']) {
@@ -2675,7 +2678,6 @@ function buildItemNameMap() {
     console.log(`buildItemNameMap: loaded ${setItemNames.filter(Boolean).length} set item names`);
   }
 
-  buildItemSizeMap();
   buildItemCatalog();
   buildSkillNameMap();
   buildMagicAffixMaps();
@@ -2703,12 +2705,11 @@ let itemSizeByCode   = {};  // code -> [w, h]
 let itemNameByCode   = {};  // code -> display name
 
 function buildItemSizeMap() {
-  // Seed with built-in ITEM_INDEX data
+  // Seed with built-in ITEM_INDEX data (English fallback names)
   itemSizeByCode = {};
   itemNameByCode = {};
   for (const [code, name] of ITEM_INDEX) {
     if (code && name) itemNameByCode[code] = name;
-    // Sizes come from ITEM_SIZES[] (parallel array) and txt files
   }
   // Seed sizes from parallel ITEM_SIZES array
   for (let i = 0; i < ITEM_INDEX.length; i++) {
@@ -2716,7 +2717,8 @@ function buildItemSizeMap() {
     const sz   = ITEM_SIZES[i];
     if (code && sz) itemSizeByCode[code] = sz;
   }
-  // Override with live data from loaded txt files (Reimagined may differ)
+  // Override sizes from loaded txt files (Reimagined may differ)
+  // Names from TSV are English fallbacks — only set if no stringTable entry exists
   for (const key of ['weapons','armor','misc']) {
     const data = baseData[key];
     if (!data) continue;
@@ -2726,7 +2728,7 @@ function buildItemSizeMap() {
       const w = parseInt(row['invwidth']||'1', 10);
       const h = parseInt(row['invheight']||'1', 10);
       if (!code) continue;
-      if (name) itemNameByCode[code] = name;
+      if (name && !itemNameByCode[code]) itemNameByCode[code] = name;
       if (!isNaN(w) && !isNaN(h) && w>0 && h>0) itemSizeByCode[code] = [w, h];
     }
   }
