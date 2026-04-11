@@ -2437,9 +2437,190 @@ function buildRunewordTable() {
       const r = (row['Rune' + i] || '').trim();
       if (r) runes.push(r);
     }
-    if (runes.length > 0) RUNEWORD_TABLE.push({ name, runes });
+    // Count non-empty T1Code entries — each maps to 1 binary stat entry
+    let expectedStats = 0;
+    for (let i = 1; i <= 7; i++) {
+      const code = (row['T1Code' + i] || '').trim();
+      if (code) expectedStats++;
+    }
+    if (runes.length > 0) RUNEWORD_TABLE.push({ name, runes, expectedStats });
   }
   console.log(`buildRunewordTable: ${RUNEWORD_TABLE.length} runewords`);
+}
+
+// ── Expected mod counts for enchant detection ──
+let UNIQUE_EXPECTED_STATS = {}; // uniqueId → expected stat count
+let SET_EXPECTED_STATS = {};    // setId → expected stat count
+
+function buildExpectedStatCounts() {
+  UNIQUE_EXPECTED_STATS = {};
+  SET_EXPECTED_STATS = {};
+  // Unique items: count non-empty prop1-12 entries
+  const uData = baseData['uniqueitems'];
+  if (uData) {
+    uData.rows.forEach((row, idx) => {
+      let count = 0;
+      for (let i = 1; i <= 12; i++) {
+        if ((row['prop' + i] || '').trim()) count++;
+      }
+      UNIQUE_EXPECTED_STATS[idx] = count;
+    });
+  }
+  // Set items: count non-empty prop1-9 entries
+  const sData = baseData['setitems'];
+  if (sData) {
+    sData.rows.forEach((row, idx) => {
+      let count = 0;
+      for (let i = 1; i <= 9; i++) {
+        if ((row['prop' + i] || '').trim()) count++;
+      }
+      SET_EXPECTED_STATS[idx] = count;
+    });
+  }
+  console.log(`buildExpectedStatCounts: ${Object.keys(UNIQUE_EXPECTED_STATS).length} uniques, ${Object.keys(SET_EXPECTED_STATS).length} sets`);
+}
+
+// Get max enchant slots for an item based on its type
+function _getMaxEnchants(item) {
+  const tc = item.typeCode || '';
+  if (WEAPON_SET.has(tc)) return IS_2HANDED.has(tc) ? 10 : 5;
+  // Determine slot from bodyloc
+  const typeCode = ITEM_TYPE_BY_CODE[tc] || '';
+  const locs = ITEM_BODYLOC[typeCode];
+  if (locs) {
+    if (locs.has('tors')) return 5;
+    if (locs.has('larm') || locs.has('rarm')) {
+      // Could be shield or weapon — check if it's armor
+      if (ARMOR_SET.has(tc)) return 5; // shield
+    }
+    if (locs.has('head')) return 3;
+    if (locs.has('glov')) return 3;
+    if (locs.has('belt')) return 3;
+    if (locs.has('feet')) return 3;
+    if (locs.has('neck')) return 2; // amulet
+    if (locs.has('rrin') || locs.has('lrin')) return 2; // ring
+  }
+  // Fallback by equip slot
+  const slot = item.equipSlot || 0;
+  if (slot === 3) return 5;
+  if (slot === 5 || slot === 12) return 5;
+  if (slot === 1) return 3;
+  if (slot === 8 || slot === 9 || slot === 10) return 3;
+  if (slot === 2 || slot === 6 || slot === 7) return 2;
+  return 0;
+}
+
+// Build map of expected stat ID → count for an item from data files
+// Returns { counts: Map, complete: boolean } — complete=false if some props couldn't be resolved
+function _getExpectedStatIds(item) {
+  const counts = new Map(); // statId → expected count
+  let totalProps = 0, resolvedProps = 0;
+  if (typeof propCodeToStatEntries !== 'function' || !STAT_BY_NAME) return counts;
+
+  function addFromPropCodes(source, propPrefix, minPrefix, maxPrefix, parPrefix, maxN) {
+    if (!source) return;
+    for (let i = 1; i <= maxN; i++) {
+      const code = (source[propPrefix + i] || '').trim();
+      if (!code) continue;
+      totalProps++;
+      const mn = parseInt(source[minPrefix + i] || '0', 10);
+      const mx = parseInt(source[maxPrefix + i] || '0', 10);
+      const par = source[parPrefix + i] || '';
+      try {
+        const entries = propCodeToStatEntries(code, mn, mx, par, true);
+        if (entries.length > 0) resolvedProps++;
+        for (const e of entries) {
+          if (e.id !== undefined) counts.set(e.id, (counts.get(e.id) || 0) + 1);
+        }
+      } catch(e) {}
+    }
+  }
+
+  try {
+    if (item.runeword) {
+      const rwName = resolveRunewordName(item);
+      const rows = baseData['runes']?.rows;
+      if (rwName && rows) {
+        const row = rows.find(r => {
+          const n = r['*Rune Name'] || r.Name || '';
+          return (stringTable[n] || n) === rwName || n === rwName;
+        });
+        if (row) addFromPropCodes(row, 'T1Code', 'T1Min', 'T1Max', 'T1Param', 7);
+      }
+    } else if (item.quality === 7 && item.uniqueId !== undefined && item.uniqueId < 4095) {
+      const uData = baseData['uniqueitems'];
+      if (uData && uData.rows[item.uniqueId]) addFromPropCodes(uData.rows[item.uniqueId], 'prop', 'min', 'max', 'par', 12);
+    } else if (item.quality === 5 && item.setItemId !== undefined) {
+      const sData = baseData['setitems'];
+      if (sData && sData.rows[item.setItemId]) addFromPropCodes(sData.rows[item.setItemId], 'prop', 'min', 'max', 'par', 9);
+    } else if (item.quality === 4) {
+      if (item._prefixId && MAGIC_PREFIX_MODS && MAGIC_PREFIX_MODS[item._prefixId]) {
+        for (const m of MAGIC_PREFIX_MODS[item._prefixId].mods) {
+          try { const entries = propCodeToStatEntries(m.code, m.min, m.max, m.param||'', true);
+            for (const e of entries) { if (e.id !== undefined) counts.set(e.id, (counts.get(e.id)||0)+1); }
+          } catch(e) {}
+        }
+      }
+      if (item._suffixId && MAGIC_SUFFIX_MODS && MAGIC_SUFFIX_MODS[item._suffixId]) {
+        for (const m of MAGIC_SUFFIX_MODS[item._suffixId].mods) {
+          try { const entries = propCodeToStatEntries(m.code, m.min, m.max, m.param||'', true);
+            for (const e of entries) { if (e.id !== undefined) counts.set(e.id, (counts.get(e.id)||0)+1); }
+          } catch(e) {}
+        }
+      }
+    }
+  } catch(e) {}
+  // Mark as incomplete if some property codes failed to resolve
+  counts._complete = (totalProps > 0 && resolvedProps >= totalProps);
+  return counts;
+}
+
+// Build map of expected stat ID → expected value for detecting enchant boosts on merged stats
+function _getExpectedStatValues(item) {
+  const vals = new Map();
+  if (typeof propCodeToStatEntries !== 'function') return vals;
+
+  function addValues(source, propPrefix, minPrefix, maxPrefix, parPrefix, maxN) {
+    if (!source) return;
+    for (let i = 1; i <= maxN; i++) {
+      const code = (source[propPrefix + i] || '').trim();
+      if (!code) continue;
+      const mn = parseInt(source[minPrefix + i] || '0', 10);
+      const mx = parseInt(source[maxPrefix + i] || '0', 10);
+      const par = source[parPrefix + i] || '';
+      try {
+        const entries = propCodeToStatEntries(code, mn, mx, par, true);
+        for (const e of entries) {
+          if (e.id !== undefined) {
+            const info = STAT_BY_NAME[Object.keys(STAT_BY_NAME).find(k => STAT_BY_NAME[k].id === e.id)] || {};
+            const displayVal = e.encodedValue - (info.saveAdd || 0);
+            vals.set(e.id, (vals.get(e.id) || 0) + displayVal);
+          }
+        }
+      } catch(e) {}
+    }
+  }
+
+  try {
+    if (item.runeword) {
+      const rwName = resolveRunewordName(item);
+      const rows = baseData['runes']?.rows;
+      if (rwName && rows) {
+        const row = rows.find(r => {
+          const n = r['*Rune Name'] || r.Name || '';
+          return (stringTable[n] || n) === rwName || n === rwName;
+        });
+        if (row) addValues(row, 'T1Code', 'T1Min', 'T1Max', 'T1Param', 7);
+      }
+    } else if (item.quality === 7 && item.uniqueId !== undefined && item.uniqueId < 4095) {
+      const uData = baseData['uniqueitems'];
+      if (uData && uData.rows[item.uniqueId]) addValues(uData.rows[item.uniqueId], 'prop', 'min', 'max', 'par', 12);
+    } else if (item.quality === 5 && item.setItemId !== undefined) {
+      const sData = baseData['setitems'];
+      if (sData && sData.rows[item.setItemId]) addValues(sData.rows[item.setItemId], 'prop', 'min', 'max', 'par', 9);
+    }
+  } catch(e) {}
+  return vals;
 }
 
 // Find runeword name by matching socketed rune codes
@@ -2696,6 +2877,7 @@ function buildItemNameMap() {
   buildEquipRestrictions();
   buildWeaponAndBeltMeta();
   buildRunewordTable();
+  buildExpectedStatCounts();
   buildSkillTreeData();
   buildExpTable();
 }
@@ -6431,13 +6613,64 @@ function ensureItemProps(item) {
   if (ext.uniqueId !== null) item.uniqueId = ext.uniqueId;
   if (ext.setId    !== null) { item.setId = ext.setId; item.setItemId = ext.setId; }
   if (ext.socketCount > 0)   item.numSockets = ext.socketCount;
-  if (ext.prefixId)          item._prefixId  = ext.prefixId;
-  if (ext.suffixId)          item._suffixId  = ext.suffixId;
+  if (ext._prefixId)         item._prefixId  = ext._prefixId;
+  if (ext._suffixId)         item._suffixId  = ext._suffixId;
   if (ext.rareAffixes)       item._rareAffixes = ext.rareAffixes;
   if (ext.rareNameId1 !== undefined) item._rareNameId1 = ext.rareNameId1;
   if (ext.rareNameId2 !== undefined) item._rareNameId2 = ext.rareNameId2;
   item._mods = ext.mods || [];
   if (ext.setBonusMods) item._setBonusMods = ext.setBonusMods;
+  // Compute enchant info
+  const maxEnch = _getMaxEnchants(item);
+  // Always check for enchant counter stats in item mods, regardless of type lookup
+  {
+    item._maxEnchants = maxEnch;
+    try {
+      // Check for enchant counter stats (IDs 392-395) — the game stores the actual enchant count
+      // 392=max2(jewelry), 393=max3(helm/gloves/belt/boots), 394=max5(armor/shield/1h), 395=max10(2h)
+      const ENCH_MAX = {392:2, 393:3, 394:5, 395:10};
+      const enchCounterMod = item._mods.find(m => m.id >= 392 && m.id <= 395);
+      if (enchCounterMod && enchCounterMod.value > 0) {
+        item._enchantCount = enchCounterMod.value;
+        item._maxEnchants = ENCH_MAX[enchCounterMod.id] || maxEnch || 5;
+      }
+
+      // Identify enchant mods: only for runewords (reliable T1Code mapping)
+      // Other item types (unique/set/magic/rare) have too many mod-specific property codes
+      // that can't be reliably resolved, so we show "unable to parse" for those
+      if (item.runeword) {
+        const expectedCounts = _getExpectedStatIds(item);
+        if (expectedCounts.size > 0) {
+          const expectedValues = _getExpectedStatValues(item);
+          const remaining = new Map(expectedCounts);
+          item._enchantIndices = [];
+          item._enchantBoosts = [];
+          for (let i = 0; i < item._mods.length; i++) {
+            const mod = item._mods[i];
+            if (mod.id >= 392 && mod.id <= 395) continue;
+            const rem = remaining.get(mod.id) || 0;
+            if (rem > 0) {
+              remaining.set(mod.id, rem - 1);
+              const expVal = expectedValues.get(mod.id);
+              if (expVal && mod.value > expVal) {
+                item._enchantBoosts.push({id: mod.id, boost: mod.value - expVal});
+              }
+            } else {
+              item._enchantIndices.push(i);
+            }
+          }
+        }
+      }
+
+      // If no counter stat found, fall back to counting extra mods
+      if (!item._enchantCount && item._enchantIndices?.length > 0) {
+        item._enchantCount = Math.min(item._enchantIndices.length, maxEnch);
+      }
+      if (!item._enchantCount) item._enchantCount = 0;
+    } catch(e) {
+      item._enchantCount = 0;
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -6460,10 +6693,10 @@ const STAT_DEF={
   17:['+{v}% Enhanced Damage',0,0],
   19:['+{v} to Attack Rating',0,0],
   20:['{v}% Increased Chance of Blocking',0,0],
-  21:['+{v} to Minimum Weapon Damage',0,0],
-  22:['+{v} to Maximum Weapon Damage',0,0],
-  23:['+{v} to Minimum Weapon Damage',0,0],
-  24:['+{v} to Maximum Weapon Damage',0,0],
+  21:['+{v} to Minimum Damage',0,0],
+  22:['+{v} to Maximum Damage',0,0],
+  23:['+{v} to Secondary Min Damage',0,0],
+  24:['+{v} to Secondary Max Damage',0,0],
   25:['+{v}% Enhanced Weapon Damage',0,0],
   27:['+{v}% Mana Regeneration',0,0],
   28:['Heal Stamina Plus {v}%',0,0],
@@ -6496,7 +6729,7 @@ const STAT_DEF={
   79:['+{v}% Extra Gold from Monsters',100,0],
   80:['+{v}% Chance Items Roll Magic or Better',100,0],
   81:['Knockback',0,0],
-  83:['+{v} to Amazon Skill Levels',0,3],
+  83:['+{v} to {p} Skill Levels',0,3],
   85:['+{v}% to Experience Gained',50,0],
   86:['+{v} Life after each Kill',0,0],
   87:['Vendor Prices Reduced By {v}%',0,0],
@@ -6569,7 +6802,7 @@ const STAT_DEF={
   199:['{v}% Chance to cast level {v} {p} when you Level-Up',0,16],
   200:['ÿc4+{v}% chance for finishing moves to not consume chargesÿc3',0,0],
   201:['{v}% Chance to cast level {v} {p} when struck',0,16],
-  204:['Level {v} {p} ({v}/{v} Charges)',0,16],
+  204:['Level {L} {p} ({v}/{v2} Charges)',0,16],
   205:['+{v}% Chance to not consume Quantity',0,0],
   214:['+{v} Defense',0,0],
   215:['+{v}% Enhanced Defense',0,0],
@@ -6786,10 +7019,11 @@ function decodeItemProperties(buf, byteOff, item) {
     const q=rbL(bit,4);bit+=4;r.quality=q;
     if(rbL(bit,1))bit+=4;else bit+=1;
     if(rbL(bit,1))bit+=12;else bit+=1;
+    // D2R Reimagined adds 1 extra bit after quality-specific data for all extended quality types
     if(q===1)bit+=3;else if(q===3)bit+=3;else if(q===4){
-      // Magic items: 11-bit prefix ID then 11-bit suffix ID
-      r.prefixId=rbL(bit,11);bit+=11;
-      r.suffixId=rbL(bit,11);bit+=11;
+      r._prefixId=rbL(bit,11);bit+=11;
+      r._suffixId=rbL(bit,11);bit+=11;
+      bit+=1;
     }
     else if(q===5){r.setId=rbL(bit,12);bit+=12;}
     else if(q===7){r.uniqueId=rbL(bit,12);bit+=12;}
@@ -6799,8 +7033,9 @@ function decodeItemProperties(buf, byteOff, item) {
       r.rareAffixes=[];
       for(let i=0;i<6;i++){
         const flag=rbL(bit,1);bit+=1;
-        if(flag){r.rareAffixes.push({slot:i,id:rbL(bit,12)});bit+=12;}
+        if(flag){r.rareAffixes.push({slot:i,id:rbL(bit,11)});bit+=11;}
       }
+      bit+=1;
     }
     if(item.runeword)bit+=16; // runeword padding (name resolved by matching socketed runes)
     if(item.personalized){for(let i=0;i<50;i++){const c=rbL(bit,7);bit+=7;if(!c)break;}}
@@ -6814,28 +7049,33 @@ function decodeItemProperties(buf, byteOff, item) {
     if(STACK_SET.has(code))bit+=9;
     if(item.socketed)bit+=4;
     let sbf=0;if(q===5){sbf=rbL(bit,5);bit+=5;}
-    const {mods,endBit}=_readPropList(buf,byteOff,bit);r.mods=mods;bit=endBit;
+    const {mods,endBit}=_readPropList(buf,byteOff,bit);r.mods=mods;r._baseModCount=mods.length;bit=endBit;
     if(q===5){r.setBonusMods=[];for(let fi=0;fi<5;fi++){if(sbf&(1<<fi)){const {mods:bm,endBit:eb}=_readPropList(buf,byteOff,bit);r.setBonusMods.push({pieces:fi+2,mods:bm});bit=eb;}}}
-    if(item.runeword){const {mods:rm,endBit:re}=_readPropList(buf,byteOff,bit);r.mods=r.mods.concat(rm);}
+    if(item.runeword){const {mods:rm,endBit:re}=_readPropList(buf,byteOff,bit);r._rwModCount=rm.length;r.mods=r.mods.concat(rm);bit=re;}
   }catch(e){r.decodeError=e.message;}
   return r;
 }
 
 function _formatMod(id,param,value,value2){
-  // Blacklisted internal/system stats - never display
-  const _BL=new Set([26, 56, 59, 67, 68, 71, 72, 73, 82, 88, 90, 94, 98, 109, 126, 140, 159, 160, 181, 185, 186, 200, 206, 207, 212, 213, 215, 219, 220, 221, 222, 223, 224, 225, 226, 227, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 324, 329, 330, 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343, 344, 345, 346, 347, 348, 349, 356, 357, 358, 362, 366, 368, 369, 370, 371, 372, 373, 374, 375, 376, 377, 384, 386, 392, 393, 394, 395, 396, 404, 405, 406, 407, 408, 409, 410, 411, 412, 419, 420, 431, 432, 433]);
+  // Blacklisted internal/system stats only — minimal list to avoid hiding valid D2RR stats
+  const _BL=new Set([56, 59, 67, 68, 71, 72, 73, 82, 88, 90, 94, 98, 109, 126, 140, 159, 160, 181, 200, 206, 207, 212, 213, 392, 393, 394, 395, 396, 419, 420, 432]);
   if(_BL.has(id))return null;
   const def=STAT_DEF[id];
   if(!def)return null;
   let t=def[0];
   // Elemental damage pair (min/max combined in one template)
   if(t.includes('{v2}')||t.includes('{L}')){
-    // Skill on hit: param = (skill_id<<6)|level, value=chance
-    // Charged skill: param = (skill_id<<6)|level, value=charges remaining, value2=max charges
     let skillId=param>>6, level=param&0x3F;
     const skillName=skillNameById[skillId]||'Skill#'+skillId;
-    t=t.replace('{v}',String(value))
-       .replace('{v2}',String(value2!==undefined?value2:'?'))
+    // Charged skill (stat 204): stored value packs current|max charges as (max<<8)|current
+    let curCharges = value, maxCharges = value2;
+    if(id===204){
+      const rawStored = value + (def[1] || 0); // reconstruct stored from value + saveAdd
+      curCharges = rawStored & 0xFF;
+      maxCharges = rawStored >> 8;
+    }
+    t=t.replace('{v}',String(curCharges))
+       .replace('{v2}',String(maxCharges!==undefined?maxCharges:'?'))
        .replace('{L}',String(level))
        .replace('{p}',skillName);
     return t;
@@ -6867,26 +7107,15 @@ function _formatMod(id,param,value,value2){
   if(id===194 && value===0) return null;
   // Hide oskill_hide stats (non-class skill with hidden param)
   if(id===97) return null;
-  // Filter absurdly large values (Reimagined internal bytime/perlevel modifiers)
-  if(Math.abs(value)>9999) return null;
-  // Reimagined internal stat IDs that should never display
-  const INTERNAL_STATS=new Set([206, 207, 212, 213, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 329, 330, 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343, 344, 345, 346, 347, 348, 349, 357, 358, 370, 371, 372, 373, 374, 375, 376, 377, 384, 386, 392, 393, 394, 395, 396, 404, 405, 406, 407, 408, 409, 410, 411, 412, 419, 420, 432]);
-  if(INTERNAL_STATS.has(id)) return null;
+  // Filter absurdly large values that indicate binary decode errors
+  if(Math.abs(value)>50000) return null;
   // Filter zero-value stats that aren't meaningful flags
   if(value===0 && id!==152 && id!==153 && id!==116 && id!==194) return null;
-  // Filter negative values on stats that should only be positive bonuses on items
-  const _POS_ONLY=new Set([0,1,2,3,7,9,11,21,22,23,24,31,32,33,127,128]);
-  if(_POS_ONLY.has(id) && value<0) return null;
-  // Filter unreasonably large values (>1000) that indicate corruption
-  if(Math.abs(value)>1000 && id!==204) return null;
-  // For attribute stats (str/dex/vit/ene), values over 150 are internal tracking data
-  // (Reimagined stores system data in stat 0-3 at high values like 136, 184)
-  if(id<=3 && Math.abs(value)>100) return null;
   return t;
 }
-function _formatMods(mods){
+function _formatMods(mods, skipDedup){
   const lines=[];const skip=new Set();
-  const seenIds=new Set();  // deduplicate: real items never have the same stat twice
+  const seenIds=new Set();  // deduplicate unless skipDedup is true
   const pairs={135:136,137:138,139:140,141:142};
   for(let i=0;i<mods.length;i++){
     if(skip.has(i))continue;
@@ -6901,8 +7130,8 @@ function _formatMods(mods){
     }
     // Skip follow stats that have already been consumed as value2 of their leader
     if(id===18&&i>0&&mods[i-1]&&mods[i-1].id===17) continue;
-    // Skip duplicate stat IDs — internal tracking stats repeat genuine stat IDs
-    if(seenIds.has(id)) continue;
+    // Skip duplicate stat IDs — unless processing enchant mods (which can duplicate base stats)
+    if(!skipDedup && seenIds.has(id)) continue;
     const l=_formatMod(id,param,value,value2);
     if(l!==null){ lines.push(l); seenIds.add(id); }
   }
@@ -6920,34 +7149,55 @@ function buildItemTooltipHtml(item) {
   decodedIlvl = item.itemLevel || 0;
   decodedQual = item.quality   || 2;
   if(item.numSockets>0) flags.push(`<span style="color:#aaa">${item.numSockets} Sockets</span>`);
+  // Enchant counter
+  if(item._enchantCount > 0 && item._maxEnchants > 0){
+    flags.push(`<span style="color:#c060ff">Enchanted ${item._enchantCount}/${item._maxEnchants}</span>`);
+  }
   // Resolve item stats from txt tables (not binary prop list)
   const resolved = resolveItemMods(item);
-  if(resolved.lines.length){
+  const enchIndices = new Set(item._enchantIndices || []);
+  const enchCount = item._enchantCount ?? 0;
+  // Helper: render enchant section with boosts + extra mods, or "unable to parse" fallback
+  function _renderEnchantSection() {
+    if (enchCount <= 0) return '';
+    const enchMods = item._mods ? item._mods.filter((m,i) => enchIndices.has(i)) : [];
+    const enchLines = _formatMods(enchMods, true);
+    const boostLines = (item._enchantBoosts||[]).map(b => _formatMod(b.id, 0, b.boost)).filter(Boolean);
+    let html = '<hr class="tt-divider"><div style="font-size:10px;font-family:\'Cinzel\',serif;color:#c060ff;letter-spacing:0.5px;margin-bottom:2px">Enchantments</div>';
+    if (boostLines.length || enchLines.length) {
+      html += boostLines.map(l=>`<div class="tt-mod" style="color:#c060ff">${esc(l)}</div>`).join('');
+      html += enchLines.map(l=>`<div class="tt-mod" style="color:#c060ff">${esc(l)}</div>`).join('');
+    } else {
+      html += '<div class="tt-mod" style="color:#c060ff;opacity:0.7;font-style:italic">Enchants unable to be parsed.</div>';
+    }
+    return html;
+  }
+
+  // Use txt-based resolution for set/unique (reliable data files)
+  // Use binary mods for magic/rare/normal/runeword (txt resolution incomplete for D2RR)
+  const useTxtPrimary = resolved.lines.length > 0 && (decodedQual === 5 || decodedQual === 7);
+
+  if(useTxtPrimary){
     propHtml='<hr class="tt-divider">'+resolved.lines.map(l=>`<div class="tt-mod">${esc(l)}</div>`).join('');
+    if(enchCount > 0) propHtml += _renderEnchantSection();
   } else if(item._mods && item._mods.length){
-    // Fallback to binary prop list for items not yet covered (normal/superior, runewords)
-    const lines=_formatMods(item._mods);
-    if(lines.length)propHtml='<hr class="tt-divider">'+lines.map(l=>`<div class="tt-mod">${esc(l)}</div>`).join('');
+    // Binary mods as primary for magic/rare/normal/runeword
+    if(enchCount > 0 && (enchIndices.size > 0 || (item._enchantBoosts||[]).length > 0)) {
+      const boostMap = new Map((item._enchantBoosts||[]).map(b => [b.id, b.boost]));
+      const baseMods = item._mods.filter((m,i) => !enchIndices.has(i)).map(m => {
+        const boost = boostMap.get(m.id);
+        return boost ? {...m, value: m.value - boost} : m;
+      });
+      const baseLines = _formatMods(baseMods);
+      if(baseLines.length) propHtml='<hr class="tt-divider">'+baseLines.map(l=>`<div class="tt-mod">${esc(l)}</div>`).join('');
+      propHtml += _renderEnchantSection();
+    } else {
+      const lines=_formatMods(item._mods);
+      if(lines.length) propHtml='<hr class="tt-divider">'+lines.map(l=>`<div class="tt-mod">${esc(l)}</div>`).join('');
+      if(enchCount > 0) propHtml += _renderEnchantSection();
+    }
   } else if(!item.simple && !item.isVirtual && item.byteOffset>=0 && item.identified===0){
     propHtml='<div class="tt-mod" style="color:var(--d2-text-dim);font-style:italic">Unidentified</div>';
-  }
-  // Set bonuses from txt tables
-  if(resolved.setBonusLines && resolved.setBonusLines.length){
-    for(const bonus of resolved.setBonusLines){
-      if(!bonus.lines.length) continue;
-      const label = bonus.pieces === 'full' ? 'Full Set Bonus' : `${bonus.pieces}-Piece Bonus`;
-      const color = bonus.pieces === 'full' ? 'var(--d2-gold)' : '#00c800';
-      propHtml += `<hr class="tt-divider"><div class="tt-mod" style="color:${color};font-size:10px;opacity:0.8">${label}:</div>`;
-      propHtml += bonus.lines.map(l=>`<div class="tt-mod" style="color:${color}">${esc(l)}</div>`).join('');
-    }
-  } else if(item._setBonusMods && item._setBonusMods.length){
-    // Fallback to binary set bonus mods
-    for(const bonus of item._setBonusMods){
-      const blines=_formatMods(bonus.mods);
-      if(!blines.length) continue;
-      propHtml += `<hr class="tt-divider"><div class="tt-mod" style="color:#00c800;font-size:10px;opacity:0.8">${bonus.pieces}-Piece Bonus:</div>`;
-      propHtml += blines.map(l=>`<div class="tt-mod" style="color:#00c800">${esc(l)}</div>`).join('');
-    }
   }
   if(!item.identified)flags.push('<span style="color:var(--d2-text-dim)">Unidentified</span>');
   if(item.ethereal)flags.push('<span style="color:#7090d0">Ethereal</span>');
@@ -6999,9 +7249,24 @@ function buildItemTooltipHtml(item) {
           <span style="color:var(--d2-text-dim);font-size:10px">/ ${maxSock} max</span>
         </div>`;
       }
-      return curSock > 0
+      let sockHtml = curSock > 0
         ? `<div class="tt-row"><span style="color:var(--d2-text-dim)">Sockets:</span><b>${curSock}</b><span style="color:var(--d2-text-dim);font-size:10px">/ ${maxSock} max</span></div>`
         : `<div class="tt-row"><span style="color:var(--d2-text-dim)">Max Sockets:</span><b>${maxSock}</b></div>`;
+      // Show socketed item contents
+      if (curSock > 0 && parsedChar?.items) {
+        const myOff = item.byteOffset;
+        let found = false;
+        for (const it of parsedChar.items) {
+          if (it === item) { found = true; continue; }
+          if (!found) continue;
+          const p = it.parent ?? it.location ?? 0;
+          if (p === 6 && it.byteOffset > myOff) {
+            const {name:sName, cls:sCls} = itemDisplayName(it);
+            sockHtml += `<div class="tt-row" style="padding-left:8px"><span style="color:var(--d2-text-dim)">◆</span> <span class="${sCls}" style="font-size:11px">${esc(sName)}</span></div>`;
+          } else if (p !== 6) break;
+        }
+      }
+      return sockHtml;
     })()}
     ${item.isVirtual && decodedQual >= 4 ? `<div style="margin:4px 0;display:flex;align-items:center;gap:6px">
       <input type="checkbox" id="ttMaxVals_${item.byteOffset}" ${item.useMaxValues?'checked':''}
