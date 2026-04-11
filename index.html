@@ -2780,6 +2780,15 @@ function loadFile(file) {
 }
 
 function onFileLoaded() {
+  // Validate save version before parsing — reject old format saves
+  if (rawBytes.length >= 8) {
+    const ver = rawBytes[4] | (rawBytes[5]<<8) | (rawBytes[6]<<16) | (rawBytes[7]<<24);
+    if (ver < 105) {
+      showPopup(`This save file uses an outdated format (version ${ver}).\n\nOnly D2R Reimagined 3.0+ saves (version 105) are supported.\n\nPlease update your character in-game before editing.`);
+      return;
+    }
+  }
+
   workBytes  = new Uint8Array(rawBytes); // mutable copy
   parsedChar = parseD2S(workBytes);
   snapshotQuestState();
@@ -4562,6 +4571,15 @@ function buildSkillTreeData() {
     for (let t = 1; t <= 3; t++) {
       const key = `SkillCategory${prefix}${t}`;
       let name = (stringTable[key] || '').replace(/\n/g, ' ').trim();
+      if (!name) {
+        // Fallback: try charstats StrSkillTab keys via item-modifiers string table
+        const cr = getCharStats(ci);
+        const tabKey = cr ? (cr[`StrSkillTab${t}`]||'').trim() : '';
+        if (tabKey && stringTable[tabKey]) {
+          name = stringTable[tabKey].replace(/%\+d\s*(to\s+)?/gi,'').replace(/\s+Skills?\s*$/i,'')
+            .replace(/[（(]\s*%\+d\s*[)）]/g,'').replace(/\s*%\+d\s*/g,'').trim();
+        }
+      }
       tabs.push(name || `Tree ${t}`);
     }
     CLASS_TREE_NAMES.push(tabs);
