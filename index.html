@@ -905,6 +905,8 @@ function cleanStringValue(s) {
   s = s.replace(/\\n[\s\S]*/g, '');         // \n and everything after (pickup text)
   s = s.replace(/\n[\s\S]*/g, '');          // literal newline and after
   s = s.replace(/~[^~]*~/g, '');            // ~Pick Up~ style annotations
+  s = s.replace(/\*+$/g, '');               // trailing * artifacts from color code stripping
+  s = s.replace(/^\[ms\]/i, '');            // [ms] gender prefix in some languages
   return s.trim();
 }
 
@@ -1163,9 +1165,9 @@ async function startBaseFileLoad() {
           const raw = entry[_currentLang] || entry.enUS || entry['en-US'] || '';
           if (!raw) continue;
           const val = cleanStringValue(raw);
-          const isUI = key.startsWith('ui_');
+          const isUI = key.startsWith('ui_') || key.startsWith('q_');
           if (isUI) { if (val) { stringTable[key] = val; added++; } continue; }
-          if (val && val.length > 2 && !/^[A-Z]{2,3}\d?$/.test(val) && !val.includes('%')) {
+          if (val && val.length > 1 && !val.includes('%')) {
             stringTable[key] = val;
             added++;
           }
@@ -1252,7 +1254,7 @@ function rebuildStringsForLang(lang) {
     // UI strings (ui_ prefix) bypass strict filters — they're always valid
     const isUI = key.startsWith('ui_');
     if (isUI) { if (val) stringTable[key] = val; continue; }
-    if (val && val.length > 2 && !/^[A-Z]{2,3}\d?$/.test(val) && !val.includes('%')) {
+    if (val && val.length > 1 && !val.includes('%')) {
       stringTable[key] = val;
     }
   }
@@ -5286,10 +5288,10 @@ function itemDisplayName(item) {
   const tc = item.typeCode || '';
 
   // Tome/scroll: short names + distinctive colors
-  if (tc === 'tbk') return { name: 'TP Tome',   cls: 'iq-tp' };
-  if (tc === 'tsc') return { name: 'TP Scroll', cls: 'iq-tp' };
-  if (tc === 'ibk') return { name: 'ID Tome',   cls: 'iq-id' };
-  if (tc === 'isc') return { name: 'ID Scroll', cls: 'iq-id' };
+  if (tc === 'tbk') return { name: itemNameByCode['tbk'] || 'TP Tome',   cls: 'iq-tp' };
+  if (tc === 'tsc') return { name: itemNameByCode['tsc'] || 'TP Scroll', cls: 'iq-tp' };
+  if (tc === 'ibk') return { name: itemNameByCode['ibk'] || 'ID Tome',   cls: 'iq-id' };
+  if (tc === 'isc') return { name: itemNameByCode['isc'] || 'ID Scroll', cls: 'iq-id' };
 
   // Quest items — always gold text
   if (QUEST_ITEM_CODES.has(tc)) {
@@ -7865,7 +7867,7 @@ function renderMercenary(c) {
   const { merc } = parsedChar.items ? getItemsByLocation() : { merc: [] };
 
   if (!h.hasMerc) {
-    c.innerHTML = `${h2('Mercenary')}<p class="note">No mercenary hired.</p>`;
+    c.innerHTML = `${h2(L('ui_tab_mercenary','Mercenary'))}<p class="note">${L('ui_no_merc','No mercenary hired.')}</p>`;
     return;
   }
 
@@ -7958,28 +7960,28 @@ function renderMercenary(c) {
   if (!skillsHtml) skillsHtml = '<p class="note">No skills data.</p>';
 
   c.innerHTML = `
-    ${h2('Mercenary')}
+    ${h2(L('ui_tab_mercenary','Mercenary'))}
     <div class="stat-grid" style="margin-bottom:16px">
-      ${card('Name', `<div class="stat-input" style="cursor:default;opacity:0.8">${esc(mercName)}</div>`)}
-      ${card('Type', `<div class="stat-input" style="cursor:default;opacity:0.8">${esc(typeName)}</div>`)}
-      ${card('Level', numIn(mercLevel, 1, 98, 'inpMercLevel'))}
-      ${card('Experience', numIn(h.mercExp||0, 0, '', 'inpMercExp'))}
+      ${card(L('ui_name','Name'), `<div class="stat-input" style="cursor:default;opacity:0.8">${esc(mercName)}</div>`)}
+      ${card(L('ui_merc_type','Type'), `<div class="stat-input" style="cursor:default;opacity:0.8">${esc(typeName)}</div>`)}
+      ${card(L('ui_level','Level'), numIn(mercLevel, 1, 98, 'inpMercLevel'))}
+      ${card(L('ui_experience','Experience'), numIn(h.mercExp||0, 0, '', 'inpMercExp'))}
     </div>
-    ${h2('Stats at Level ' + mercLevel)}
+    ${h2(L('ui_merc_stats','Stats at Level') + ' ' + mercLevel)}
     <div class="stat-grid" style="margin-bottom:16px">
-      ${card('Life', `<div class="stat-input" style="cursor:default;opacity:0.8" id="mercHp">${stats.hp}</div>`)}
-      ${card('Strength', `<div class="stat-input" style="cursor:default;opacity:0.8" id="mercStr">${stats.str}</div>`)}
-      ${card('Dexterity', `<div class="stat-input" style="cursor:default;opacity:0.8" id="mercDex">${stats.dex}</div>`)}
-      ${card('Defense', `<div class="stat-input" style="cursor:default;opacity:0.8" id="mercDef">${stats.def}</div>`)}
-      ${card('Attack Rating', `<div class="stat-input" style="cursor:default;opacity:0.8" id="mercAr">${stats.ar}</div>`)}
+      ${card(L('ui_life','Life'), `<div class="stat-input" style="cursor:default;opacity:0.8" id="mercHp">${stats.hp}</div>`)}
+      ${card(L('ui_strength','Strength'), `<div class="stat-input" style="cursor:default;opacity:0.8" id="mercStr">${stats.str}</div>`)}
+      ${card(L('ui_dexterity','Dexterity'), `<div class="stat-input" style="cursor:default;opacity:0.8" id="mercDex">${stats.dex}</div>`)}
+      ${card(L('ui_merc_defense','Defense'), `<div class="stat-input" style="cursor:default;opacity:0.8" id="mercDef">${stats.def}</div>`)}
+      ${card(L('ui_merc_ar','Attack Rating'), `<div class="stat-input" style="cursor:default;opacity:0.8" id="mercAr">${stats.ar}</div>`)}
     </div>
     <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
       <div>
-        ${h2('Equipment')}
+        ${h2(L('ui_equipped','Equipment'))}
         ${paperdoll}
       </div>
       <div style="min-width:180px">
-        ${h2('Skills')}
+        ${h2(L('ui_tab_skills','Skills'))}
         <div class="skill-list" id="mercSkillList">${skillsHtml}</div>
       </div>
     </div>
