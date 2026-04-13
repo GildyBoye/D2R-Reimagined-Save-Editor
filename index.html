@@ -1866,6 +1866,8 @@ function propToDisplay(code, min, max, par) {
   if (code === 'att%') { lines.push(`${sign}${val}% Bonus to Attack Rating`); return lines; }
   if (code === 'dmg-elem') {
     lines.push(`Adds ${min}-${max} Fire Damage`);
+    lines.push(`Adds ${min}-${max} Lightning Damage`);
+    lines.push(`Adds ${min}-${max} Cold Damage`);
     return lines;
   }
   if (code === 'sock') { lines.push(`Socketed (${val})`); return lines; }
@@ -3501,11 +3503,13 @@ const HUFF_ENC = {' ':'10','0':'11111011','1':'1111100','2':'001100','3':'110110
 function encodeCompactItem(code, col, row, storage, parent, equipSlot) {
   const buf = new Uint8Array(20);
   const wb = (pos, v) => { if (v) buf[pos>>3] |= (1 << (pos & 7)); };
+  // Gems use b13=1, b17=0; everything else (potions/scrolls/misc) uses b13=0, b17=1
+  const isGem = /^gm[a-z]$/.test(code) || /^gf[a-z]$/.test(code) || /^gs[a-z]$/.test(code)
+             || /^gl[a-z]$/.test(code) || /^gp[a-z]$/.test(code) || /^gc[a-z]$/.test(code);
   wb(4,  1);  // identified
-  wb(13, 1);  // D2RR item flag (required on all items)
-  wb(17, 1);  // D2R flag (set on compact items like potions/scrolls)
+  if (isGem) wb(13, 1);  else wb(17, 1);  // gems get b13; potions/scrolls/misc get b17
   wb(21, 1);  // simple/compact
-  wb(23, 1);  // always-1 marker (b2 & 0x80)
+  wb(23, 1);  // always-1 marker
   wb(32, 1);  // D2R padding bits
   wb(34, 1);
   for (let i=0;i<3;i++) wb(35+i, (parent>>i)&1);
@@ -3517,8 +3521,14 @@ function encodeCompactItem(code, col, row, storage, parent, equipSlot) {
   for (const ch of ((code||'???').slice(0,3) + ' ')) {
     for (const b of (HUFF_ENC[ch] || '')) { wb(pos, b==='1'?1:0); pos++; }
   }
-  wb(pos, 1); pos++;           // compact tail bit
-  while (pos & 7) pos++;       // align to byte
+  if (isGem) {
+    pos++;                      // 0 bit after Huffman
+    wb(pos, 1); pos++;          // 1 bit (gem tail marker)
+    while (pos & 7) pos++;      // align to byte
+    pos += 8;                   // extra zero byte (game requires it)
+  } else {
+    while (pos & 7) pos++;      // align to byte
+  }
   return buf.slice(0, pos >> 3);
 }
 
@@ -6607,6 +6617,13 @@ window.previewCatalogEntry = function(idx, el) {
     if (resolved.lines.length) {
       propHtml = '<hr class="tt-divider">' + resolved.lines.map(l => `<div class="tt-mod">${esc(l)}</div>`).join('');
     }
+    if (resolved.setBonusLines && resolved.setBonusLines.length) {
+      for (const bonus of resolved.setBonusLines) {
+        const hdr = bonus.pieces === 'full' ? 'Full Set Bonus' : `${bonus.pieces} Pieces`;
+        propHtml += `<hr class="tt-divider"><div class="tt-mod" style="color:var(--d2-gold);font-size:11px">${esc(hdr)}</div>`;
+        propHtml += bonus.lines.map(l => `<div class="tt-mod" style="color:#6090c0">${esc(l)}</div>`).join('');
+      }
+    }
   }
 
   const maxSock = MAX_SOCKETS_BY_CODE[code] || 0;
@@ -6834,13 +6851,13 @@ const STAT_DEF={
   192:['ÿc4Monster Physical Immunity is Sunderedÿc3',0,0],
   193:['ÿc4Monster Magic Immunity is Sunderedÿc3',0,0],
   194:['Socketed ({v})',0,0],
-  195:['{v}% Chance to cast level {v} {p} on attack',0,16],
-  196:['{v}% Chance to cast level {v} {p} when you Kill an Enemy',0,16],
-  197:['{v}% Chance to cast level {v} {p} when you Die',0,16],
+  195:['{v}% Chance to Cast Level {L} {p} on attack',0,16],
+  196:['{v}% Chance to Cast Level {L} {p} when you Kill an Enemy',0,16],
+  197:['{v}% Chance to Cast Level {L} {p} when you Die',0,16],
   198:['{v}% Chance to Cast Level {L} {p} on Striking',0,16],
-  199:['{v}% Chance to cast level {v} {p} when you Level-Up',0,16],
+  199:['{v}% Chance to Cast Level {L} {p} when you Level-Up',0,16],
   200:['ÿc4+{v}% chance for finishing moves to not consume chargesÿc3',0,0],
-  201:['{v}% Chance to cast level {v} {p} when struck',0,16],
+  201:['{v}% Chance to Cast Level {L} {p} when struck',0,16],
   204:['Level {L} {p} ({v}/{v2} Charges)',0,16],
   205:['+{v}% Chance to not consume Quantity',0,0],
   214:['+{v} Defense',0,0],
@@ -7155,18 +7172,9 @@ function _formatMod(id,param,value,value2){
 function _formatMods(mods, skipDedup){
   const lines=[];const skip=new Set();
   const seenIds=new Set();  // deduplicate unless skipDedup is true
-  const pairs={135:136,137:138,139:140,141:142};
   for(let i=0;i<mods.length;i++){
     if(skip.has(i))continue;
     const {id,param,value,value2}=mods[i];
-    // Elemental damage pairs handled via min/max template and value2
-    if(pairs[id]!==undefined&&mods[i+1]&&mods[i+1].id===pairs[id]){
-      skip.add(i+1);
-      const t=id===135?'Fire':id===137?'Cold':id===139?'Lightning':'Poison';
-      lines.push('Adds '+value+' to '+mods[i+1].value+' '+t+' Damage');
-      seenIds.add(id);
-      continue;
-    }
     // Skip follow stats that have already been consumed as value2 of their leader
     if(id===18&&i>0&&mods[i-1]&&mods[i-1].id===17) continue;
     // Skip duplicate stat IDs — unless processing enchant mods (which can duplicate base stats)
@@ -7219,6 +7227,14 @@ function buildItemTooltipHtml(item) {
   if(useTxtPrimary){
     propHtml='<hr class="tt-divider">'+resolved.lines.map(l=>`<div class="tt-mod">${esc(l)}</div>`).join('');
     if(enchCount > 0) propHtml += _renderEnchantSection();
+    // Set partial/full bonuses
+    if(resolved.setBonusLines && resolved.setBonusLines.length){
+      for(const bonus of resolved.setBonusLines){
+        const hdr = bonus.pieces === 'full' ? 'Full Set Bonus' : `${bonus.pieces} Pieces`;
+        propHtml += `<hr class="tt-divider"><div class="tt-mod" style="color:var(--d2-gold);font-size:11px">${esc(hdr)}</div>`;
+        propHtml += bonus.lines.map(l=>`<div class="tt-mod" style="color:#6090c0">${esc(l)}</div>`).join('');
+      }
+    }
   } else if(item._mods && item._mods.length){
     // Binary mods as primary for magic/rare/normal/runeword
     if(enchCount > 0 && (enchIndices.size > 0 || (item._enchantBoosts||[]).length > 0)) {
@@ -7453,6 +7469,18 @@ function buildItemCatalog() {
   UNIQUE_CATALOG = [];
   SET_CATALOG    = [];
 
+  // Codes to hide from all catalogs (grabbers, pliers, stacks, keys)
+  const HIDE_CODES = new Set([
+    'agr','tgr','sgr','egr','rgr','mgr','kgr','ogr','tkg','hkg','dkg',
+    'rup','jwp','key','kch',
+    '1am','1tp','1sa','1em','1rb','1di','1sk','1so','1ka',
+    '1os','1oc','1oa','1oi','1oe','1or',
+    's01','s02','s03','s04','s05','s06','s07','s08','s09','s10',
+    's11','s12','s13','s14','s15','s16','s17','s18','s19','s20',
+    's21','s22','s23','s24','s25','s26','s27','s28','s29','s30',
+    's31','s32','s33',
+  ]);
+
   // ── Base items (weapons + armor + misc) ──
   const tierSuffix = { N:'', Exc:' (Exceptional)', Eli:' (Elite)' };
   const tierColor  = { N:'var(--d2-text)', Exc:'#a0b8d8', Eli:'#d8c080' };
@@ -7475,8 +7503,9 @@ function buildItemCatalog() {
     const hasTiers = src !== 'misc';
     for (const row of data.rows) {
       const code = (row['code']||'').trim();
-      const name = (row['name']||'').trim();
-      if (!code || !name || name === 'Expansion') continue;
+      const rawName = (row['name']||'').trim();
+      if (!code || !rawName || rawName === 'Expansion') continue;
+      const name = itemNameByCode[code] || rawName;
       const typeCode = (row['type']||'').trim();
       const category = src === 'misc' ? 'misc' : src;  // 'weapons', 'armor', or 'misc'
       const typeName = TYPE_NAMES[typeCode] || (src === 'weapons' ? 'Other Weapons' : src === 'armor' ? 'Other Armor' : '');
@@ -7485,9 +7514,12 @@ function buildItemCatalog() {
       const isGem = /^(gm[a-z]|gc[a-z]|gf[a-z]|gs[a-z]|gl[a-z]|gp[a-z]|1[a-z]{2})$/.test(code) || (name.includes('Stack') && !isRune);
       const isCharm = /^cm[1-5]$/.test(code) || /^cs[12]$/.test(code);
 
-      // Respect spawnable column — items marked spawnable=0 are excluded from insertion
+      // Respect spawnable column — items marked spawnable=0 are excluded, with exceptions
+      const FORCE_SHOW = new Set(['ua1','ua2','ua3','ua4','ua5','pk1','pk2','pk3']);
       const spawnable = (row['spawnable'] || '').trim();
-      if (spawnable === '0') continue;
+      if (spawnable === '0' && !FORCE_SHOW.has(code)) continue;
+
+      if (HIDE_CODES.has(code)) continue;
 
       if (hasTiers) {
         const norm  = (row['normcode']||'').trim();
@@ -7525,6 +7557,7 @@ function buildItemCatalog() {
       const uniqueName = (row['index']||'').trim();
       const code       = (row['code']||'').trim();
       if (!uniqueName || !code) return;
+      if (HIDE_CODES.has(code)) return;
       const baseName = itemNameByCode[code] || code;
       const typeCode = ITEM_TYPE_BY_CODE[code] || '';
       const isJewelryCode = /^(ring|amul)$/.test(typeCode) || /^(rin|amu|jew)$/.test(code);
@@ -7749,12 +7782,14 @@ window.selectModalEntry = function(idx) {
     }
   }
 
-  // Hide ilvl and max values for runes (they have no item level or variable stats)
+  // Hide ilvl and max values for runes and misc items (no item level or variable stats)
   const isRune = /^[rs]\d{2}$/.test(entry.code);
+  const isMisc = entry.tier === 'misc' || entry.category === 'misc';
+  const hideExtras = isRune || isMisc;
   const ilvlRow = document.getElementById('modalIlvlRow');
-  if (ilvlRow) ilvlRow.style.display = isRune ? 'none' : '';
+  if (ilvlRow) ilvlRow.style.display = hideExtras ? 'none' : '';
   const maxValLabel = document.getElementById('modalMaxValues');
-  if (maxValLabel) maxValLabel.closest('div.modal-row').style.display = isRune ? 'none' : '';
+  if (maxValLabel) maxValLabel.closest('div.modal-row').style.display = hideExtras ? 'none' : '';
 
   document.getElementById('modalSelected').style.display = 'block';
   document.getElementById('modalInsertBtn').style.display = 'inline-block';
@@ -7788,7 +7823,8 @@ window.confirmInsertItem = function() {
   const {w,h}    = getItemSize(typeCode);
   const qual     = entry.qual ?? 2;
   const isRune = /^[rs]\d{2}$/.test(typeCode);
-  const ilvl = isRune ? 1 : (parseInt((document.getElementById('modalIlvl')||{}).value||'80',10)||80);
+  const isMiscItem = entry.tier === 'misc' || entry.category === 'misc';
+  const ilvl = (isRune || isMiscItem) ? 1 : (parseInt((document.getElementById('modalIlvl')||{}).value||'80',10)||80);
 
   // ── Inventory/stash collision check ──
   if (ctx.mode === 'inventory' || ctx.mode === 'stash') {
