@@ -1590,7 +1590,8 @@ function buildPropDisplayEngine() {
     for (let f = 1; f <= 7; f++) {
       const func = parseInt(row[`func${f}`] || '0', 10);
       const stat = (row[`stat${f}`] || '').trim();
-      if (func || stat) { entry[`func${f}`] = func; entry[`stat${f}`] = stat; }
+      const val  = parseInt(row[`val${f}`] || '0', 10);
+      if (func || stat) { entry[`func${f}`] = func; entry[`stat${f}`] = stat; entry[`val${f}`] = val; }
     }
     PROP_ENGINE[code] = entry;
   }
@@ -1646,13 +1647,10 @@ function _resolveSkillId(par) {
 // Hard-coded stat mappings for properties.txt func types with empty stat columns.
 // These functions imply a specific stat by convention, not by the stat column.
 const FUNC_STAT_MAP = {
-  // func 5: add to min damage → mindamage (stat 21)
   '5': 'mindamage',
-  // func 7: enhanced damage % → item_maxdamage_percent (stat 17)
+  '6': 'maxdamage',
   '7': 'item_maxdamage_percent',
-  // func 8: +% to stat (IAS/FHR/FCR etc) — stat IS in column, but fallback just in case
-  // func 15: elemental min damage — stat in column
-  // func 16: elemental max damage — stat in column
+  '20': 'item_indesctructible',
 };
 
 function _addStatEntry(entries, statName, value, paramVal) {
@@ -1695,12 +1693,25 @@ function propCodeToStatEntries(code, min, max, par, useMax) {
     let statVal = rolled;
 
     // func 1/2/3/6/8: simple value → stat — uses the rolled value
-    if (func === 5) statVal = useMax ? min : _rollValue(min, min, false); // min damage uses min field
+    // func 5: min damage — writes BOTH mindamage (21) AND secondary_mindamage (23)
+    if (func === 5) {
+      statVal = useMax ? min : _rollValue(min, min, false);
+      _addStatEntry(entries, 'secondary_mindamage', statVal, 0);
+    }
+
+    // func 6: max damage — writes BOTH maxdamage (22) AND secondary_maxdamage (24)
+    if (func === 6) {
+      statVal = useMax ? max : _rollValue(min, max, false);
+      _addStatEntry(entries, 'secondary_maxdamage', statVal, 0);
+    }
 
     if (func === 7) statVal = rolled; // Enhanced Damage
 
-    // func 10: skilltab — param = tab index
-    if (func === 10) paramVal = parseInt(par, 10) || 0;
+    // func 10: skilltab — D2RR remaps tab indices: 8 slots per class instead of 3
+    if (func === 10) {
+      const vanillaTab = parseInt(par, 10) || 0;
+      paramVal = Math.floor(vanillaTab / 3) * 8 + (vanillaTab % 3);
+    }
 
     // func 11: hit-skill — param = (skillId << 6) | level, value = chance
     // uniqueitems.txt convention: par=skillName, min=chance, max=level (specific values, not a range)
@@ -1712,26 +1723,44 @@ function propCodeToStatEntries(code, min, max, par, useMax) {
       statVal = chance;
     }
 
+    // func 19: charged skill — param = (skillId << 6) | level, value = maxCharges | (currentCharges << 8)
+    // uniqueitems.txt convention: par=skillName, min=charges, max=level
+    if (func === 19) {
+      const skillId = _resolveSkillId(par);
+      const level = max || 1;
+      const charges = min || 1;
+      paramVal = (skillId << 6) | (level & 0x3F);
+      statVal = charges | (charges << 8);  // current charges = max charges (fully charged)
+    }
+
     // func 15: elemental min damage — uses the min field directly (not rolled)
     if (func === 15) statVal = min || 0;
 
     // func 16: elemental max damage — uses the max field directly (not rolled)
     if (func === 16) statVal = max || 0;
 
-    // func 17: per-level — value * 8 in binary
+    // func 17: per-level — value stored in par (uniqueitems) or min/max (setitems)
     if (func === 17) {
-      paramVal = parseInt(par, 10) || 0;
-      statVal = (max || min || 0) * 8;
+      const parVal = parseInt(par, 10);
+      statVal = parVal > 0 ? parVal : (useMax ? (max || min || 0) : _rollValue(min || 0, max || 0, false));
+      paramVal = 0;
     }
 
-    // func 18: per-time
+    // func 18: per-time — same pattern as func 17
     if (func === 18) {
-      paramVal = parseInt(par, 10) || 0;
-      statVal = (max || min || 0) * 8;
+      const parVal = parseInt(par, 10);
+      statVal = parVal > 0 ? parVal : (useMax ? (max || min || 0) : _rollValue(min || 0, max || 0, false));
+      paramVal = 0;
     }
 
-    // func 21: class skill level
-    if (func === 21) paramVal = parseInt(par, 10) || 0;
+    // func 12: random skill — par=level, min/max=ID range to pick from
+    if (func === 12) {
+      paramVal = Math.floor(Math.random() * (max - min + 1)) + min;
+      statVal = parseInt(par, 10) || 1;
+    }
+
+    // func 21: class/element skill — param comes from val column in properties.txt, not par in uniqueitems
+    if (func === 21) paramVal = parseInt(par, 10) || eng[`val${f}`] || 0;
 
     // func 22: oskill — param = skill id
     if (func === 22) paramVal = _resolveSkillId(par);
@@ -1760,7 +1789,9 @@ function buildStatListFromMods(mods, useMaxRolls) {
     // Pass original min/max and the roll flag — propCodeToStatEntries handles rolling per-func
     const entries = propCodeToStatEntries(mod.code, mod.min||0, mod.max||0, mod.par||mod.param||'', useMaxRolls);
     for (const e of entries) {
-      byId.set(e.id, e);
+      // Use id+param as key so multiple charged skills (same stat ID, different params) coexist
+      const key = e.id + '_' + (e.param || 0);
+      byId.set(key, e);
     }
   }
 
@@ -1776,14 +1807,14 @@ function buildStatListFromMods(mods, useMaxRolls) {
     for (let f = 1; f <= followCount; f++) {
       const followId = entry.id + f;
       // Check if we already have this follow stat in the sorted list
-      if (byId.has(followId)) continue; // it'll appear in its sorted position
-      // Need to insert a dummy follow stat
+      if ([...byId.keys()].some(k => k.startsWith(followId + '_'))) continue; // it'll appear in its sorted position
+      // Insert follow stat — inherit the primary stat's encoded value (e.g. stat 17→18 both get ED%)
       const followInfo = STAT_BY_NAME[Object.keys(STAT_BY_NAME).find(k => STAT_BY_NAME[k].id === followId)];
       if (followInfo && followInfo.saveBits > 0) {
         result.push({
           id: followId,
           param: 0,
-          encodedValue: followInfo.saveAdd, // zero value + bias
+          encodedValue: entry.encodedValue,
           saveBits: followInfo.saveBits,
           saveParamBits: followInfo.saveParamBits,
         });
@@ -3465,12 +3496,14 @@ const HUFF_ENC = {' ':'10','0':'11111011','1':'1111100','2':'001100','3':'110110
   'n':'001101','o':'1111111','p':'11001','q':'11011001','r':'11100','s':'0010',
   't':'01100','u':'00001','v':'1101110','w':'00000','x':'00111','y':'0001010','z':'11011000'};
 
+
 // Encode a compact (simple) item — only for truly simple items like potions, scrolls, gems
 function encodeCompactItem(code, col, row, storage, parent, equipSlot) {
   const buf = new Uint8Array(20);
   const wb = (pos, v) => { if (v) buf[pos>>3] |= (1 << (pos & 7)); };
   wb(4,  1);  // identified
-  wb(17, 1);  // bit17: required D2R flag
+  wb(13, 1);  // D2RR item flag (required on all items)
+  wb(17, 1);  // D2R flag (set on compact items like potions/scrolls)
   wb(21, 1);  // simple/compact
   wb(23, 1);  // always-1 marker (b2 & 0x80)
   wb(32, 1);  // D2R padding bits
@@ -3505,10 +3538,12 @@ function encodeExtendedItem(item) {
   const ilvl = item.itemLevel || 80;
 
   // Header flags
+  const isRuneCode = /^[rs]\d{2}$/.test(code);
   wb(4,  1);   // identified
   if (item.numSockets > 0) wb(11, 1);  // socketed flag
-  wb(17, 1);   // D2R required flag
+  // bit 13 and 17: NOT set on extended items (game uniques have b13=0, b17=0)
   // bit 21 = 0 (NOT simple — this is an extended item)
+  if (item.ethereal) wb(22, 1);  // ethereal flag
   wb(23, 1);   // always-1 marker (b2 & 0x80)
   wb(32, 1);   // D2R padding
   wb(34, 1);
@@ -3549,28 +3584,23 @@ function encodeExtendedItem(item) {
 
   // Quality-specific fields
   if (quality === 1) {
-    // Low quality: sub-type (3 bits)
     wbN(pos, 0, 3); pos += 3;
   } else if (quality === 3) {
-    // Superior: sub-type (3 bits)
     wbN(pos, 0, 3); pos += 3;
   } else if (quality === 4) {
-    // Magic: prefixId (11 bits) + suffixId (11 bits)
     wbN(pos, item._prefixId || 0, 11); pos += 11;
     wbN(pos, item._suffixId || 0, 11); pos += 11;
   } else if (quality === 5) {
-    // Set: setId (12 bits)
     wbN(pos, item.setId ?? item.setItemId ?? 0, 12); pos += 12;
   } else if (quality === 6 || quality === 8) {
-    // Rare/Crafted: nameId1(8) + nameId2(8) + 6 affix flags/IDs
     wbN(pos, 0, 8); pos += 8;
     wbN(pos, 0, 8); pos += 8;
     for (let i = 0; i < 6; i++) { wbN(pos, 0, 1); pos += 1; }
   } else if (quality === 7) {
-    // Unique: uniqueId (12 bits)
     wbN(pos, item.uniqueId ?? 0, 12); pos += 12;
   }
-  // quality === 2 (Normal): no extra fields
+  // D2RR: runes (quality=2) need an extra bit (verified against real game Cham encoding)
+  if (isRuneCode) pos += 1;
 
   // timestamp (1 bit) — 0
   wbN(pos, 0, 1); pos += 1;
@@ -3654,7 +3684,8 @@ function encodeExtendedItem(item) {
   const written = new Set();
 
   for (const stat of statList) {
-    if (written.has(stat.id)) continue;
+    const writeKey = stat.id + '_' + (stat.param || 0);
+    if (written.has(writeKey)) continue;
     if (stat.id < 0 || stat.id >= 511) continue;
     if (!stat.saveBits || stat.saveBits <= 0) continue;
     if (pos + 9 + stat.saveParamBits + stat.saveBits + 100 > buf.length * 8) break;
@@ -3670,13 +3701,13 @@ function encodeExtendedItem(item) {
       wbN(pos, safeParam, stat.saveParamBits); pos += stat.saveParamBits;
     }
     wbN(pos, safeVal, stat.saveBits); pos += stat.saveBits;
-    written.add(stat.id);
+    written.add(writeKey);
 
     // Write follow stats (NO 9-bit ID — just param + value for consecutive stat IDs)
     const followCount = (stat.id < FOLLOW_STATS.length) ? FOLLOW_STATS[stat.id] : 0;
     for (let f = 1; f <= followCount; f++) {
       const fId = stat.id + f;
-      written.add(fId);
+      written.add(fId + '_0');
       const fSaveBits = (fId < SAVE_BITS.length) ? SAVE_BITS[fId] : 0;
       const fParamBits = (fId < SAVE_PARAM_BITS.length) ? SAVE_PARAM_BITS[fId] : 0;
       if (!fSaveBits) continue;
@@ -3788,7 +3819,9 @@ function flushVirtualItems() {
 
   const encoded = virtuals.map(it => {
     const code = it.typeCode || '';
-    const isSimple = !ARMOR_SET.has(code) && !WEAPON_SET.has(code) &&
+    // Runes are extended items in D2RR (not compact)
+    const isRune = /^[rs]\d{2}$/.test(code);
+    const isSimple = !isRune && !ARMOR_SET.has(code) && !WEAPON_SET.has(code) &&
                      (it.quality || 2) <= 2 && !it.uniqueId && !it.setId && !it.setItemId;
     if (isSimple) {
       return encodeCompactItem(code, it.x||0, it.y||0, it.storage??1, it.parent??0, it.equipSlot||0);
@@ -3810,7 +3843,14 @@ function flushVirtualItems() {
   // Update file size
   writeU32LE(workBytes, 8, workBytes.length);
 
-  for (const it of virtuals) { it.isVirtual = false; it.byteOffset = 0; }
+  // Set correct byte offsets and reset decode cache so tooltips re-decode from binary
+  let writePos = jm2Off;
+  for (let i = 0; i < virtuals.length; i++) {
+    virtuals[i].isVirtual = false;
+    virtuals[i].byteOffset = writePos;
+    virtuals[i]._propsDecoded = false;
+    writePos += encoded[i].length;
+  }
   console.log(`flushVirtualItems: wrote ${encoded.length} item(s), new count=${cnt}`);
 }
 
@@ -4496,7 +4536,9 @@ function commitStats(newStats) {
     if (!meta) continue;
     if (found.has(id)) continue;
     if (merged[meta.name] === undefined) continue;
-    if (merged[meta.name] === 0 && !newStats.hasOwnProperty(meta.name)) continue;
+    // Skip zero-value stats — game doesn't write them and may reject saves that include them
+    const val = merged[meta.name];
+    if (val === 0 || val === undefined) continue;
     missing.push(id);
   }
 
@@ -4507,7 +4549,7 @@ function commitStats(newStats) {
     for (const id of allIds) {
       const meta = STAT_META[id];
       if (!meta) continue;
-      if (merged[meta.name] === undefined) continue;
+      if (merged[meta.name] === undefined || merged[meta.name] === 0) continue;
       totalBits += 9 + meta.bits; // 9-bit ID + value bits
     }
     totalBits += 9; // end marker
@@ -4543,7 +4585,7 @@ function commitStats(newStats) {
       const meta = STAT_META[id];
       if (!meta) continue;
       let val = merged[meta.name];
-      if (val === undefined) continue;
+      if (val === undefined || val === 0) continue; // skip zero-value stats (game doesn't write them)
       if (FIXED_POINT_STATS.has(id)) val = (val * 256) | 0;
       bw.writeBits(id, 9);
       bw.writeBits(val, meta.bits);
@@ -6146,10 +6188,7 @@ document.addEventListener('drop', function(e) {
 }, true);
 
 function renderInventory(c) {
-  if (!parsedChar.items || parsedChar.items.length === 0) {
-    c.innerHTML = `<p class="parse-error">No item data found in save file.</p>`;
-    return;
-  }
+  if (!parsedChar.items) parsedChar.items = [];
 
   const { equipped, inventory, belt, special } = getItemsByLocation();
   const dims = getInventoryDimensions(parsedChar.header.cls);
@@ -6443,7 +6482,7 @@ function insertBeltPotion(slotIdx, code) {
 }
 
 function renderStash(c) {
-  if (!parsedChar.items) { c.innerHTML=`<p class="parse-error">No item data.</p>`; return; }
+  if (!parsedChar.items) parsedChar.items = [];
 
   const { stashPages, personalStash, cubeItems } = getItemsByLocation();
   const dims = getInventoryDimensions(parsedChar.header.cls);
@@ -7020,7 +7059,7 @@ function decodeItemProperties(buf, byteOff, item) {
     if(rbL(bit,1))bit+=4;else bit+=1;
     if(rbL(bit,1))bit+=12;else bit+=1;
     // D2R Reimagined adds 1 extra bit after quality-specific data for all extended quality types
-    if(q===1)bit+=3;else if(q===3)bit+=3;else if(q===4){
+    if(q===1)bit+=3;else if(q===2)bit+=1;else if(q===3)bit+=3;else if(q===4){
       r._prefixId=rbL(bit,11);bit+=11;
       r._suffixId=rbL(bit,11);bit+=11;
       bit+=1;
@@ -7710,6 +7749,13 @@ window.selectModalEntry = function(idx) {
     }
   }
 
+  // Hide ilvl and max values for runes (they have no item level or variable stats)
+  const isRune = /^[rs]\d{2}$/.test(entry.code);
+  const ilvlRow = document.getElementById('modalIlvlRow');
+  if (ilvlRow) ilvlRow.style.display = isRune ? 'none' : '';
+  const maxValLabel = document.getElementById('modalMaxValues');
+  if (maxValLabel) maxValLabel.closest('div.modal-row').style.display = isRune ? 'none' : '';
+
   document.getElementById('modalSelected').style.display = 'block';
   document.getElementById('modalInsertBtn').style.display = 'inline-block';
 };
@@ -7741,7 +7787,8 @@ window.confirmInsertItem = function() {
   const typeCode = entry.code;
   const {w,h}    = getItemSize(typeCode);
   const qual     = entry.qual ?? 2;
-  const ilvl     = parseInt((document.getElementById('modalIlvl')||{}).value||'80',10)||80;
+  const isRune = /^[rs]\d{2}$/.test(typeCode);
+  const ilvl = isRune ? 1 : (parseInt((document.getElementById('modalIlvl')||{}).value||'80',10)||80);
 
   // ── Inventory/stash collision check ──
   if (ctx.mode === 'inventory' || ctx.mode === 'stash') {
@@ -7814,6 +7861,10 @@ window.confirmInsertItem = function() {
   // Attach quality-specific IDs for binary encoding
   if (qual === 7 && entry.uniqueId !== undefined) {
     newItem.uniqueId = entry.uniqueId;
+    const uMods = UNIQUE_ITEM_MODS[entry.uniqueId];
+    if (uMods && uMods.props && uMods.props.some(p => p.code === 'ethereal')) {
+      newItem.ethereal = 1;
+    }
   }
   if (qual === 5 && entry.setId !== undefined) {
     newItem.setId = entry.setId;
