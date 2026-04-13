@@ -1874,8 +1874,10 @@ function propToDisplay(code, min, max, par) {
 
   // Skill-related properties
   if (code === 'skilltab') {
-    const tabName = getSkillTabName(parseInt(par,10));
-    lines.push(`+${val} to ${tabName} Skills`);
+    const tabIdx = parseInt(par,10);
+    const tabName = getSkillTabName(tabIdx);
+    const className = CLASS_NAMES[Math.floor(tabIdx / 3)] || '';
+    lines.push(`+${val} to ${tabName} Skills` + (className ? ` (${className} Only)` : ''));
     return lines;
   }
   if (code === 'oskill' || code === 'skill') {
@@ -6797,7 +6799,7 @@ const STAT_DEF={
   99:['+{v}% Faster Hit Recovery',20,0],
   102:['+{v}% Faster Block Rate',20,0],
   105:['+{v}% Faster Cast Rate',20,0],
-  107:['+{v} to {p} ',0,9],
+  107:['+{v} to {p}',0,9],
   108:['Slain Monsters Rest in Peace',0,0],
   110:['Poison Length Reduced by {v}%',20,0],
   111:['+{v} Damage',20,0],
@@ -7114,7 +7116,7 @@ function decodeItemProperties(buf, byteOff, item) {
 
 function _formatMod(id,param,value,value2){
   // Blacklisted internal/system stats only — minimal list to avoid hiding valid D2RR stats
-  const _BL=new Set([56, 59, 67, 68, 71, 72, 73, 82, 88, 90, 94, 98, 109, 126, 140, 159, 160, 181, 200, 206, 207, 212, 213, 392, 393, 394, 395, 396, 419, 420, 432]);
+  const _BL=new Set([56, 59, 67, 68, 71, 72, 73, 82, 88, 90, 94, 98, 109, 126, 140, 159, 160, 181, 200, 206, 207, 212, 213, 392, 393, 394, 395, 396, 419, 420]);
   if(_BL.has(id))return null;
   const def=STAT_DEF[id];
   if(!def)return null;
