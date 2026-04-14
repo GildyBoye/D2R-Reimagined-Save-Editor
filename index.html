@@ -932,6 +932,7 @@ const ALL_FILES = [
   'itemstatcost.txt',   // save_add bias + save_bits per stat ID (overrides our hardcoded values)
   'itemtypes.txt',      // item type codes → armor/weapon/stackable classification
   'properties.txt',     // property code → stat ID mapping (for gem/runeword props)
+  'propertygroups.txt', // composite property groups (skilltab-war, Affix codes, etc.)
 
   // ── Skills (stat 83/107/128 param resolution, skills tab) ──
   'skills.txt',         // skill ID → name, charclass, skilldesc reference
@@ -1598,6 +1599,35 @@ function buildPropDisplayEngine() {
   console.log(`buildPropDisplayEngine: ${Object.keys(PROP_ENGINE).length} property codes`);
 }
 
+// ── Property groups (composite properties that expand into sub-properties) ──
+let PROP_GROUPS = {};  // code → { pickMode, props:[{code,parMin,parMax,min,max,chance}] }
+
+function buildPropGroups() {
+  PROP_GROUPS = {};
+  const data = baseData['propertygroups'];
+  if (!data) return;
+  for (const row of data.rows) {
+    const code = (row['code'] || '').trim();
+    if (!code) continue;
+    const pickMode = parseInt(row['PickMode'] || '2', 10);
+    const props = [];
+    for (let i = 1; i <= 8; i++) {
+      const prop = (row[`Prop${i}`] || '').trim();
+      if (!prop) continue;
+      props.push({
+        code: prop,
+        parMin: (row[`ParMin${i}`] || '').trim(),
+        parMax: (row[`ParMax${i}`] || '').trim(),
+        min: parseInt(row[`ModMin${i}`] || '0', 10) || 0,
+        max: parseInt(row[`ModMax${i}`] || '0', 10) || 0,
+        chance: parseInt(row[`Chance${i}`] || '1', 10) || 1,
+      });
+    }
+    if (props.length) PROP_GROUPS[code] = { pickMode, props };
+  }
+  console.log(`buildPropGroups: ${Object.keys(PROP_GROUPS).length} property groups`);
+}
+
 // ── Stat name → ID + encoding info (built from itemstatcost.txt) ──
 let STAT_BY_NAME = {};  // statName → { id, saveBits, saveAdd, saveParamBits }
 
@@ -1672,6 +1702,32 @@ function _addStatEntry(entries, statName, value, paramVal) {
 
 // Convert a property code + min/max/par into binary stat entries.
 function propCodeToStatEntries(code, min, max, par, useMax) {
+  // Resolve property groups — composite properties that expand into sub-properties
+  const group = PROP_GROUPS[code];
+  if (group) {
+    const entries = [];
+    if (group.pickMode === 1) {
+      // Pick ONE random property (weighted by chance)
+      const totalWeight = group.props.reduce((s, p) => s + p.chance, 0);
+      let roll = Math.floor(Math.random() * totalWeight);
+      let picked = group.props[0];
+      for (const p of group.props) { roll -= p.chance; if (roll < 0) { picked = p; break; } }
+      const pPar = picked.parMin || picked.parMax || par;
+      const pMin = picked.min || min;
+      const pMax = picked.max || max;
+      entries.push(...propCodeToStatEntries(picked.code, pMin, pMax, pPar, useMax));
+    } else {
+      // PickMode 2+: apply ALL properties
+      for (const p of group.props) {
+        const pPar = p.parMin || p.parMax || par;
+        const pMin = p.min || min;
+        const pMax = p.max || max;
+        entries.push(...propCodeToStatEntries(p.code, pMin, pMax, pPar, useMax));
+      }
+    }
+    return entries;
+  }
+
   const eng = PROP_ENGINE[code];
   if (!eng) return [];
   const entries = [];
@@ -1851,6 +1907,18 @@ const INTERNAL_PROP_CODES = new Set([
 function propToDisplay(code, min, max, par) {
   if (!code) return [];
   if (INTERNAL_PROP_CODES.has(code)) return [];
+  // Resolve property groups into sub-property display lines
+  const group = PROP_GROUPS[code];
+  if (group) {
+    const lines = [];
+    for (const p of group.props) {
+      const pPar = p.parMin || p.parMax || par;
+      const pMin = p.min || min;
+      const pMax = p.max || max;
+      lines.push(...propToDisplay(p.code, pMin, pMax, pPar));
+    }
+    return lines;
+  }
   const lines = [];
   const eng = PROP_ENGINE[code];
   const val = (min === max) ? String(min) : `${min}-${max}`;
@@ -1871,6 +1939,47 @@ function propToDisplay(code, min, max, par) {
     return lines;
   }
   if (code === 'sock') { lines.push(`Socketed (${val})`); return lines; }
+
+  // Composite resistance/damage/mastery properties
+  if (code === 'res-all-max') { lines.push(`${sign}${val}% to All Maximum Resistances`); return lines; }
+  if (code === 'res-all-max%') { lines.push(`${sign}${val}% to All Maximum Resistances`); return lines; }
+  if (code === 'res-all/lvl') { lines.push(`${sign}${val}% to All Resistances (Based on Character Level)`); return lines; }
+  if (code === 'res-curse-len') { lines.push(`${sign}${val}% Curse Resistance`); return lines; }
+  if (code === 'extra-elem') { lines.push(`${sign}${val}% to Elemental Skill Damage`); return lines; }
+  if (code === 'pierce-elem') { lines.push(`${sign}${val}% to Enemy Elemental Resistance`); return lines; }
+  if (code === 'extra-fire') { lines.push(`${sign}${val}% to Fire Skill Damage`); return lines; }
+  if (code === 'extra-cold') { lines.push(`${sign}${val}% to Cold Skill Damage`); return lines; }
+  if (code === 'extra-ltng') { lines.push(`${sign}${val}% to Lightning Skill Damage`); return lines; }
+  if (code === 'extra-pois') { lines.push(`${sign}${val}% to Poison Skill Damage`); return lines; }
+  if (code === 'extra-mag') { lines.push(`${sign}${val}% to Magic Skill Damage`); return lines; }
+  if (code === 'pierce-fire') { lines.push(`-${val}% to Enemy Fire Resistance`); return lines; }
+  if (code === 'pierce-cold') { lines.push(`-${val}% to Enemy Cold Resistance`); return lines; }
+  if (code === 'pierce-ltng') { lines.push(`-${val}% to Enemy Lightning Resistance`); return lines; }
+  if (code === 'pierce-pois') { lines.push(`-${val}% to Enemy Poison Resistance`); return lines; }
+  if (code === 'pierce-mag') { lines.push(`-${val}% to Enemy Magic Resistance`); return lines; }
+  if (code === 'pierce-dmg') { lines.push(`-${val}% to Enemy Physical Damage Resistance`); return lines; }
+  if (code === 'dmg-elem-min') { lines.push(`${sign}${val} to Minimum Elemental Damage`); return lines; }
+  if (code === 'dmg-elem-max') { lines.push(`${sign}${val} to Maximum Elemental Damage`); return lines; }
+  if (code === 'dmg2%') { lines.push(`${sign}${val}% Enhanced Damage`); return lines; }
+  if (code === 'dmg3%') { lines.push(`${sign}${val}% Enhanced Throwing Damage`); return lines; }
+  if (code === 'flat-dmg/lvl') { lines.push(`${sign}${val} to Damage (Based on Character Level)`); return lines; }
+  if (code === 'wounds/dex') { lines.push(`${sign}${val}% Chance of Open Wounds (Based on Dexterity)`); return lines; }
+  if (code === 'wounds/str') { lines.push(`${sign}${val}% Chance of Open Wounds (Based on Strength)`); return lines; }
+  if (code === 'extra-skill-dmg%-rand') { lines.push(`${sign}${val}% to Random Elemental Skill Damage`); return lines; }
+
+  // Class skill properties (+X to [Class] Skill Levels)
+  const CLASS_SKILL_CODES = {ama:0,sor:1,nec:2,pal:3,bar:4,dru:5,ass:6,war:7};
+  if (CLASS_SKILL_CODES[code] !== undefined) {
+    lines.push(`${sign}${val} to ${CLASS_NAMES[CLASS_SKILL_CODES[code]]} Skill Levels`);
+    return lines;
+  }
+  if (code === 'allskills') { lines.push(`${sign}${val} to All Skills`); return lines; }
+  // Elemental skill properties
+  const ELEM_SKILL_CODES = {fireskill:'Fire',coldskill:'Cold',lightningskill:'Lightning',poisonskill:'Poison',magicskill:'Magic'};
+  if (ELEM_SKILL_CODES[code]) {
+    lines.push(`${sign}${val} to ${ELEM_SKILL_CODES[code]} Skills`);
+    return lines;
+  }
 
   // Skill-related properties
   if (code === 'skilltab') {
@@ -1905,7 +2014,19 @@ function propToDisplay(code, min, max, par) {
     return lines;
   }
   if (code === 'skill-rand') {
-    lines.push(`+${val} to Random Skill`);
+    const level = parseInt(par, 10) || min;
+    const skillNames = [];
+    for (let id = min; id <= max; id++) {
+      const name = skillNameById[id];
+      if (name) skillNames.push(name);
+    }
+    if (skillNames.length === 1) {
+      lines.push(`+${level} to ${skillNames[0]}`);
+    } else if (skillNames.length > 1 && skillNames.length <= 4) {
+      lines.push(`+${level} to ${skillNames.join(' / ')} (Random)`);
+    } else {
+      lines.push(`+${level} to Random Skill (${skillNames.length} possible)`);
+    }
     return lines;
   }
 
@@ -2907,6 +3028,7 @@ function buildItemNameMap() {
   buildSetItemModTable();
   buildSetBonusTable();
   buildPropDisplayEngine();
+  buildPropGroups();
   buildStatByNameMap();
   buildSocketAndTypeMap();
   buildEquipRestrictions();
@@ -3507,7 +3629,8 @@ function encodeCompactItem(code, col, row, storage, parent, equipSlot) {
   const wb = (pos, v) => { if (v) buf[pos>>3] |= (1 << (pos & 7)); };
   // Gems use b13=1, b17=0; everything else (potions/scrolls/misc) uses b13=0, b17=1
   const isGem = /^gm[a-z]$/.test(code) || /^gf[a-z]$/.test(code) || /^gs[a-z]$/.test(code)
-             || /^gl[a-z]$/.test(code) || /^gp[a-z]$/.test(code) || /^gc[a-z]$/.test(code);
+             || /^gl[a-z]$/.test(code) || /^gp[a-z]$/.test(code) || /^gc[a-z]$/.test(code)
+             || /^gz[a-z]$/.test(code) || /^sk[a-z]$/.test(code);
   wb(4,  1);  // identified
   if (isGem) wb(13, 1);  else wb(17, 1);  // gems get b13; potions/scrolls/misc get b17
   wb(21, 1);  // simple/compact
