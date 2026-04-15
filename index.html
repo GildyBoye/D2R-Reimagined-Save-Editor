@@ -719,8 +719,8 @@
         </label>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-primary" onclick="closeNewCharModal()" style="opacity:0.7">Cancel</button>
         <button class="btn btn-primary" onclick="createNewCharacter()">Create</button>
+        <button class="btn btn-primary" onclick="closeNewCharModal()" style="opacity:0.7">Cancel</button>
       </div>
     </div>
   </div>
@@ -1061,8 +1061,8 @@ function confirmFallback() {
           <span style="font-size:11px;color:#888;margin-top:6px;display:block">These may be slightly out of date compared to the latest mod version.</span>
         </div>
         <div style="display:flex;gap:12px;justify-content:center">
-          <button id="fbCancel" style="padding:8px 20px;background:transparent;border:1px solid #666;border-radius:2px;color:#888;font-family:'Cinzel',serif;cursor:pointer;font-size:12px">Cancel</button>
           <button id="fbConfirm" style="padding:8px 20px;background:rgba(200,160,48,0.15);border:1px solid #c8a030;border-radius:2px;color:#c8a030;font-family:'Cinzel',serif;cursor:pointer;font-size:12px">Use Base Files</button>
+          <button id="fbCancel" style="padding:8px 20px;background:transparent;border:1px solid #666;border-radius:2px;color:#888;font-family:'Cinzel',serif;cursor:pointer;font-size:12px">Cancel</button>
         </div>
       </div>`;
     document.body.appendChild(overlay);
@@ -3809,7 +3809,7 @@ function encodeExtendedItem(item) {
   }
 
   let statList = [];
-  try { statList = buildStatListFromMods(mods, item.useMaxValues || false); } catch(_) {}
+  try { statList = buildStatListFromMods(mods, item.useMaxValues || false); } catch(e) { console.error('buildStatListFromMods failed:', e); }
 
   // Build a map of stat id → entry for quick lookup of follow stat values
   const statById = new Map();
@@ -3953,6 +3953,8 @@ function flushVirtualItems() {
   if (jm2Off < 0) return;
 
   const encoded = virtuals.map(it => {
+    // Grail-copied items already have exact binary — use it directly
+    if (it._grailCopyBytes) return it._grailCopyBytes;
     const code = it.typeCode || '';
     // Runes are extended items in D2RR (not compact)
     const isRune = /^[rs]\d{2}$/.test(code);
@@ -4022,6 +4024,8 @@ function saveFile() {
 
 function markDirty() {
   if (!isDirty) { isDirty=true; setStatus(`${fileName} — unsaved changes`,'modified'); }
+  const saveBtn = document.getElementById('saveBtn');
+  if (saveBtn) saveBtn.classList.remove('disabled');
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4440,7 +4444,7 @@ function parseD2S(buf) {
         parent:       rb(byteOff, 35, 3),  // 0=stored,1=equip,2=belt,6=in_item
         equipSlot:    rb(byteOff, 38, 4),  // equip slot 1-12
         x:            rb(byteOff, 42, 4),  // col (also belt slot when parent=2)
-        y:            rb(byteOff, 46, 3),  // row
+        y:            rb(byteOff, 46, 4),  // row (4 bits for D2RR large stash pages)
         storage:      rb(byteOff, 50, 3),  // 1=inv,4=cube,5=pstash
         typeIndex:    0,      // unused (typeCode string is used instead)
         typeCode:     typeCode,
@@ -4489,7 +4493,7 @@ function parseD2S(buf) {
               parent:      rb(byteOff, 35, 3),
               equipSlot:   rb(byteOff, 38, 4),
               x:           rb(byteOff, 42, 4),
-              y:           rb(byteOff, 46, 3),
+              y:           rb(byteOff, 46, 4),
               storage:     rb(byteOff, 50, 3),
               typeIndex:   0,
               typeCode:    (() => { const [c] = huffDecodeType(byteOff); return c; })(),
@@ -5066,10 +5070,24 @@ function getHirelingTypes() {
 // ═══════════════════════════════════════════════════════════
 //  TABS
 // ═══════════════════════════════════════════════════════════
+const TAB_ICONS = {
+  char: `<svg width="14" height="14" viewBox="0 0 14 14" style="vertical-align:-2px;margin-right:4px"><circle cx="4" cy="4" r="2.5" fill="#4488ff" stroke="#224"/><circle cx="10" cy="4" r="2.5" fill="#ff4444" stroke="#422"/><circle cx="7" cy="10" r="2.5" fill="#44cc44" stroke="#242"/></svg>`,
+  skills: `<svg width="14" height="14" viewBox="0 0 14 14" style="vertical-align:-2px;margin-right:4px"><path d="M4 13 C4 9 3 8 3 8 L5 7 C5 7 4.5 5 5.5 3.5 C6 2.5 6 2 7 1.5 C8 2 8 2.5 8.5 3.5 C9.5 5 9 7 9 7 L11 8 C11 8 10 9 10 13" fill="#c8a050" stroke="#a08030" stroke-width="0.6"/><path d="M5.5 3.5 Q7 1 8.5 3.5 Q8 5 7 6.5 Q6 5 5.5 3.5Z" fill="#ff6600"/><path d="M6 3 Q7 1.5 8 3 Q7.5 4.5 7 5.5 Q6.5 4.5 6 3Z" fill="#ffaa00"/><ellipse cx="7" cy="2.5" rx="0.7" ry="1.2" fill="#ffdd44"/></svg>`,
+  inventory: `<svg width="14" height="14" viewBox="0 0 14 14" style="vertical-align:-2px;margin-right:4px"><path d="M3 3 L7 1 L11 3 L11 12 L3 12 Z" fill="#778" stroke="#99a" stroke-width="0.7"/><path d="M4 5 L7 3.5 L10 5 L10 11 L4 11 Z" fill="#556"/><rect x="5" y="4" width="4" height="3" rx="0.3" fill="#889" opacity="0.5"/><path d="M3 3 L7 1 L11 3" fill="none" stroke="#aab" stroke-width="0.8"/><rect x="5.5" y="8" width="3" height="1.5" rx="0.3" fill="#667"/></svg>`,
+  stash: `<svg width="14" height="14" viewBox="0 0 14 14" style="vertical-align:-2px;margin-right:4px"><rect x="1" y="5" width="12" height="8" rx="1" fill="#8b6914" stroke="#a08030"/><path d="M1 6 Q7 3 13 6" fill="#a07020" stroke="#b89040"/><rect x="5.5" y="7" width="3" height="2" rx="0.5" fill="#d4aa30" stroke="#c09020"/></svg>`,
+  quests: `<svg width="14" height="14" viewBox="0 0 14 14" style="vertical-align:-2px;margin-right:4px"><rect x="2" y="1" width="10" height="12" rx="1" fill="#6b4423" stroke="#8b6233"/><rect x="3.5" y="2.5" width="7" height="9" rx="0.5" fill="#f5e6c8"/><line x1="5" y1="5" x2="9" y2="5" stroke="#6b4423" stroke-width="0.6"/><line x1="5" y1="7" x2="9" y2="7" stroke="#6b4423" stroke-width="0.6"/><line x1="5" y1="9" x2="8" y2="9" stroke="#6b4423" stroke-width="0.6"/></svg>`,
+  waypoints: `<svg width="14" height="14" viewBox="0 0 14 14" style="vertical-align:-2px;margin-right:4px"><circle cx="7" cy="7" r="5" fill="none" stroke="#6090d0" stroke-width="1.2"/><circle cx="7" cy="7" r="2" fill="#4080cc"/><path d="M7 2 L7 0 M7 12 L7 14 M2 7 L0 7 M12 7 L14 7" stroke="#6090d0" stroke-width="0.8"/><circle cx="7" cy="7" r="0.8" fill="#a0d0ff"/></svg>`,
+  grail: `<svg width="14" height="14" viewBox="0 0 14 14" style="vertical-align:-2px;margin-right:4px"><path d="M4 1 L10 1 L11 5 Q11 7 9 7 L9 10 L10.5 11 L10.5 13 L3.5 13 L3.5 11 L5 10 L5 7 Q3 7 3 5 Z" fill="#c8a050" stroke="#a08030" stroke-width="0.6"/><path d="M4.5 2 L9.5 2 L10 5 Q10 6.5 8.5 6.5 L5.5 6.5 Q4 6.5 4 5 Z" fill="#e8c860" opacity="0.5"/><ellipse cx="7" cy="3" rx="2" ry="0.6" fill="#ffe090" opacity="0.4"/></svg>`,
+  sharedstash: `<svg width="14" height="14" viewBox="0 0 14 14" style="vertical-align:-2px;margin-right:4px"><rect x="1" y="5" width="12" height="8" rx="1" fill="#8b6914" stroke="#a08030"/><path d="M1 6 Q7 3 13 6" fill="#a07020" stroke="#b89040"/><rect x="5.5" y="7" width="3" height="2" rx="0.5" fill="#d4aa30" stroke="#c09020"/><line x1="7" y1="1" x2="7" y2="4" stroke="#d4aa30" stroke-width="0.8"/><circle cx="4" cy="2" r="1" fill="#d4aa30" opacity="0.6"/><circle cx="10" cy="2" r="1" fill="#d4aa30" opacity="0.6"/></svg>`,
+  mercenary: `<svg width="14" height="14" viewBox="0 0 14 14" style="vertical-align:-2px;margin-right:4px"><path d="M2 13 Q2 9 5 8" fill="none" stroke="#c8a050" stroke-width="1.5" stroke-linecap="round"/><path d="M12 13 Q12 9 9 8" fill="none" stroke="#c8a050" stroke-width="1.5" stroke-linecap="round"/><path d="M5 8 Q7 7 9 8" fill="none" stroke="#c8a050" stroke-width="1" stroke-linecap="round"/><circle cx="4" cy="5" r="2" fill="none" stroke="#c8a050" stroke-width="1.2"/><circle cx="10" cy="5" r="2" fill="none" stroke="#c8a050" stroke-width="1.2"/></svg>`,
+};
 function getTabs() { return [
   {id:'char',label:L('ui_tab_char','Character')},{id:'skills',label:L('ui_tab_skills','Skills')},
+  {id:'quests',label:L('ui_tab_quests','Quests')},{id:'waypoints',label:L('ui_tab_waypoints','Waypoints')},
   {id:'inventory',label:L('ui_tab_inventory','Inventory'),danger:true},{id:'stash',label:L('ui_tab_stash','Stash'),danger:true},
-  {id:'quests',label:L('ui_tab_quests','Quests')},{id:'waypoints',label:L('ui_tab_waypoints','Waypoints')},{id:'mercenary',label:L('ui_tab_mercenary','Mercenary')},
+  {id:'sharedstash',label:'Shared Stash',danger:true},
+  {id:'mercenary',label:L('ui_tab_mercenary','Mercenary')},
+  {id:'grail',label:'Grail',danger:true},
 ];}
 
 // Inventory/stash item parsing is gated behind an explicit unlock to prevent
@@ -5082,7 +5100,7 @@ function buildTabs() {
     const b=document.createElement('button');
     const isDanger = t.danger && !inventoryUnlocked;
     b.className='tab'+(t.id===activeTab?' active':'')+(isDanger?' tab-danger':'');
-    b.textContent=t.label;
+    b.innerHTML=(TAB_ICONS[t.id]||'')+t.label;
     b.title = isDanger ? 'Item editing not currently supported — click to see warning' : '';
     b.onclick=()=>{ applyCurrentTab(); activeTab=t.id; buildTabs(); renderTab(); };
     bar.appendChild(b);
@@ -5099,9 +5117,15 @@ function renderTab() {
     case 'stash':
       if (!inventoryUnlocked) { renderItemWarning(c, 'stash'); break; }
       renderStash(c);     break;
+    case 'sharedstash':
+      if (!inventoryUnlocked) { renderItemWarning(c, 'sharedstash'); break; }
+      renderSharedStash(c); break;
     case 'quests':    renderQuests(c);    break;
     case 'waypoints': renderWaypoints(c); break;
     case 'mercenary': renderMercenary(c); break;
+    case 'grail':
+      if (!inventoryUnlocked) { renderItemWarning(c, 'grail'); break; }
+      renderGrail(c);     break;
   }
 }
 
@@ -6784,8 +6808,9 @@ function positionTooltip(tt, triggerEl) {
 function ensureItemProps(item) {
   if (item._propsDecoded) return;
   item._propsDecoded = true;
-  if (item.simple || item.isVirtual || !workBytes || item.byteOffset < 0) return;
-  const ext = decodeItemProperties(workBytes, item.byteOffset, item);
+  const dataBuf = item.isGrail ? grailD2i : item.isSharedStash ? sharedStashData : workBytes;
+  if (item.simple || item.isVirtual || !dataBuf || item.byteOffset < 0) return;
+  const ext = decodeItemProperties(dataBuf, item.byteOffset, item);
   if (ext.simple) return;
   // Copy decoded fields even if there was a partial decode error —
   // the runeword ID, quality, ilvl etc. are read before the property list
@@ -7310,6 +7335,58 @@ function _formatMods(mods, skipDedup){
   return lines;
 }
 
+function calcItemPerfection(item, quality) {
+  // Compare item's binary stats against txt min/max ranges
+  if (!item._mods || !item._mods.length) return null;
+
+  let mods = null;
+  if (quality === 7 && item.uniqueId !== undefined) {
+    const entry = UNIQUE_ITEM_MODS[item.uniqueId];
+    if (entry) mods = entry.props;
+  } else if (quality === 5 && (item.setItemId !== undefined || item.setId !== undefined)) {
+    const sid = item.setItemId ?? item.setId;
+    const entry = SET_ITEM_MODS[sid];
+    if (entry) mods = entry.props;
+  }
+  if (!mods || !mods.length) return null;
+
+  // Build min/max stat values from txt
+  const minStats = new Map(); // statId -> min encoded value
+  const maxStats = new Map(); // statId -> max encoded value
+  for (const mod of mods) {
+    if (!mod.code || INTERNAL_PROP_CODES.has(mod.code)) continue;
+    const minEntries = propCodeToStatEntries(mod.code, mod.min || 0, mod.max || 0, mod.par || mod.param || '', false);
+    const maxEntries = propCodeToStatEntries(mod.code, mod.min || 0, mod.max || 0, mod.par || mod.param || '', true);
+    for (const e of minEntries) {
+      if (e.saveBits <= 1) continue; // skip boolean stats (indestructible etc.)
+      if (!minStats.has(e.id) || e.encodedValue < minStats.get(e.id)) minStats.set(e.id, e.encodedValue);
+    }
+    for (const e of maxEntries) {
+      if (e.saveBits <= 1) continue;
+      if (!maxStats.has(e.id) || e.encodedValue > maxStats.get(e.id)) maxStats.set(e.id, e.encodedValue);
+    }
+  }
+
+  // Compare binary stats against ranges
+  let totalPerfection = 0;
+  let statCount = 0;
+  for (const mod of item._mods) {
+    const minVal = minStats.get(mod.id);
+    const maxVal = maxStats.get(mod.id);
+    if (minVal === undefined || maxVal === undefined) continue;
+    if (minVal === maxVal) continue; // fixed value, always 100%
+    const range = maxVal - minVal;
+    if (range <= 0) continue;
+    const actual = (mod.stored !== undefined ? mod.stored : mod.value + (STAT_BY_NAME[Object.keys(STAT_BY_NAME).find(k => STAT_BY_NAME[k].id === mod.id)]?.saveAdd || 0));
+    const pct = Math.max(0, Math.min(100, ((actual - minVal) / range) * 100));
+    totalPerfection += pct;
+    statCount++;
+  }
+
+  if (statCount === 0) return 100; // all fixed values = perfect
+  return totalPerfection / statCount;
+}
+
 function buildItemTooltipHtml(item) {
   const {name,cls} = itemDisplayName(item);
   const code = item.typeCode || '';
@@ -7345,14 +7422,33 @@ function buildItemTooltipHtml(item) {
     return html;
   }
 
-  // Use txt-based resolution for set/unique (reliable data files)
-  // Use binary mods for magic/rare/normal/runeword (txt resolution incomplete for D2RR)
-  const useTxtPrimary = resolved.lines.length > 0 && (decodedQual === 5 || decodedQual === 7);
+  // For unique/set items with decoded binary mods, show actual rolled values + perfection
+  // Fall back to txt-based resolution for virtual items or items without decoded mods
+  const hasBinaryMods = item._mods && item._mods.length && !item.isVirtual;
+  const useTxtPrimary = !hasBinaryMods && resolved.lines.length > 0 && (decodedQual === 5 || decodedQual === 7);
 
-  if(useTxtPrimary){
+  if(hasBinaryMods && (decodedQual === 5 || decodedQual === 7)){
+    // Show actual rolled values from binary
+    const lines = _formatMods(item._mods);
+    if(lines.length) propHtml='<hr class="tt-divider">'+lines.map(l=>`<div class="tt-mod">${esc(l)}</div>`).join('');
+    if(enchCount > 0) propHtml += _renderEnchantSection();
+    // Set partial/full bonuses (from txt)
+    if(resolved.setBonusLines && resolved.setBonusLines.length){
+      for(const bonus of resolved.setBonusLines){
+        const hdr = bonus.pieces === 'full' ? 'Full Set Bonus' : `${bonus.pieces} Pieces`;
+        propHtml += `<hr class="tt-divider"><div class="tt-mod" style="color:var(--d2-gold);font-size:11px">${esc(hdr)}</div>`;
+        propHtml += bonus.lines.map(l=>`<div class="tt-mod" style="color:#6090c0">${esc(l)}</div>`).join('');
+      }
+    }
+    // Calculate perfection %
+    const perfPct = calcItemPerfection(item, decodedQual);
+    if(perfPct !== null){
+      const perfColor = perfPct >= 90 ? '#00ff00' : perfPct >= 70 ? '#c8c800' : perfPct >= 50 ? '#ff8c00' : '#ff4040';
+      propHtml += `<hr class="tt-divider"><div style="text-align:center;font-family:'Cinzel',serif;font-size:12px;color:${perfColor}">Perfection: ${perfPct.toFixed(1)}%</div>`;
+    }
+  } else if(useTxtPrimary){
     propHtml='<hr class="tt-divider">'+resolved.lines.map(l=>`<div class="tt-mod">${esc(l)}</div>`).join('');
     if(enchCount > 0) propHtml += _renderEnchantSection();
-    // Set partial/full bonuses
     if(resolved.setBonusLines && resolved.setBonusLines.length){
       for(const bonus of resolved.setBonusLines){
         const hdr = bonus.pieces === 'full' ? 'Full Set Bonus' : `${bonus.pieces} Pieces`;
@@ -7455,12 +7551,45 @@ function buildItemTooltipHtml(item) {
       <label for="ttMaxVals_${item.byteOffset}" style="font-size:10px;font-family:'Cinzel',serif;color:var(--d2-text-dim);cursor:pointer;letter-spacing:0.5px">MAX VALUES</label>
     </div>` : ''}
     ${propHtml}
-    <hr class="tt-divider">
+    ${item.isGrail || item.isSharedStash ? '' : `<hr class="tt-divider">
     <div style="display:flex;gap:6px;flex-wrap:wrap">
       <button class="btn-apply" onclick="closeTooltip(true)" style="font-size:10px;padding:4px 10px">Close</button>
       ${item.byteOffset!==undefined?`<button class="btn-apply" onclick="removeItemByOffset(${item.byteOffset})" style="font-size:10px;padding:4px 10px;border-color:var(--d2-red);color:#d46060">Remove</button>`:''}
-    </div>`;
+    </div>`}`;
 }
+
+function findSharedStashItem(byteOffset) {
+  if (!sharedStashParsed) return null;
+  for (const tab of sharedStashParsed.tabs) {
+    const item = tab.items.find(it => it.byteOffset === byteOffset);
+    if (item) return item;
+  }
+  return null;
+}
+
+window.showSharedStashItemDetail = function(byteOffsets, triggerEl) {
+  if (!byteOffsets || !byteOffsets.length) return;
+  const tt = document.getElementById('itemTooltip');
+  const content = document.getElementById('itemTooltipContent');
+  if (!tt || !content) return;
+
+  if (byteOffsets.length === 1) {
+    const item = findSharedStashItem(byteOffsets[0]);
+    if (!item) return;
+    content.innerHTML = buildItemTooltipHtml(item);
+  } else {
+    let html = `<div class="tt-name" style="color:var(--d2-gold)">Stack x${byteOffsets.length}</div><hr class="tt-divider">`;
+    for (const off of byteOffsets) {
+      const item = findSharedStashItem(off);
+      if (!item) continue;
+      const {name,cls} = itemDisplayName(item);
+      html += `<div class="tt-stack-item"><div class="tt-name ${cls}" style="font-size:12px">${esc(name)}</div></div>`;
+    }
+    content.innerHTML = html;
+  }
+  positionTooltip(tt, triggerEl || null);
+  _tooltipOpenFrom = byteOffsets[0];
+};
 
 window.showItemDetail = function(byteOffset, triggerEl) {
   const item = (parsedChar.items||[]).find(it => it.byteOffset === byteOffset);
@@ -7468,9 +7597,54 @@ window.showItemDetail = function(byteOffset, triggerEl) {
   const tt = document.getElementById('itemTooltip');
   const content = document.getElementById('itemTooltipContent');
   if (!tt || !content) return;
-  content.innerHTML = buildItemTooltipHtml(item);
+  let html = buildItemTooltipHtml(item);
+  // Add Copy Item button for non-virtual stored items
+  if (item.parent === 0 && !item.isVirtual && workBytes && item.byteOffset >= 0) {
+    html += `<hr class="tt-divider"><div style="text-align:center;padding:4px">
+      <button class="btn btn-primary" style="font-size:11px;padding:4px 12px"
+        onclick="event.stopPropagation();startCopyItem(${byteOffset})">Copy Item</button>
+    </div>`;
+  }
+  content.innerHTML = html;
   positionTooltip(tt, triggerEl || null);
   _tooltipOpenFrom = byteOffset;
+};
+
+window.startCopyItem = function(byteOffset) {
+  const item = (parsedChar.items||[]).find(it => it.byteOffset === byteOffset);
+  if (!item || !workBytes) return;
+
+  const allItems = parsedChar.items || [];
+  // Find corpse JM as section boundary
+  let sectionEnd = 0;
+  const jmOff = parsedChar.itemsOffset;
+  if (jmOff >= 0) {
+    for (let i = jmOff + 4; i < workBytes.length - 1; i++) {
+      if (workBytes[i] === 0x4a && workBytes[i + 1] === 0x4d) { sectionEnd = i; break; }
+    }
+  }
+  const len = getItemBinaryLength(workBytes, byteOffset, allItems, sectionEnd);
+  const itemBytes = new Uint8Array(workBytes.slice(byteOffset, byteOffset + len));
+  const { w, h } = getItemSize(item.typeCode);
+  const { name } = itemDisplayName(item);
+
+  ensureItemProps(item);
+
+  _grailCopyItem = {
+    bytes: itemBytes, typeCode: item.typeCode, w, h, name,
+    srcOffset: byteOffset, srcItem: item,
+  };
+
+  closeTooltip(true);
+
+  // If we're already on inventory, just show placement mode
+  // Otherwise switch to inventory
+  if (activeTab !== 'inventory') {
+    activeTab = 'inventory';
+    buildTabs();
+    renderTab();
+  }
+  setTimeout(() => showGrailPlacementMode(), 50);
 };
 
 window.showItemDetailStack = function(byteOffsets, triggerEl) {
@@ -8073,10 +8247,7 @@ window.confirmInsertItem = function() {
   setStatus(`Inserted: ${itemNameByCode[typeCode]||typeCode} — remember to Save .d2s`, 'modified');
 };
 
-function markDirty() {
-  isDirty = true;
-  document.getElementById('saveBtn').classList.remove('disabled');
-}
+// markDirty() defined earlier at ~line 4025 — handles status bar + save button
 
 // Quest definitions: flat list matching QUEST_BYTE_OFFSETS order
 const QUEST_DEFS = [
@@ -8146,6 +8317,1176 @@ function applyQuestReward(questIndex, completing) {
     parsedChar.stats.hitpoints = Math.max(1, (parsedChar.stats.hitpoints || 0) + r.life * dir);
     commitStats({ maxhp: parsedChar.stats.maxhp, hitpoints: parsedChar.stats.hitpoints });
   }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SHARED STASH (.d2i)
+// ═══════════════════════════════════════════════════════════
+let sharedStashData = null;   // raw Uint8Array of loaded .d2i
+let sharedStashName = null;   // filename
+let sharedStashParsed = null; // { gold, tabs:[{jmOff, count, items:[]}] }
+let sharedStashOpenTab = -1;  // which tab is expanded (-1 = none)
+
+function renderSharedStash(c) {
+  c.innerHTML = `
+    <div style="padding:20px;max-width:700px;margin:0 auto">
+      <h2 style="color:var(--d2-gold);font-family:'Cinzel',serif;margin:0 0 16px">Shared Stash</h2>
+      <div style="color:var(--d2-text-dim);margin-bottom:16px">
+        Load a <code>.d2i</code> shared stash file to view and edit its contents.
+        This is separate from the character save — it stores items across all characters.
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+        <label class="btn btn-primary" style="cursor:pointer;margin:0">
+          Browse .d2i
+          <input type="file" accept=".d2i" id="sharedStashFileInput" style="display:none"
+            onchange="loadSharedStash(this.files[0])">
+        </label>
+        <span id="sharedStashFileName" style="color:var(--d2-text-dim);font-size:12px">
+          ${sharedStashData ? esc(sharedStashName) + ' (' + sharedStashData.length + ' bytes)' : 'No file loaded'}
+        </span>
+      </div>
+      <div id="sharedStashContent">${sharedStashData ? '' : '<div style="color:var(--d2-text-dim);font-style:italic">No shared stash loaded.</div>'}</div>
+    </div>`;
+  if (sharedStashData) renderSharedStashTabs();
+}
+
+window.loadSharedStash = function(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const buf = new Uint8Array(e.target.result);
+    if (buf.length < 0x44 || buf[0] !== 0x55 || buf[1] !== 0xAA || buf[2] !== 0x55 || buf[3] !== 0xAA) {
+      showPopup('Invalid .d2i file — expected 0x55AA55AA signature.');
+      return;
+    }
+    sharedStashData = buf;
+    sharedStashName = file.name;
+    sharedStashOpenTab = -1;
+    parseSharedStash();
+    renderSharedStash(document.getElementById('tabContent'));
+  };
+  reader.readAsArrayBuffer(file);
+};
+
+function parseSharedStash() {
+  const buf = sharedStashData;
+  if (!buf) { sharedStashParsed = null; return; }
+
+  const gold = (buf[12] | (buf[13]<<8) | (buf[14]<<16) | (buf[15]<<24)) >>> 0;
+
+  // Find JM markers
+  const jmPositions = [];
+  for (let i = 0x40; i < buf.length - 1; i++) {
+    if (buf[i] === 0x4a && buf[i+1] === 0x4d) jmPositions.push(i);
+  }
+
+  const rb = (byteOff, bitStart, n) => {
+    let val = 0;
+    for (let i = 0; i < n; i++) {
+      const p = byteOff * 8 + bitStart + i;
+      val |= ((buf[p >> 3] >> (p & 7)) & 1) << i;
+    }
+    return val;
+  };
+
+  const huffDecode = (byteOff, bitPos) => {
+    let node = D2R_HUFFMAN;
+    while (Array.isArray(node)) {
+      const p = byteOff * 8 + bitPos;
+      node = node[(buf[p >> 3] >> (p & 7)) & 1];
+      bitPos++;
+    }
+    return [node, bitPos];
+  };
+
+  const huffDecodeType = (byteOff) => {
+    let bit = 53, c = '';
+    for (let i = 0; i < 4; i++) {
+      const [ch, next] = huffDecode(byteOff, bit);
+      if (i < 3) c += (ch || '?');
+      bit = next;
+    }
+    return [c, bit];
+  };
+
+  const tabs = [];
+  for (let t = 0; t < jmPositions.length; t++) {
+    const jmOff = jmPositions[t];
+    const count = buf[jmOff + 2] | (buf[jmOff + 3] << 8);
+    const nextJm = t + 1 < jmPositions.length ? jmPositions[t + 1] : buf.length;
+    const itemStart = jmOff + 4;
+    const endOff = nextJm;
+
+    // Scan for items using the same pattern as the d2s parser
+    const items = [];
+    for (let i = 0; i < endOff - itemStart - 4; i++) {
+      const off = itemStart + i;
+      const b0 = buf[off], b2 = buf[off + 2], b4 = buf[off + 4];
+      if ((b0 & 0xE0) === 0x00 && (b2 & 0x80) && (b4 & 0x05) === 0x05) {
+        try {
+          const [typeCode] = huffDecodeType(off);
+          if (!typeCode || !typeCode.match(/^[a-zA-Z0-9]{2,3}$/) || !itemNameByCode[typeCode]) continue;
+          items.push({
+            byteOffset: off,
+            identified: rb(off, 4, 1),
+            socketed: rb(off, 11, 1),
+            simple: rb(off, 21, 1),
+            ethereal: rb(off, 22, 1),
+            personalized: rb(off, 24, 1),
+            runeword: rb(off, 26, 1),
+            parent: rb(off, 35, 3),
+            equipSlot: rb(off, 38, 4),
+            x: rb(off, 42, 4),
+            y: rb(off, 46, 4),
+            storage: rb(off, 50, 3),
+            typeCode: typeCode,
+            location: rb(off, 35, 3),
+            numSockets: 0,
+            itemLevel: 0,
+            quality: 0,
+            isSharedStash: true,
+            _propsDecoded: false,
+          });
+        } catch (e) {}
+      }
+    }
+
+    tabs.push({ jmOff, count, items });
+  }
+
+  sharedStashParsed = { gold, tabs };
+  console.log('parseSharedStash: ' + tabs.length + ' tabs, ' + tabs.reduce((s, t) => s + t.items.length, 0) + ' items total');
+}
+
+window.toggleSharedStashTab = function(tabIdx) {
+  sharedStashOpenTab = (sharedStashOpenTab === tabIdx) ? -1 : tabIdx;
+  renderSharedStashTabs();
+};
+
+function renderSharedStashTabs() {
+  const container = document.getElementById('sharedStashContent');
+  if (!container || !sharedStashParsed) return;
+
+  const stashW = 16, stashH = 13, cellPx = 29;
+
+  let html = `<div style="color:var(--d2-gold);margin-bottom:12px">Gold: ${sharedStashParsed.gold.toLocaleString()}</div>`;
+
+  for (let t = 0; t < sharedStashParsed.tabs.length; t++) {
+    const tab = sharedStashParsed.tabs[t];
+    const isOpen = sharedStashOpenTab === t;
+    const arrow = isOpen ? '\u25BC' : '\u25B6';
+
+    html += `<div style="background:var(--d2-surface2);border:1px solid ${isOpen ? 'var(--d2-gold-dim)' : 'var(--d2-border)'};border-radius:4px;margin-bottom:8px;overflow:hidden">`;
+    html += `<div onclick="toggleSharedStashTab(${t})" style="padding:10px 14px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none">`;
+    html += `<div><span style="color:var(--d2-gold);font-family:'Cinzel',serif;font-size:13px">${arrow} Tab ${t + 1}</span></div>`;
+    html += `<div style="color:var(--d2-text-dim);font-size:11px">${tab.count} item(s)</div>`;
+    html += `</div>`;
+
+    if (isOpen) {
+      html += `<div style="padding:4px 14px 14px;border-top:1px solid var(--d2-border)">`;
+      // Build a grid showing items
+      html += buildSharedStashGrid(tab.items, stashW, stashH, cellPx);
+      html += `</div>`;
+    }
+
+    html += `</div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+function buildSharedStashGrid(items, gridW, gridH, cellPx) {
+  // Only show items actually stored on this stash page (parent=0, storage=5)
+  const stashItems = items.filter(it => it.parent === 0 && it.storage === 5);
+
+  // Group by position (same logic as buildInvGrid)
+  const stacks = new Map();
+  for (const item of stashItems) {
+    const {w,h} = getItemSize(item.typeCode);
+    if (item.x < 0 || item.x+w > gridW || item.y < 0 || item.y+h > gridH) continue;
+    const key = `${item.x},${item.y}`;
+    if (!stacks.has(key)) stacks.set(key, []);
+    stacks.get(key).push({item, w, h});
+  }
+
+  const occupied = new Set();
+  for (const [key, stack] of stacks) {
+    const {w,h} = stack[0];
+    const [x,y] = key.split(',').map(Number);
+    for (let dy=0;dy<h;dy++) for (let dx=0;dx<w;dx++) occupied.add(`${x+dx},${y+dy}`);
+  }
+
+  let html = `<div class="inv-grid-wrap" style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${gridH},${cellPx}px);gap:1px;background:rgba(60,46,22,0.4);border:1px solid rgba(60,46,22,0.5);padding:0;position:relative">`;
+
+  const rendered = new Set();
+  for (let row=0; row<gridH; row++) {
+    for (let col=0; col<gridW; col++) {
+      const key = `${col},${row}`;
+      if (rendered.has(key)) continue;
+
+      const stack = stacks.get(key);
+      if (stack) {
+        const {w,h} = stack[0];
+        const count = stack.length;
+        const topItem = stack[0].item;
+        const {name,cls} = itemDisplayName(topItem);
+        for (let dy=0;dy<h;dy++) for (let dx=0;dx<w;dx++) rendered.add(`${col+dx},${row+dy}`);
+
+        const countBadge = count > 1
+          ? `<div style="position:absolute;top:1px;right:2px;font-size:8px;color:var(--d2-gold);font-family:'Cinzel',serif">x${count}</div>`
+          : '';
+        const clickList = stack.map(({item:it}) => it.byteOffset).join(',');
+        const borderCls = itemQualityCls(topItem);
+
+        html += `<div class="inv-item ${borderCls}"
+          style="grid-column:${col+1}/span ${w};grid-row:${row+1}/span ${h};position:relative"
+          onclick="showSharedStashItemDetail([${clickList}],this);pinTooltip()"
+          onmouseenter="showSharedStashItemDetail([${clickList}],this)"
+          onmouseleave="closeTooltip(false)">
+          ${countBadge}
+          <div class="inv-item-name ${cls}">${esc(name)}</div>
+        </div>`;
+      } else if (!occupied.has(key)) {
+        html += `<div class="inv-cell-empty"></div>`;
+      }
+    }
+  }
+  html += '</div>';
+  return html;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  HOLY GRAIL — Collection Tracker + D2I Export
+// ═══════════════════════════════════════════════════════════
+let grailD2i = null;
+let grailFileName = null;
+let grailParsed = null;    // { tabs:[{jmOff, count, items:[]}] }
+let grailItems = [];       // flat array of all items in the grail d2i
+let grailFound = new Set();       // set of "u_<uniqueId>" or "s_<setId>" keys found in grail
+let grailFoundItems = new Map();  // key -> item object (for stash grid display)
+
+const GRAIL_CATEGORIES = [
+  { name: 'Unique Helms', types: ['helm','circ'], qual: 7 },
+  { name: 'Unique Jewelry', types: ['ring','amul','jewl'], qual: 7 },
+  { name: 'Unique Body Armor', types: ['tors'], qual: 7 },
+  { name: 'Unique Gloves', types: ['glov'], qual: 7 },
+  { name: 'Unique Boots', types: ['boot'], qual: 7 },
+  { name: 'Unique Belts', types: ['belt'], qual: 7 },
+  { name: 'Unique Shields', types: ['shie'], qual: 7 },
+  { name: 'Unique Axes', types: ['axe'], qual: 7 },
+  { name: 'Unique Swords', types: ['swor'], qual: 7 },
+  { name: 'Unique Daggers', types: ['knif'], qual: 7 },
+  { name: 'Unique Maces', types: ['club','mace','hamm'], qual: 7 },
+  { name: 'Unique Scepters', types: ['scep'], qual: 7 },
+  { name: 'Unique Staves', types: ['staf'], qual: 7 },
+  { name: 'Unique Wands', types: ['wand'], qual: 7 },
+  { name: 'Unique Polearms', types: ['pole'], qual: 7 },
+  { name: 'Unique Spears', types: ['spea'], qual: 7 },
+  { name: 'Unique Javelins', types: ['jave'], qual: 7 },
+  { name: 'Unique Bows', types: ['bow'], qual: 7 },
+  { name: 'Unique Crossbows', types: ['xbow'], qual: 7 },
+  { name: 'Unique Throwing', types: ['tkni','taxe','tpot'], qual: 7 },
+  { name: 'Barbarian Helms', types: ['phlm'], qual: 7, group: 'class' },
+  { name: 'Druid Pelts', types: ['pelt'], qual: 7, group: 'class' },
+  { name: 'Assassin Claws', types: ['h2h','h2h2'], qual: 7, group: 'class' },
+  { name: 'Sorceress Orbs', types: ['orb'], qual: 7, group: 'class' },
+  { name: 'Amazon Bows & Javelins', types: ['abow','ajav','aspe'], qual: 7, group: 'class' },
+  { name: 'Paladin Shields', types: ['ashd'], qual: 7, group: 'class' },
+  { name: 'Necromancer Shields', types: ['head'], qual: 7, group: 'class' },
+  { name: 'Warlock Shields', types: ['grim'], qual: 7, group: 'class' },
+  { name: 'Unique Other', types: ['__other__'], qual: 7 },
+];
+
+function getGrailCategory(item) {
+  const typeCode = ITEM_TYPE_BY_CODE[item.code] || '';
+  for (const cat of GRAIL_CATEGORIES) {
+    if (cat.qual !== (item.qual || item.quality)) continue;
+    if (cat.types.includes(typeCode)) return cat.name;
+  }
+  if ((item.qual || item.quality) === 7) return 'Unique Other';
+  return null;
+}
+
+function buildGrailChecklist() {
+  const checklist = new Map(); // categoryName -> [{uniqueId/setId, name, code, found}]
+
+  // Initialize categories
+  for (const cat of GRAIL_CATEGORIES) checklist.set(cat.name, []);
+  checklist.set('Sets', []);
+
+  // Populate uniques
+  for (const entry of UNIQUE_CATALOG) {
+    const cat = getGrailCategory(entry);
+    if (!cat) continue;
+    const list = checklist.get(cat);
+    if (!list) continue;
+    const key = 'u_' + entry.uniqueId;
+    list.push({ key, name: entry.uniqueName, code: entry.code, found: grailFound.has(key), qual: 7 });
+  }
+
+  // Populate sets grouped by set name
+  const setGroups = new Map();
+  for (const entry of SET_CATALOG) {
+    const groupName = entry.setGroup || 'Other Sets';
+    if (!setGroups.has(groupName)) setGroups.set(groupName, []);
+    const key = 's_' + entry.setId;
+    setGroups.get(groupName).push({ key, name: entry.setName, code: entry.code, found: grailFound.has(key), qual: 5, setGroup: groupName });
+  }
+
+  // Remove empty categories
+  for (const [name, list] of checklist) {
+    if (list.length === 0) checklist.delete(name);
+  }
+
+  return { checklist, setGroups };
+}
+
+function scanGrailFound() {
+  grailFound = new Set();
+  grailFoundItems = new Map();
+  if (!grailParsed) return;
+  for (const tab of grailParsed.tabs) {
+    for (const item of tab.items) {
+      try {
+        ensureItemProps(item);
+        let key = null;
+        if (item.quality === 7 && item.uniqueId !== undefined) key = 'u_' + item.uniqueId;
+        if (item.quality === 5 && (item.setItemId !== undefined || item.setId !== undefined))
+          key = 's_' + (item.setItemId ?? item.setId);
+        if (key) { grailFound.add(key); grailFoundItems.set(key, item); }
+      } catch (e) {}
+    }
+  }
+}
+
+function parseGrailD2i() {
+  if (!grailD2i) { grailParsed = null; return; }
+  // Reuse shared stash parsing logic
+  const buf = grailD2i;
+  const jmPositions = [];
+  for (let i = 0x40; i < buf.length - 1; i++) {
+    if (buf[i] === 0x4a && buf[i + 1] === 0x4d) jmPositions.push(i);
+  }
+  const rb = (byteOff, bitStart, n) => {
+    let val = 0;
+    for (let i = 0; i < n; i++) { const p = byteOff * 8 + bitStart + i; val |= ((buf[p >> 3] >> (p & 7)) & 1) << i; }
+    return val;
+  };
+  const huffDecode = (byteOff, bitPos) => {
+    let node = D2R_HUFFMAN;
+    while (Array.isArray(node)) { const p = byteOff * 8 + bitPos; node = node[(buf[p >> 3] >> (p & 7)) & 1]; bitPos++; }
+    return [node, bitPos];
+  };
+  const huffDecodeType = (byteOff) => {
+    let bit = 53, c = '';
+    for (let i = 0; i < 4; i++) { const [ch, next] = huffDecode(byteOff, bit); if (i < 3) c += (ch || '?'); bit = next; }
+    return [c, bit];
+  };
+
+  const tabs = [];
+  for (let t = 0; t < jmPositions.length; t++) {
+    const jmOff = jmPositions[t];
+    const count = buf[jmOff + 2] | (buf[jmOff + 3] << 8);
+    const nextJm = t + 1 < jmPositions.length ? jmPositions[t + 1] : buf.length;
+    const itemStart = jmOff + 4;
+    const items = [];
+    for (let i = 0; i < nextJm - itemStart - 4; i++) {
+      const off = itemStart + i;
+      if ((buf[off] & 0xE0) !== 0 || !(buf[off + 2] & 0x80) || (buf[off + 4] & 0x05) !== 0x05) continue;
+      try {
+        const [typeCode] = huffDecodeType(off);
+        if (!typeCode || !typeCode.match(/^[a-zA-Z0-9]{2,3}$/) || !itemNameByCode[typeCode]) continue;
+        items.push({
+          byteOffset: off, identified: rb(off, 4, 1), socketed: rb(off, 11, 1),
+          simple: rb(off, 21, 1), ethereal: rb(off, 22, 1), personalized: rb(off, 24, 1),
+          runeword: rb(off, 26, 1), parent: rb(off, 35, 3), equipSlot: rb(off, 38, 4),
+          x: rb(off, 42, 4), y: rb(off, 46, 4), storage: rb(off, 50, 3),
+          typeCode, location: rb(off, 35, 3), numSockets: 0, itemLevel: 0, quality: 0,
+          isGrail: true, _propsDecoded: false,
+        });
+      } catch (e) {}
+    }
+    tabs.push({ jmOff, count, items });
+  }
+  grailParsed = { tabs };
+  scanGrailFound();
+}
+
+function packItemIntoGrid(occupied, gridW, gridH, w, h) {
+  for (let y = 0; y <= gridH - h; y++) {
+    for (let x = 0; x <= gridW - w; x++) {
+      let fits = true;
+      for (let dy = 0; dy < h && fits; dy++)
+        for (let dx = 0; dx < w && fits; dx++)
+          if (occupied.has(`${x + dx},${y + dy}`)) fits = false;
+      if (fits) {
+        for (let dy = 0; dy < h; dy++)
+          for (let dx = 0; dx < w; dx++)
+            occupied.add(`${x + dx},${y + dy}`);
+        return { x, y };
+      }
+    }
+  }
+  return null;
+}
+
+function getItemBinaryLength(buf, off, itemList, sectionEnd) {
+  // Use known item offsets to determine boundaries (much more reliable than pattern scanning)
+  if (itemList && itemList.length) {
+    const sorted = itemList.map(it => it.byteOffset).filter(o => o > off && o > 0).sort((a, b) => a - b);
+    if (sorted.length) return sorted[0] - off;
+  }
+  // Use section end if provided
+  if (sectionEnd && sectionEnd > off) return sectionEnd - off;
+  // Fallback: find next JM marker
+  for (let i = off + 5; i < buf.length - 1; i++) {
+    if (buf[i] === 0x4a && buf[i + 1] === 0x4d) return i - off;
+  }
+  return buf.length - off;
+}
+
+// Add multiple items to the grail d2i in one batch
+function addItemsToGrail(itemEntries) {
+  // itemEntries: [{bytes: Uint8Array, typeCode: string}, ...]
+  if (!itemEntries.length) return;
+
+  // If no grail exists, create a fresh one
+  if (!grailD2i) {
+    const header = new Uint8Array(0x40);
+    header[0] = 0x55; header[1] = 0xAA; header[2] = 0x55; header[3] = 0xAA;
+    writeU32LE(header, 4, 2);
+    writeU32LE(header, 8, 105);
+    const jm = new Uint8Array([0x4A, 0x4D, 0x00, 0x00]);
+    grailD2i = new Uint8Array(header.length + jm.length);
+    grailD2i.set(header);
+    grailD2i.set(jm, header.length);
+    grailFileName = 'grail.d2i';
+    parseGrailD2i();
+  }
+
+  const gridW = 16, gridH = 13;
+  const wb = (buf, p, v) => { if (v) buf[p >> 3] |= (1 << (p & 7)); else buf[p >> 3] &= ~(1 << (p & 7)); };
+
+  // Build occupancy from existing items in the last tab
+  let tab = grailParsed.tabs[grailParsed.tabs.length - 1];
+  let occupied = new Set();
+  for (const it of tab.items) {
+    if (it.parent !== 0 || it.storage !== 5) continue;
+    const { w, h } = getItemSize(it.typeCode);
+    for (let dy = 0; dy < h; dy++)
+      for (let dx = 0; dx < w; dx++)
+        occupied.add(`${it.x + dx},${it.y + dy}`);
+  }
+
+  // Collect all patched item binaries for the current tab
+  let tabItemBytes = [];  // array of Uint8Array
+  let tabJmOff = tab.jmOff;
+  let tabCount = tab.count;
+
+  function flushTab() {
+    if (!tabItemBytes.length) return;
+    // Find insertion point (end of current tab's data)
+    const tabIdx = grailParsed.tabs.indexOf(tab);
+    let insertAt;
+    if (tabIdx + 1 < grailParsed.tabs.length) {
+      insertAt = grailParsed.tabs[tabIdx + 1].jmOff;
+    } else {
+      insertAt = grailD2i.length;
+    }
+
+    const extraBytes = tabItemBytes.reduce((s, b) => s + b.length, 0);
+    const newD2i = new Uint8Array(grailD2i.length + extraBytes);
+    newD2i.set(grailD2i.slice(0, insertAt));
+    let at = insertAt;
+    for (const b of tabItemBytes) { newD2i.set(b, at); at += b.length; }
+    newD2i.set(grailD2i.slice(insertAt), at);
+    grailD2i = newD2i;
+
+    // Update item count
+    grailD2i[tabJmOff + 2] = tabCount & 0xFF;
+    grailD2i[tabJmOff + 3] = (tabCount >> 8) & 0xFF;
+
+    // Reparse so new tabs have correct offsets
+    parseGrailD2i();
+    tabItemBytes = [];
+  }
+
+  for (let ei = 0; ei < itemEntries.length; ei++) {
+    const { bytes, typeCode } = itemEntries[ei];
+    const { w, h } = getItemSize(typeCode);
+    let pos = packItemIntoGrid(occupied, gridW, gridH, w, h);
+
+    if (!pos) {
+      // Flush current tab, create new one
+      flushTab();
+
+      const newJm = new Uint8Array([0x4A, 0x4D, 0x00, 0x00]);
+      const newD2i = new Uint8Array(grailD2i.length + newJm.length);
+      newD2i.set(grailD2i);
+      newD2i.set(newJm, grailD2i.length);
+      grailD2i = newD2i;
+      parseGrailD2i();
+
+      tab = grailParsed.tabs[grailParsed.tabs.length - 1];
+      tabJmOff = tab.jmOff;
+      tabCount = 0;
+      occupied = new Set();
+      pos = packItemIntoGrid(occupied, gridW, gridH, w, h);
+      if (!pos) continue; // item too big, skip
+    }
+
+    // Patch position into item binary
+    const patched = new Uint8Array(bytes);
+    for (let i = 0; i < 4; i++) wb(patched, 42 + i, (pos.x >> i) & 1);
+    for (let i = 0; i < 4; i++) wb(patched, 46 + i, (pos.y >> i) & 1);
+    for (let i = 0; i < 3; i++) wb(patched, 50 + i, (5 >> i) & 1);  // storage=5
+    for (let i = 0; i < 3; i++) wb(patched, 35 + i, 0);              // parent=0
+
+    tabItemBytes.push(patched);
+    tabCount++;
+  }
+
+  // Flush remaining
+  flushTab();
+
+  writeU32LE(grailD2i, 16, grailD2i.length);
+  recalcChecksum(grailD2i);
+  parseGrailD2i();
+}
+
+window.loadGrailFile = function(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const buf = new Uint8Array(e.target.result);
+    if (buf.length < 0x44 || buf[0] !== 0x55 || buf[1] !== 0xAA || buf[2] !== 0x55 || buf[3] !== 0xAA) {
+      showPopup('Invalid .d2i file — expected 0x55AA55AA signature.');
+      return;
+    }
+    grailD2i = buf;
+    grailFileName = file.name;
+    parseGrailD2i();
+    renderGrail(document.getElementById('tabContent'));
+  };
+  reader.readAsArrayBuffer(file);
+};
+
+window.saveGrailFile = function() {
+  if (!grailD2i) { showPopup('No grail data to save.'); return; }
+  const blob = new Blob([grailD2i], { type: 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = grailFileName || 'grail.d2i'; a.click();
+  URL.revokeObjectURL(url);
+};
+
+window.moveItemsToGrail = function() {
+  const eligible = [];
+
+  // Helper to scan a list of items from a given source
+  function scanItems(items, source) {
+    for (const item of items) {
+      if (item.isMerc) continue;
+      if (item.parent !== 0) continue;  // skip equipped/socketed items
+      if (item.storage !== 1 && item.storage !== 5) continue;  // inventory or stash only
+      if (item.isVirtual && !item._grailCopyBytes) continue;  // skip virtual items without binary data
+      ensureItemProps(item);
+      if (item.quality !== 7 && item.quality !== 5) continue;
+
+      const key = item.quality === 7 ? 'u_' + item.uniqueId : 's_' + (item.setItemId ?? item.setId);
+      if (grailFound.has(key)) continue;
+      if (eligible.some(e => e.key === key)) continue; // avoid dupes across sources
+
+      const { name } = itemDisplayName(item);
+      eligible.push({ item, name, key, source });
+    }
+  }
+
+  // Scan character save
+  if (parsedChar && parsedChar.items) {
+    scanItems(parsedChar.items, 'char');
+  }
+
+  // Scan loaded shared stash
+  if (sharedStashParsed) {
+    for (const tab of sharedStashParsed.tabs) {
+      scanItems(tab.items, 'shared');
+    }
+  }
+
+  if (!eligible.length) { showPopup('No new unique or set items found in inventory, stash, or shared stash.'); return; }
+
+  // Group by source for display
+  const charItems = eligible.filter(e => e.source === 'char');
+  const sharedItems = eligible.filter(e => e.source === 'shared');
+
+  let listHtml = '';
+  if (charItems.length) {
+    listHtml += `<div style="color:var(--d2-text-dim);font-size:11px;margin-bottom:4px">From character:</div>`;
+    listHtml += charItems.map(e =>
+      `<div style="padding:2px 0;color:${e.item.quality === 7 ? 'var(--d2-gold)' : '#00c800'}">${esc(e.name)}</div>`
+    ).join('');
+  }
+  if (sharedItems.length) {
+    listHtml += `<div style="color:var(--d2-text-dim);font-size:11px;margin:${charItems.length ? '8px' : '0'} 0 4px">From shared stash:</div>`;
+    listHtml += sharedItems.map(e =>
+      `<div style="padding:2px 0;color:${e.item.quality === 7 ? 'var(--d2-gold)' : '#00c800'}">${esc(e.name)}</div>`
+    ).join('');
+  }
+
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999';
+  modal.innerHTML = `
+    <div style="background:var(--d2-surface);border:2px solid var(--d2-gold-dim);border-radius:4px;padding:20px;max-width:450px;max-height:80vh;overflow-y:auto">
+      <h3 style="color:var(--d2-gold);font-family:'Cinzel',serif;margin:0 0 12px">Move Items to Grail</h3>
+      <div style="color:var(--d2-text-dim);margin-bottom:12px">Found ${eligible.length} eligible item(s):</div>
+      <div style="margin-bottom:16px;font-size:13px">${listHtml}</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="executeGrailTransfer(false);this.closest('div[style*=fixed]').remove()">Copy to Grail</button>
+        <button class="btn" onclick="this.closest('div[style*=fixed]').remove()">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  window._grailTransferList = eligible;
+};
+
+// Find socketed child items (parent=6) that belong to a given parent item
+function findSocketedChildren(sourceBuf, sourceItems, parentItem) {
+  if (!parentItem.socketed && !parentItem.numSockets) return [];
+  // Child items have parent=6 (in_item). In the binary they appear after the parent.
+  // Match children by finding items with parent=6 that come after this item in byte order
+  // and before the next non-child item.
+  const children = [];
+  const parentOff = parentItem.byteOffset;
+  const sorted = [...sourceItems].filter(it => it.byteOffset > parentOff).sort((a, b) => a.byteOffset - b.byteOffset);
+  for (const child of sorted) {
+    if (child.parent === 6) {
+      children.push(child);
+    } else {
+      break; // first non-child item = end of children
+    }
+  }
+  return children;
+}
+
+window.executeGrailTransfer = function(removeOriginals) {
+  const eligible = window._grailTransferList;
+  if (!eligible || !eligible.length) return;
+
+  // Collect all item binaries to add in one batch
+  const allEntries = [];
+
+  for (const { item, key, source } of eligible) {
+    const sourceBuf = source === 'shared' ? sharedStashData : workBytes;
+    const sourceItems = source === 'shared'
+      ? (sharedStashParsed ? sharedStashParsed.tabs.flatMap(t => t.items) : [])
+      : (parsedChar.items || []);
+
+    // Determine section end boundary for accurate item length
+    let sectionEnd = 0;
+    if (source !== 'shared' && parsedChar) {
+      // For character items, find the corpse JM as boundary
+      const jmOff = parsedChar.itemsOffset;
+      if (jmOff >= 0) {
+        for (let i = jmOff + 4; i < sourceBuf.length - 1; i++) {
+          if (sourceBuf[i] === 0x4a && sourceBuf[i + 1] === 0x4d) { sectionEnd = i; break; }
+        }
+      }
+    }
+
+    // Get parent item binary
+    let itemBytes;
+    if (item._grailCopyBytes) {
+      // Virtual item from grail copy — use stored bytes directly
+      itemBytes = new Uint8Array(item._grailCopyBytes);
+    } else {
+      const len = getItemBinaryLength(sourceBuf, item.byteOffset, sourceItems, sectionEnd);
+      itemBytes = new Uint8Array(sourceBuf.slice(item.byteOffset, item.byteOffset + len));
+    }
+    allEntries.push({ bytes: itemBytes, typeCode: item.typeCode });
+
+    // Find and add socketed children
+    const children = findSocketedChildren(sourceBuf, sourceItems, item);
+    for (const child of children) {
+      const cLen = getItemBinaryLength(sourceBuf, child.byteOffset, sourceItems, sectionEnd);
+      const cBytes = new Uint8Array(sourceBuf.slice(child.byteOffset, child.byteOffset + cLen));
+      allEntries.push({ bytes: cBytes, typeCode: child.typeCode });
+      if (removeOriginals && source !== 'shared') {
+        _deletedItemOffsets.add(child.byteOffset);
+      }
+    }
+
+    // Remove parent from d2s if requested
+    if (removeOriginals && source !== 'shared') {
+      _deletedItemOffsets.add(item.byteOffset);
+    }
+  }
+
+  // Add all items to grail in one batch
+  addItemsToGrail(allEntries);
+
+  if (removeOriginals) markDirty();
+
+  window._grailTransferList = null;
+  renderGrail(document.getElementById('tabContent'));
+  showPopup(`${eligible.length} item(s) ${removeOriginals ? 'moved' : 'copied'} to grail.`);
+};
+
+// Add isGrail support to ensureItemProps
+function findGrailItem(byteOffset) {
+  if (!grailParsed) return null;
+  for (const tab of grailParsed.tabs) {
+    const item = tab.items.find(it => it.byteOffset === byteOffset);
+    if (item) return item;
+  }
+  return null;
+}
+
+let _grailGridOpen = new Set(); // track which sections have grid view open
+let _grailGridPage = {};       // sectionId -> current page index
+
+function renderGrail(c) {
+  const { checklist, setGroups } = buildGrailChecklist();
+
+  let totalFound = 0, totalItems = 0;
+  for (const [, list] of checklist) { totalFound += list.filter(i => i.found).length; totalItems += list.length; }
+  for (const [, items] of setGroups) { totalFound += items.filter(i => i.found).length; totalItems += items.length; }
+
+  const pct = totalItems > 0 ? (totalFound / totalItems * 100).toFixed(1) : 0;
+  const barWidth = totalItems > 0 ? (totalFound / totalItems * 100) : 0;
+
+  let html = `<div style="padding:20px;max-width:800px;margin:0 auto">
+    <h2 style="color:var(--d2-gold);font-family:'Cinzel',serif;margin:0 0 16px">Holy Grail</h2>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap">
+      <label class="btn btn-primary" style="cursor:pointer;margin:0">
+        Load Grail .d2i
+        <input type="file" accept=".d2i" style="display:none" onchange="loadGrailFile(this.files[0])">
+      </label>
+      <button class="btn btn-primary" onclick="moveItemsToGrail()">Copy Items to Grail</button>
+      <span style="color:var(--d2-text-dim);font-size:12px">${grailD2i ? esc(grailFileName) : 'No grail loaded'}</span>
+    </div>
+    <div style="margin-bottom:16px">
+      <button class="btn" onclick="saveGrailFile()" ${grailD2i ? '' : 'disabled'}>Save Grail .d2i</button>
+    </div>
+
+    <div style="margin-bottom:20px">
+      <div style="color:var(--d2-gold);font-size:14px;margin-bottom:4px">Progress: ${totalFound} / ${totalItems} (${pct}%)</div>
+      <div style="background:var(--d2-surface2);border:1px solid var(--d2-border);border-radius:3px;height:16px;overflow:hidden">
+        <div style="background:linear-gradient(90deg,#8b6914,#d4aa30);height:100%;width:${barWidth}%;transition:width 0.3s"></div>
+      </div>
+    </div>`;
+
+  // ── Unique Items (top level) ──
+  // Split into regular, class, and other categories
+  const classCatNames = new Set(GRAIL_CATEGORIES.filter(c => c.group === 'class').map(c => c.name));
+  const regularCats = [...checklist.entries()].filter(([name]) => !classCatNames.has(name) && name !== 'Unique Other');
+  const classCats = [...checklist.entries()].filter(([name]) => classCatNames.has(name));
+  const otherCat = [...checklist.entries()].find(([name]) => name === 'Unique Other');
+
+  let uFound = 0, uTotal = 0;
+  for (const [, list] of checklist) { uFound += list.filter(i => i.found).length; uTotal += list.length; }
+  html += `<div style="margin-bottom:12px">
+    <div style="color:var(--d2-gold);font-family:'Cinzel',serif;font-size:15px;margin-bottom:8px;border-bottom:1px solid var(--d2-gold-dim);padding-bottom:4px">Unique Items (${uFound}/${uTotal})</div>`;
+
+  // Regular unique categories (not class, not other)
+  for (const [catName, items] of regularCats) {
+    const found = items.filter(i => i.found).length;
+    html += renderGrailSection(catName, items, found, 'var(--d2-gold)', 'u');
+  }
+
+  // Class items nested dropdown
+  if (classCats.length > 0) {
+    let cFound = 0, cTotal = 0;
+    for (const [, items] of classCats) { cFound += items.filter(i => i.found).length; cTotal += items.length; }
+    const classOpen = _grailGridOpen.has('u_class_group');
+    const classArrow = classOpen ? '\u25BC' : '\u25B6';
+
+    html += `<div style="margin-bottom:6px;border:1px solid var(--d2-border);border-radius:4px;overflow:hidden">
+      <div onclick="toggleGrailGrid('u_class_group')"
+        style="padding:8px 14px;cursor:pointer;background:var(--d2-surface2);display:flex;align-items:center;justify-content:space-between;user-select:none">
+        <span style="color:var(--d2-gold);font-family:'Cinzel',serif;font-size:12px">${classArrow} Unique Class Items</span>
+        <span style="color:var(--d2-text-dim);font-size:11px">${cFound}/${cTotal}</span>
+      </div>`;
+    if (classOpen) {
+      html += `<div style="padding:4px 8px;border-top:1px solid var(--d2-border)">`;
+      for (const [catName, items] of classCats) {
+        const found = items.filter(i => i.found).length;
+        html += renderGrailSection(catName, items, found, 'var(--d2-gold)', 'uc');
+      }
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Unique Other (last)
+  if (otherCat && otherCat[1].length > 0) {
+    const found = otherCat[1].filter(i => i.found).length;
+    html += renderGrailSection(otherCat[0], otherCat[1], found, 'var(--d2-gold)', 'u');
+  }
+
+  html += `</div>`;
+
+  // ── Set Items (top level) ──
+  if (setGroups.size > 0) {
+    let sFound = 0, sTotal = 0;
+    for (const [, items] of setGroups) { sFound += items.filter(i => i.found).length; sTotal += items.length; }
+    html += `<div style="margin-bottom:12px">
+      <div style="color:#00c800;font-family:'Cinzel',serif;font-size:15px;margin-bottom:8px;border-bottom:1px solid #006000;padding-bottom:4px">Set Items (${sFound}/${sTotal})</div>`;
+    for (const [groupName, items] of [...setGroups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const gFound = items.filter(i => i.found).length;
+      html += renderGrailSection(groupName, items, gFound, '#00c800', 's');
+    }
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  c.innerHTML = html;
+}
+
+window.toggleGrailGrid = function(sectionId) {
+  if (_grailGridOpen.has(sectionId)) _grailGridOpen.delete(sectionId);
+  else _grailGridOpen.add(sectionId);
+  renderGrail(document.getElementById('tabContent'));
+};
+
+window.grailGridPageNav = function(sectionId, delta) {
+  const cur = _grailGridPage[sectionId] || 0;
+  _grailGridPage[sectionId] = Math.max(0, cur + delta);
+  renderGrail(document.getElementById('tabContent'));
+};
+
+window.showGrailItemDetail = function(byteOffsets, triggerEl) {
+  if (!byteOffsets || !byteOffsets.length) return;
+  const tt = document.getElementById('itemTooltip');
+  const content = document.getElementById('itemTooltipContent');
+  if (!tt || !content) return;
+  const item = findGrailItem(byteOffsets[0]);
+  if (!item) return;
+  let html = buildItemTooltipHtml(item);
+  // Add action buttons
+  html += `<hr class="tt-divider"><div style="text-align:center;padding:4px;display:flex;gap:6px;justify-content:center">`;
+  if (parsedChar && parsedChar.items) {
+    html += `<button class="btn" style="font-size:11px;padding:4px 12px;background:#0e2a0e;border-color:var(--d2-green);color:#fff"
+      onclick="event.stopPropagation();startGrailCopyToInventory(${byteOffsets[0]})">Copy to Inv</button>`;
+  }
+  html += `<button class="btn" style="font-size:11px;padding:4px 12px;background:#8b2020;color:#fff"
+    onclick="event.stopPropagation();removeGrailItem(${byteOffsets[0]})">Remove from Grail</button>`;
+  html += `</div>`;
+  content.innerHTML = html;
+  positionTooltip(tt, triggerEl || null);
+  _tooltipOpenFrom = byteOffsets[0];
+};
+
+window.removeGrailItem = function(byteOffset) {
+  if (!grailD2i || !grailParsed) return;
+  const item = findGrailItem(byteOffset);
+  if (!item) return;
+  const { name } = itemDisplayName(item);
+
+  showConfirm(`Are you sure you want to remove this item?\n\n${name}`, function() {
+    const grailAllItems = grailParsed.tabs.flatMap(t => t.items);
+    const len = getItemBinaryLength(grailD2i, byteOffset, grailAllItems);
+
+    // Find which tab this item belongs to
+    let ownerTab = null;
+    for (const tab of grailParsed.tabs) {
+      if (tab.items.some(it => it.byteOffset === byteOffset)) { ownerTab = tab; break; }
+    }
+    if (!ownerTab) return;
+
+    // Remove the item bytes from the d2i
+    const newD2i = new Uint8Array(grailD2i.length - len);
+    newD2i.set(grailD2i.slice(0, byteOffset));
+    newD2i.set(grailD2i.slice(byteOffset + len), byteOffset);
+    grailD2i = newD2i;
+
+    // Decrement item count for this tab
+    const tabJmOff = ownerTab.jmOff < byteOffset ? ownerTab.jmOff : ownerTab.jmOff - len;
+    const cnt = Math.max(0, (grailD2i[tabJmOff + 2] | (grailD2i[tabJmOff + 3] << 8)) - 1);
+    grailD2i[tabJmOff + 2] = cnt & 0xFF;
+    grailD2i[tabJmOff + 3] = (cnt >> 8) & 0xFF;
+
+    writeU32LE(grailD2i, 16, grailD2i.length);
+    recalcChecksum(grailD2i);
+    parseGrailD2i(); // this calls scanGrailFound which rebuilds grailFound set
+
+    closeTooltip(true);
+    renderGrail(document.getElementById('tabContent'));
+    showPopup(`${name} removed from grail.`);
+  }, 'Yes');
+};
+
+let _grailCopyItem = null; // item being copied from grail to inventory
+
+window.startGrailCopyToInventory = function(byteOffset) {
+  const item = findGrailItem(byteOffset);
+  if (!item || !grailD2i) return;
+
+  // Get the grail item's source items list for accurate length calc
+  const grailAllItems = grailParsed ? grailParsed.tabs.flatMap(t => t.items) : [];
+  const len = getItemBinaryLength(grailD2i, byteOffset, grailAllItems);
+  const itemBytes = new Uint8Array(grailD2i.slice(byteOffset, byteOffset + len));
+  const { w, h } = getItemSize(item.typeCode);
+  const { name } = itemDisplayName(item);
+
+  _grailCopyItem = { bytes: itemBytes, typeCode: item.typeCode, w, h, name, srcOffset: byteOffset };
+
+  // Close tooltip and switch to inventory tab with placement mode
+  closeTooltip(true);
+  activeTab = 'inventory';
+  buildTabs();
+  renderTab();
+
+  // Show placement overlay after render
+  setTimeout(() => showGrailPlacementMode(), 50);
+};
+
+function showGrailPlacementMode() {
+  if (!_grailCopyItem || !parsedChar) return;
+  const { w, h, name } = _grailCopyItem;
+  const dims = getInventoryDimensions(parsedChar.header.cls);
+  const gridW = dims.invW, gridH = dims.invH;
+
+  // Find all occupied cells
+  const occupied = new Set();
+  for (const item of (parsedChar.items || [])) {
+    if (item.isMerc) continue;
+    if ((item.parent ?? item.location ?? 0) !== 0) continue;
+    if ((item.storage ?? 0) !== 1) continue;
+    const { w: ow, h: oh } = getItemSize(item.typeCode);
+    for (let dy = 0; dy < oh; dy++)
+      for (let dx = 0; dx < ow; dx++)
+        occupied.add(`${item.x + dx},${item.y + dy}`);
+  }
+
+  // Find valid placement positions
+  const validPositions = [];
+  for (let y = 0; y <= gridH - h; y++) {
+    for (let x = 0; x <= gridW - w; x++) {
+      let fits = true;
+      for (let dy = 0; dy < h && fits; dy++)
+        for (let dx = 0; dx < w && fits; dx++)
+          if (occupied.has(`${x + dx},${y + dy}`)) fits = false;
+      if (fits) validPositions.push({ x, y });
+    }
+  }
+
+  // Overlay banner
+  const banner = document.createElement('div');
+  banner.id = 'grailPlaceBanner';
+  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:rgba(30,80,30,0.95);color:#fff;text-align:center;padding:10px;z-index:9998;font-family:Cinzel,serif;font-size:13px';
+  banner.innerHTML = `Placing: <b style="color:var(--d2-gold)">${esc(name)}</b> (${w}x${h}) — click a green cell to place, or <button class="btn" style="font-size:11px;padding:2px 10px;margin-left:8px" onclick="cancelGrailPlacement()">Cancel</button>`;
+  document.body.appendChild(banner);
+
+  // Highlight valid cells green
+  const grid = document.querySelector('.inv-grid-wrap');
+  if (!grid) return;
+  const cells = grid.querySelectorAll('.inv-cell-empty');
+  for (const cell of cells) {
+    const cx = parseInt(cell.dataset.cellX);
+    const cy = parseInt(cell.dataset.cellY);
+    if (validPositions.some(p => p.x === cx && p.y === cy)) {
+      cell.style.background = 'rgba(0,180,0,0.3)';
+      cell.style.border = '1px solid rgba(0,255,0,0.5)';
+      cell.style.cursor = 'pointer';
+      cell.onclick = function(e) {
+        e.stopPropagation();
+        placeGrailItemAt(cx, cy);
+      };
+    }
+  }
+}
+
+function placeGrailItemAt(x, y) {
+  if (!_grailCopyItem || !parsedChar) return;
+  const { bytes, typeCode, w, h, name } = _grailCopyItem;
+
+  // Patch position: x, y, storage=1 (inventory), parent=0
+  const patched = new Uint8Array(bytes);
+  const wb = (p, v) => { if (v) patched[p >> 3] |= (1 << (p & 7)); else patched[p >> 3] &= ~(1 << (p & 7)); };
+  for (let i = 0; i < 4; i++) wb(42 + i, (x >> i) & 1);
+  for (let i = 0; i < 4; i++) wb(46 + i, (y >> i) & 1);
+  for (let i = 0; i < 3; i++) wb(50 + i, (1 >> i) & 1);  // storage=1 (inventory)
+  for (let i = 0; i < 3; i++) wb(35 + i, 0);              // parent=0
+
+  // Copy decoded properties from the source item (grail or inventory)
+  const srcItem = _grailCopyItem.srcItem || findGrailItem(_grailCopyItem.srcOffset);
+  if (srcItem) ensureItemProps(srcItem);
+
+  const fakeOffset = -(Date.now() & 0x7FFFFFFF);
+  const newItem = {
+    byteOffset: fakeOffset,
+    identified: srcItem ? srcItem.identified : 1,
+    socketed: srcItem ? srcItem.socketed : 0,
+    simple: srcItem ? srcItem.simple : 0,
+    ethereal: srcItem ? srcItem.ethereal : 0,
+    personalized: srcItem ? srcItem.personalized : 0,
+    runeword: srcItem ? srcItem.runeword : 0,
+    typeCode, typeIndex: 0,
+    x, y,
+    parent: 0, equipSlot: 0, storage: 1,
+    location: 0,
+    numSockets: srcItem ? srcItem.numSockets : 0,
+    itemLevel: srcItem ? srcItem.itemLevel : 0,
+    quality: srcItem ? srcItem.quality : 0,
+    uniqueId: srcItem ? srcItem.uniqueId : undefined,
+    setId: srcItem ? srcItem.setId : undefined,
+    setItemId: srcItem ? srcItem.setItemId : undefined,
+    isMerc: false,
+    isVirtual: true,
+    _grailCopyBytes: patched,
+    _propsDecoded: true,  // prevent re-decode since we copied props
+    _mods: srcItem ? srcItem._mods : [],
+  };
+
+  parsedChar.items.push(newItem);
+  markDirty();
+
+  // Clean up placement mode
+  cancelGrailPlacement();
+  renderTab();
+  showPopup(`${name} placed in inventory.`);
+}
+
+window.cancelGrailPlacement = function() {
+  _grailCopyItem = null;
+  const banner = document.getElementById('grailPlaceBanner');
+  if (banner) banner.remove();
+};
+
+function renderGrailSection(catName, items, found, accentColor, prefix) {
+  const sectionId = prefix + '_' + catName.replace(/\W/g, '_');
+  const isOpen = _grailGridOpen.has(sectionId + '_list');
+  const isGridOpen = _grailGridOpen.has(sectionId + '_grid');
+  const arrow = isOpen ? '\u25BC' : '\u25B6';
+
+  let html = `<div style="margin-bottom:6px;border:1px solid var(--d2-border);border-radius:4px;overflow:hidden">`;
+
+  // Header row
+  html += `<div style="padding:8px 14px;background:var(--d2-surface2);display:flex;align-items:center;justify-content:space-between;user-select:none">
+    <div style="cursor:pointer;flex:1" onclick="toggleGrailGrid('${sectionId}_list')">
+      <span style="color:${accentColor};font-family:'Cinzel',serif;font-size:12px">${arrow} ${esc(catName)}</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="color:var(--d2-text-dim);font-size:11px">${found}/${items.length}</span>
+      <button onclick="event.stopPropagation();toggleGrailGrid('${sectionId}_grid')"
+        style="background:${isGridOpen ? 'var(--d2-gold-dim)' : 'var(--d2-surface)'};border:1px solid var(--d2-border);border-radius:3px;padding:2px 6px;cursor:pointer;font-size:10px;color:var(--d2-text)" title="Toggle stash view">
+        ${isGridOpen ? '\u25A3' : '\u25A1'} Stash
+      </button>
+    </div>
+  </div>`;
+
+  // Checklist view (collapsed by default)
+  if (isOpen) {
+    html += `<div style="padding:8px 14px;display:flex;flex-wrap:wrap;gap:4px">`;
+    for (const item of items) {
+      const icon = item.found ? '\u2713' : '\u2717';
+      const color = item.found ? accentColor : 'var(--d2-text-dim)';
+      html += `<span style="font-size:11px;color:${color};opacity:${item.found ? 1 : 0.5}" title="${esc(item.name)}">${icon} ${esc(item.name)}</span>`;
+    }
+    html += `</div>`;
+  }
+
+  // Stash grid view
+  if (isGridOpen) {
+    const pageIdx = _grailGridPage[sectionId] || 0;
+    const grid = buildGrailCategoryGrid(items, 16, 13, 29, pageIdx);
+    html += `<div style="padding:8px 14px;border-top:1px solid var(--d2-border)">`;
+    if (grid.totalPages > 1) {
+      html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <button onclick="grailGridPageNav('${sectionId}', -1)" ${grid.currentPage <= 0 ? 'disabled' : ''}
+          style="background:var(--d2-surface);border:1px solid var(--d2-border);border-radius:3px;padding:2px 8px;cursor:pointer;color:var(--d2-text);font-size:14px">\u25C0</button>
+        <span style="color:var(--d2-text-dim);font-size:11px">Page ${grid.currentPage + 1} / ${grid.totalPages}</span>
+        <button onclick="grailGridPageNav('${sectionId}', 1)" ${grid.currentPage >= grid.totalPages - 1 ? 'disabled' : ''}
+          style="background:var(--d2-surface);border:1px solid var(--d2-border);border-radius:3px;padding:2px 8px;cursor:pointer;color:var(--d2-text);font-size:14px">\u25B6</button>
+      </div>`;
+    }
+    html += grid.html;
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+function buildGrailCategoryGrid(items, gridW, gridH, cellPx, pageIndex) {
+  // Pack ALL items into pages of gridW x gridH
+  const pages = []; // array of arrays of placed items
+  let currentPage = [];
+  let occupied = new Set();
+
+  for (const entry of items) {
+    const { w, h } = getItemSize(entry.code);
+    let pos = packItemIntoGrid(occupied, gridW, gridH, w, h);
+    if (!pos) {
+      // Overflow — start new page
+      pages.push(currentPage);
+      currentPage = [];
+      occupied = new Set();
+      pos = packItemIntoGrid(occupied, gridW, gridH, w, h);
+      if (!pos) continue; // item too big for a page, skip
+    }
+    const grailItem = entry.found ? grailFoundItems.get(entry.key) : null;
+    currentPage.push({ entry, x: pos.x, y: pos.y, w, h, found: entry.found, grailItem });
+  }
+  if (currentPage.length) pages.push(currentPage);
+
+  const totalPages = pages.length;
+  const page = Math.min(pageIndex || 0, totalPages - 1);
+  const placed = pages[Math.max(0, page)] || [];
+
+  // Find max y to trim grid
+  let maxY = 0;
+  for (const p of placed) maxY = Math.max(maxY, p.y + p.h);
+  const displayH = Math.min(gridH, Math.max(maxY + 1, 1));
+
+  const cellMap = new Map();
+  const cellOccupied = new Set();
+  for (const p of placed) {
+    cellMap.set(`${p.x},${p.y}`, p);
+    for (let dy = 0; dy < p.h; dy++)
+      for (let dx = 0; dx < p.w; dx++)
+        cellOccupied.add(`${p.x + dx},${p.y + dy}`);
+  }
+
+  let html = `<div class="inv-grid-wrap" style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${displayH},${cellPx}px);gap:1px;background:rgba(60,46,22,0.4);border:1px solid rgba(60,46,22,0.5);padding:0;position:relative">`;
+
+  const rendered = new Set();
+  for (let row = 0; row < displayH; row++) {
+    for (let col = 0; col < gridW; col++) {
+      const key = `${col},${row}`;
+      if (rendered.has(key)) continue;
+
+      const p = cellMap.get(key);
+      if (p) {
+        for (let dy = 0; dy < p.h; dy++)
+          for (let dx = 0; dx < p.w; dx++)
+            rendered.add(`${col + dx},${row + dy}`);
+
+        if (p.found && p.grailItem) {
+          const { name, cls } = itemDisplayName(p.grailItem);
+          const borderCls = itemQualityCls(p.grailItem);
+          html += `<div class="inv-item ${borderCls}"
+            style="grid-column:${col + 1}/span ${p.w};grid-row:${row + 1}/span ${p.h};position:relative"
+            onclick="showGrailItemDetail([${p.grailItem.byteOffset}],this);pinTooltip()"
+            onmouseenter="showGrailItemDetail([${p.grailItem.byteOffset}],this)"
+            onmouseleave="closeTooltip(false)">
+            <div class="inv-item-name ${cls}">${esc(name)}</div>
+          </div>`;
+        } else {
+          html += `<div style="grid-column:${col + 1}/span ${p.w};grid-row:${row + 1}/span ${p.h};background:rgba(40,40,40,0.6);display:flex;align-items:center;justify-content:center;border:1px solid rgba(60,60,60,0.4);opacity:0.35;cursor:default" title="${esc(p.entry.name)} (not found)">
+            <div style="font-size:8px;color:var(--d2-text-dim);text-align:center;line-height:1.1;word-break:break-word;padding:1px">${esc(p.entry.name)}</div>
+          </div>`;
+        }
+      } else if (!cellOccupied.has(key)) {
+        html += `<div class="inv-cell-empty"></div>`;
+      }
+    }
+  }
+
+  html += `</div>`;
+  return { html, totalPages, currentPage: Math.max(0, page) };
 }
 
 function renderQuests(c) {
@@ -8647,8 +9988,8 @@ window.addEventListener('DOMContentLoaded', startBaseFileLoad);
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-primary" onclick="closeItemModal()" style="opacity:0.7">Cancel</button>
       <button class="btn btn-primary" id="modalInsertBtn" onclick="confirmInsertItem()" style="display:none">Insert Item</button>
+      <button class="btn btn-primary" onclick="closeItemModal()" style="opacity:0.7">Cancel</button>
     </div>
   </div>
 </div>
