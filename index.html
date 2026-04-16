@@ -692,6 +692,7 @@
         <span style="font-size:13px;font-family:'Crimson Text',serif">or click to browse</span>
       </div>
     </div>
+    <div id="recentFilesPanel" style="margin-top:12px;max-width:420px;display:none"></div>
     <div class="ornament">— ✦ —</div>
     <button class="btn btn-primary" style="margin-top:8px;padding:10px 28px;font-size:12px" onclick="openNewCharModal()">Make a New Character</button>
   </div>
@@ -1212,6 +1213,7 @@ async function startBaseFileLoad() {
   _updateStaticUIStrings();
 
   showOnly('uploadView');
+  renderRecentFiles();
   const sk = warned.length > 0 ? `  (${warned.length} non-critical skipped)` : '';
   const src = usingFallback ? '  ⚠ using bundled base files' : '';
   setStatus(`Reimagined data ready — ${successCount} files + ${strLoaded} string tables loaded${sk}${src}`, 'ready');
@@ -3170,7 +3172,247 @@ function onFileLoaded() {
   updateCharStrip();
   buildTabs();
   renderTab();
+  // Track this file in recent files
+  trackRecentFile(fileName, parsedChar);
 }
+
+// ═══════════════════════════════════════════════════════════
+//  RECENT FILES — localStorage + File System Access API (Chrome/Edge)
+// ═══════════════════════════════════════════════════════════
+const RECENT_FILES_KEY = 'd2rr_recent_files';
+const RECENT_FILES_MAX = 2;
+// Clean up any leftover persistent entries from previous version
+try { localStorage.removeItem(RECENT_FILES_KEY); } catch (e) {}
+
+// Session-only recent files — cleared on page reload
+let _sessionRecentFiles = [];
+
+function getRecentFiles() {
+  return _sessionRecentFiles;
+}
+
+function saveRecentFiles(list) {
+  _sessionRecentFiles = list.slice(0, RECENT_FILES_MAX);
+}
+
+function trackRecentFile(name, parsed) {
+  if (!parsed || !parsed.header) return;
+  const list = getRecentFiles().filter(r => r.name !== name);
+  list.unshift({
+    name,
+    charName: parsed.header.name || '',
+    charClass: parsed.header.cls ?? 0,
+    charLevel: parsed.header.level || 1,
+    isHC: !!parsed.header.isHC,
+    lastOpened: Date.now(),
+  });
+  saveRecentFiles(list);
+}
+
+// File handle store for File System Access API (Chrome/Edge only)
+let _recentFileHandles = new Map();  // name -> FileSystemFileHandle
+let _lastUsedFileHandle = null;      // last opened file — used as startIn hint for next pick
+
+async function storeRecentFileHandle(name, handle) {
+  if (!handle) return;
+  _recentFileHandles.set(name, handle);
+  _lastUsedFileHandle = handle;
+  try {
+    if (window.indexedDB) {
+      const db = await openRecentDB();
+      const tx = db.transaction('handles', 'readwrite');
+      tx.objectStore('handles').put(handle, name);
+      // Persist the last-used handle for next-session startIn hint
+      tx.objectStore('handles').put(handle, '__lastUsed__');
+    }
+  } catch (e) {}
+}
+
+async function getStartInHint() {
+  // Prefer the last-used file handle (browser opens its directory)
+  if (_lastUsedFileHandle) return _lastUsedFileHandle;
+  try {
+    if (!window.indexedDB) return 'documents';
+    const db = await openRecentDB();
+    return await new Promise((resolve) => {
+      const req = db.transaction('handles', 'readonly').objectStore('handles').get('__lastUsed__');
+      req.onsuccess = () => resolve(req.result || 'documents');
+      req.onerror = () => resolve('documents');
+    });
+  } catch (e) { return 'documents'; }
+}
+
+function openRecentDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('d2rr_editor', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('handles');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function loadRecentFileHandle(name) {
+  if (_recentFileHandles.has(name)) return _recentFileHandles.get(name);
+  try {
+    if (!window.indexedDB) return null;
+    const db = await openRecentDB();
+    return await new Promise((resolve) => {
+      const tx = db.transaction('handles', 'readonly');
+      const req = tx.objectStore('handles').get(name);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch (e) { return null; }
+}
+
+async function openRecentFile(name) {
+  const handle = await loadRecentFileHandle(name);
+  if (handle) {
+    try {
+      const perm = await handle.queryPermission({ mode: 'read' });
+      if (perm !== 'granted') {
+        const req = await handle.requestPermission({ mode: 'read' });
+        if (req !== 'granted') { removeRecentFile(name); return; }
+      }
+      const file = await handle.getFile();
+      loadFile(file);
+      return;
+    } catch (e) {
+      // Handle invalidated (file moved/deleted) — clean up
+      removeRecentFile(name);
+    }
+  }
+  // Fallback: trigger file picker with showOpenFilePicker if available
+  if (window.showOpenFilePicker) {
+    try {
+      const startIn = await getStartInHint();
+      const [fh] = await window.showOpenFilePicker({
+        types: [{ description: 'D2R Save', accept: { 'application/octet-stream': ['.d2s'] } }],
+        startIn,
+      });
+      await storeRecentFileHandle(fh.name, fh);
+      const file = await fh.getFile();
+      fileName = fh.name;
+      loadFile(file);
+    } catch (e) {}
+  } else {
+    showPopup(`To reopen "${name}", please drag the file onto the page.\n\nD2RR saves are usually at:\nC:\\Users\\<you>\\Saved Games\\Diablo II Resurrected\\mods\\ReimaginedThree\\\n\n(Direct re-opening requires Chrome or Edge.)`);
+  }
+}
+
+function removeRecentFile(name) {
+  saveRecentFiles(getRecentFiles().filter(r => r.name !== name));
+  _recentFileHandles.delete(name);
+  try {
+    if (window.indexedDB) {
+      openRecentDB().then(db => db.transaction('handles', 'readwrite').objectStore('handles').delete(name));
+    }
+  } catch (e) {}
+  renderRecentFiles();
+}
+
+window.clearRecentFiles = function() {
+  showConfirm('Clear all recent files?', () => {
+    saveRecentFiles([]);
+    _recentFileHandles.clear();
+    try {
+      if (window.indexedDB) openRecentDB().then(db => db.transaction('handles', 'readwrite').objectStore('handles').clear());
+    } catch (e) {}
+    renderRecentFiles();
+  }, 'Clear');
+};
+
+function timeAgo(ts) {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
+
+function renderRecentFiles() {
+  const panel = document.getElementById('recentFilesPanel');
+  if (!panel) return;
+  const list = getRecentFiles();
+  if (!list.length) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+
+  const CLASS_NAMES_R = ['Amazon','Sorceress','Necromancer','Paladin','Barbarian','Druid','Assassin','Warlock'];
+  let html = `<div style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;color:var(--d2-text-dim);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:40px">
+    <span>RECENT CHARACTERS</span>
+    <button onclick="clearRecentFiles()" style="background:none;border:1px solid var(--d2-border);border-radius:2px;padding:2px 8px;font-size:9px;color:var(--d2-text-dim);cursor:pointer;font-family:inherit;letter-spacing:0.5px">CLEAR</button>
+  </div>`;
+  html += `<div style="display:flex;flex-direction:column;gap:4px">`;
+  for (const r of list) {
+    const cls = CLASS_NAMES_R[r.charClass] || '?';
+    const hcTag = r.isHC ? ' <span style="color:#d46060;font-size:9px">HC</span>' : '';
+    html += `<div onclick="openRecentFile(${JSON.stringify(r.name).replace(/"/g,'&quot;')})"
+      style="background:var(--d2-surface2);border:1px solid var(--d2-border);border-radius:3px;padding:8px 12px;cursor:pointer;transition:all 0.15s;display:flex;align-items:center;justify-content:space-between;gap:10px"
+      onmouseenter="this.style.background='var(--d2-surface3)';this.style.borderColor='var(--d2-gold-dim)'"
+      onmouseleave="this.style.background='var(--d2-surface2)';this.style.borderColor='var(--d2-border)'">
+      <div style="flex:1;min-width:0;overflow:hidden">
+        <div style="color:var(--d2-gold);font-family:'Cinzel',serif;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.charName || r.name)}${hcTag}</div>
+        <div style="color:var(--d2-text-dim);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Lvl ${r.charLevel} ${cls} &middot; ${esc(r.name)}</div>
+      </div>
+      <div style="color:var(--d2-text-dim);font-size:10px;white-space:nowrap">${timeAgo(r.lastOpened)}</div>
+    </div>`;
+  }
+  html += `</div>`;
+  panel.innerHTML = html;
+}
+
+// Hook into the drop zone to capture file handles when possible
+document.addEventListener('DOMContentLoaded', () => {
+  renderRecentFiles();
+  const dropZone = document.getElementById('dropZone');
+  if (!dropZone) return;
+
+  if (window.showOpenFilePicker) {
+    // Remove the native input — its absolute overlay was intercepting clicks
+    // and using the API-less FileReader path (no handle captured)
+    const nativeInput = dropZone.querySelector('input[type="file"]');
+    if (nativeInput) nativeInput.remove();
+    dropZone.style.cursor = 'pointer';
+
+    dropZone.addEventListener('click', async (e) => {
+      e.preventDefault();
+      try {
+        const startIn = await getStartInHint();
+        const [handle] = await window.showOpenFilePicker({
+          types: [{ description: 'D2R Save', accept: { 'application/octet-stream': ['.d2s'] } }],
+          startIn,
+        });
+        await storeRecentFileHandle(handle.name, handle);
+        const file = await handle.getFile();
+        fileName = handle.name;
+        loadFile(file);
+      } catch (e) {}
+    });
+
+    // Capture file handles from drag-and-drop too (Chrome/Edge)
+    dropZone.addEventListener('drop', async (e) => {
+      if (!e.dataTransfer || !e.dataTransfer.items || e.dataTransfer.items.length === 0) return;
+      const item = e.dataTransfer.items[0];
+      if (item.kind !== 'file' || !item.getAsFileSystemHandle) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dropZone.classList.remove('drag-over');
+      try {
+        const handle = await item.getAsFileSystemHandle();
+        if (handle && handle.kind === 'file') {
+          await storeRecentFileHandle(handle.name, handle);
+          const file = await handle.getFile();
+          fileName = handle.name;
+          loadFile(file);
+        }
+      } catch (err) {
+        // Fall back to regular drop handler
+        const f = e.dataTransfer.files[0];
+        if (f) loadFile(f);
+      }
+    }, true);
+  }
+});
 
 
 // ── New Character Creation using real base saves per class ──
@@ -3603,6 +3845,7 @@ function _doReset() {
   document.querySelectorAll('.fire-side').forEach(el => el.classList.remove('active'));
 
   showOnly('uploadView');
+  renderRecentFiles();
   setStatus('Reimagined data ready — load a .d2s file to begin', 'ready');
 }
 
@@ -5760,6 +6003,111 @@ const ITEM_QUALITY = {
 };
 
 // Build a display name for an item using typeCode, quality, and string table
+// Hand-curated aliases for popular uniques/sets (space-efficient for 1x1 cells)
+const ITEM_NAME_ALIASES = {
+  'Stone of Jordan': 'SoJ',
+  "Bul-Kathos' Wedding Band": 'BKWB',
+  "Nagelring": 'Nagel',
+  "Manald Heal": 'Manald',
+  "Nature's Peace": 'NPeace',
+  "Raven Frost": 'Raven',
+  "The Cat's Eye": "Cat's Eye",
+  "Crescent Moon": 'Crescent',
+  "Atma's Scarab": 'Atma',
+  "Highlord's Wrath": 'Highlord',
+  "Mara's Kaleidoscope": 'Mara',
+  "Saracen's Chance": 'Saracen',
+  "Rising Sun": 'Rising Sun',
+  "The Rising Sun": 'Rising Sun',
+  "Seraph's Hymn": 'Seraph',
+  "Metalgrid": 'Metalgrid',
+  "Herald of Zakarum": 'HoZ',
+  "Breath of the Dying": 'BotD',
+  "Crown of Ages": 'CoA',
+  "Death's Web": "Death Web",
+  "Griffon's Eye": 'Griffon',
+  "Arreat's Face": 'Arreat',
+  "Vampire Gaze": 'V-Gaze',
+  "Harlequin Crest": 'Shako',
+  "Tal Rasha's Horadric Crest": 'TR Helm',
+  "Andariel's Visage": 'Andy',
+  "Giant Skull": 'G Skull',
+  "Kira's Guardian": 'Kira',
+  "Veil of Steel": 'Veil',
+  "Demon Horn's Edge": 'DHE',
+  "Wolfhowl": 'Wolfhowl',
+  "Ravenlore": 'Ravenlore',
+  "Spirit Keeper": 'Spirit',
+  "Gorerider": 'Gore',
+  "Steelrend": 'Steelrend',
+  "Dracul's Grasp": 'Dracul',
+  "Trang-Oul's Claws": 'Trang Cl',
+  "Sandstorm Trek": 'Sandstorm',
+  "War Traveler": 'W Trav',
+  "Waterwalk": 'W Walk',
+  "Arachnid Mesh": 'Arachnid',
+  "Verdungo's Hearty Cord": 'Verdungo',
+  "Nosferatu's Coil": 'Nosferatu',
+  "Thundergod's Vigor": 'TGod',
+  "String of Ears": 'SoE',
+  "Tal Rasha's Fine-Spun Cloth": 'TR Belt',
+};
+
+// Strip "The " prefix for display
+function _stripThe(s) { return s.replace(/^The\s+/i, ''); }
+
+// Abbreviate an item name to fit in a cell of size w × h
+function abbreviateItemName(fullName, w, h) {
+  if (!fullName) return '';
+  const name = _stripThe(fullName);
+
+  // Large cells: full name (wraps naturally)
+  if (w >= 2 && h >= 3) return name;
+  if (w >= 2 && h >= 2) return name;
+
+  // Check hand-mapped aliases first
+  if (ITEM_NAME_ALIASES[fullName]) return ITEM_NAME_ALIASES[fullName];
+  if (ITEM_NAME_ALIASES[name]) return ITEM_NAME_ALIASES[name];
+
+  // Very small 1×1 cells: prefer short names or acronyms
+  if (w === 1 && h === 1) {
+    if (name.length <= 8) return name;
+    // "X of Y" → acronym, e.g. "Stone of Jordan" → "SoJ"
+    if (/\sof\s/i.test(name)) {
+      const parts = name.split(/\s+/);
+      const acr = parts.map(p => p.replace(/[^A-Za-z]/g, '').charAt(0).toUpperCase()).join('');
+      if (acr.length <= 5) return acr;
+    }
+    // "X's Y" → use Y or owner name, whichever shorter
+    const poss = name.match(/^(.+?)(?:'s|s')\s+(.+)$/);
+    if (poss) {
+      const owner = poss[1];
+      const thing = poss[2];
+      return (owner.length <= thing.length ? owner : thing).slice(0, 10);
+    }
+    // Pick the longest word (usually most distinctive)
+    const words = name.split(/\s+/);
+    const longest = words.sort((a, b) => b.length - a.length)[0];
+    return longest.slice(0, 10);
+  }
+
+  // 1×2, 1×3, 1×4 cells (wands, potions, scrolls, bows): one meaningful word
+  if (w === 1) {
+    if (name.length <= 12) return name;
+    // "X of Y" → keep the proper noun (usually "Y")
+    const of = name.match(/^(.+?)\s+of\s+(.+)$/i);
+    if (of) return of[2].length <= 12 ? of[2] : of[1];
+    // "X's Y" → keep the thing
+    const poss = name.match(/^(.+?)(?:'s|s')\s+(.+)$/);
+    if (poss) return poss[2].length <= 12 ? poss[2] : poss[1];
+    // Pick longest word
+    const words = name.split(/\s+/);
+    return words.sort((a, b) => b.length - a.length)[0].slice(0, 12);
+  }
+
+  return name;
+}
+
 function itemDisplayName(item) {
   const tc = item.typeCode || '';
 
@@ -5985,14 +6333,16 @@ function buildInvGrid(items, gridW, gridH, cellPx=29, insertContext={}) {
           ? `draggable="true" ondragstart="invDragStart(event,${topItem.byteOffset})" data-item-off="${topItem.byteOffset}" data-item-w="${w}" data-item-h="${h}"`
           : '';
 
+        const displayName = abbreviateItemName(name, w, h);
         html += `<div class="inv-item ${borderCls}"
           style="grid-column:${col+1}/span ${w};grid-row:${row+1}/span ${h};position:relative"
           ${dragAttr}
           onclick="showItemDetailStack([${clickList}],this);pinTooltip()"
           onmouseenter="showItemDetailStack([${clickList}],this)"
-          onmouseleave="closeTooltip(false)">
+          onmouseleave="closeTooltip(false)"
+          title="${esc(name)}">
           ${countBadge}
-          <div class="inv-item-name ${cls}">${esc(name)}</div>
+          <div class="inv-item-name ${cls}">${esc(displayName)}</div>
         </div>`;
       } else if (!occupied.has(key)) {
         // Empty cell — clickable to insert
@@ -7723,11 +8073,13 @@ window.closeItemModal = function() {
 let ITEM_CATALOG = [];   // rebuilt by buildItemCatalog() after txt files load
 let UNIQUE_CATALOG = []; // { code, uniqueName, baseName, qual:7 }
 let SET_CATALOG    = []; // { code, setName, baseName, qual:5 }
+let RUNEWORD_CATALOG = []; // { name, runes:[codes], displayName }
 
 function buildItemCatalog() {
   ITEM_CATALOG   = [];
   UNIQUE_CATALOG = [];
   SET_CATALOG    = [];
+  RUNEWORD_CATALOG = [];
 
   // Codes to hide from all catalogs (grabbers, pliers, stacks, keys)
   const HIDE_CODES = new Set([
@@ -7860,7 +8212,31 @@ function buildItemCatalog() {
     });
   }
 
-  console.log(`buildItemCatalog: ${ITEM_CATALOG.length} base, ${UNIQUE_CATALOG.length} unique, ${SET_CATALOG.length} set items`);
+  // ── Runewords ──
+  const rData = baseData['runes'];
+  if (rData) {
+    for (const row of rData.rows) {
+      const rawName = (row['*Rune Name'] || row['Name'] || '').trim();
+      if (!rawName) continue;
+      const complete = (row['complete'] || '').trim();
+      if (complete !== '1') continue; // only complete/active runewords
+      const runes = [];
+      for (let i = 1; i <= 6; i++) {
+        const r = (row['Rune' + i] || '').trim();
+        if (r) runes.push(r);
+      }
+      if (runes.length < 2) continue;
+      const displayName = stringTable[rawName] || rawName;
+      const runeNames = runes.map(rc => itemNameByCode[rc] || rc).join(' + ');
+      RUNEWORD_CATALOG.push({
+        name: displayName, rawName, runes, runeNames,
+        searchKey: (displayName + ' ' + rawName + ' ' + runes.join(' ') + ' ' + runeNames).toLowerCase(),
+      });
+    }
+    RUNEWORD_CATALOG.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  console.log(`buildItemCatalog: ${ITEM_CATALOG.length} base, ${UNIQUE_CATALOG.length} unique, ${SET_CATALOG.length} set items, ${RUNEWORD_CATALOG.length} runewords`);
 }
 
 // ── Modal state ──
@@ -7896,6 +8272,10 @@ window.filterModalItems = function() {
     return { html:`<b style="color:#00c800">${esc(item.setName)}</b> <span style="color:var(--d2-text-dim);font-size:10px">${esc(item.baseName)} [${item.code}] ${w}×${h}</span>`,
       entry:{...item, name:item.setName, tier:'set'} };
   }
+  function fmtRuneword(rw) {
+    return { html:`<b style="color:#c88030">${esc(rw.name)}</b> <span style="color:var(--d2-text-dim);font-size:10px">${esc(rw.runeNames)}</span>`,
+      entry:{...rw, qual:2, tier:'runeword', isRuneword:true, code:'__runeword__'} };
+  }
 
   // Group base items by category → typeName → items
   const weaponGroups = {}, armorGroups = {}, miscGroups = {};
@@ -7928,6 +8308,15 @@ window.filterModalItems = function() {
     const g = item.setGroup || 'Other';
     if (!setGroups[g]) setGroups[g] = [];
     setGroups[g].push(fmtSet(item));
+  }
+
+  // Runewords — flat list (only show when not equipping to a specific slot)
+  const runewordList = [];
+  if (!equipSlot) {
+    for (const rw of RUNEWORD_CATALOG) {
+      if (q && !rw.searchKey.includes(q)) continue;
+      runewordList.push(fmtRuneword(rw));
+    }
   }
 
   // Build tree HTML
@@ -7979,6 +8368,7 @@ window.filterModalItems = function() {
   if (Object.keys(uniqueArmorGroups).length) renderCategory('Unique Armor', '#c88030', uniqueArmorGroups);
   if (uniqueJewelry.length) renderFlatCategory('Unique Jewelry', '#c88030', uniqueJewelry);
   if (Object.keys(setGroups).length) renderCategory('Set Items', '#00c800', setGroups);
+  if (runewordList.length) renderFlatCategory('Runewords', '#c88030', runewordList);
 
   // Misc subcategories (Runes, Gems, Charms, Jewelry, etc.)
   const miscOrder = ['Jewelry','Runes','Gems','Charms','Orbs','Special Items','Quest Items','Miscellaneous'];
@@ -8045,7 +8435,8 @@ window.selectModalEntry = function(idx) {
   // Hide ilvl and max values for runes and misc items (no item level or variable stats)
   const isRune = /^[rs]\d{2}$/.test(entry.code);
   const isMisc = entry.tier === 'misc' || entry.category === 'misc';
-  const hideExtras = isRune || isMisc;
+  const isRuneword = !!entry.isRuneword;
+  const hideExtras = isRune || isMisc || isRuneword;
   const ilvlRow = document.getElementById('modalIlvlRow');
   if (ilvlRow) ilvlRow.style.display = hideExtras ? 'none' : '';
   const maxValLabel = document.getElementById('modalMaxValues');
@@ -8079,6 +8470,13 @@ window.confirmInsertItem = function() {
   if (!_modalSelectedEntry || !_modalContext || !parsedChar) return;
   const ctx      = _modalContext;
   const entry    = _modalSelectedEntry;
+
+  // Runeword bundle: insert all runes with a compact layout
+  if (entry.isRuneword) {
+    insertRunewordRunes(entry, ctx);
+    return;
+  }
+
   const typeCode = entry.code;
   const {w,h}    = getItemSize(typeCode);
   const qual     = entry.qual ?? 2;
@@ -8207,6 +8605,82 @@ window.confirmInsertItem = function() {
   if (active) active.click();
   setStatus(`Inserted: ${itemNameByCode[typeCode]||typeCode} — remember to Save .d2s`, 'modified');
 };
+
+// Runeword layout offsets — compact 2x3 bounding box
+// Each entry is the list of {dx,dy} offsets for placement
+const RUNEWORD_LAYOUTS = {
+  2: [{dx:0,dy:0}, {dx:0,dy:1}],                                                       // 1x2 column
+  3: [{dx:0,dy:0}, {dx:0,dy:1}, {dx:0,dy:2}],                                          // 1x3 column
+  4: [{dx:0,dy:0}, {dx:0,dy:1}, {dx:1,dy:0}, {dx:1,dy:1}],                             // 2x2 square
+  5: [{dx:0,dy:0}, {dx:0,dy:1}, {dx:0,dy:2}, {dx:1,dy:0}, {dx:1,dy:1}],                // 2x3 with bottom-right empty
+  6: [{dx:0,dy:0}, {dx:0,dy:1}, {dx:0,dy:2}, {dx:1,dy:0}, {dx:1,dy:1}, {dx:1,dy:2}],   // full 2x3
+};
+
+function insertRunewordRunes(entry, ctx) {
+  const runes = entry.runes;
+  const layout = RUNEWORD_LAYOUTS[runes.length];
+  if (!layout) {
+    showPopup(`Can't insert ${entry.name} — unsupported rune count (${runes.length}).`);
+    return;
+  }
+  if (ctx.mode !== 'inventory' && ctx.mode !== 'stash') {
+    showPopup('Runewords can only be inserted into inventory or stash.');
+    return;
+  }
+
+  const storage = ctx.storage || (ctx.mode === 'inventory' ? 1 : 5);
+  const dims = getInventoryDimensions(parsedChar.header.cls);
+  const gridW = ctx.mode === 'inventory' ? dims.invW : dims.stashW;
+  const gridH = ctx.mode === 'inventory' ? dims.invH : dims.stashH;
+
+  // Bounds check
+  let maxDx = 0, maxDy = 0;
+  for (const p of layout) { if (p.dx > maxDx) maxDx = p.dx; if (p.dy > maxDy) maxDy = p.dy; }
+  if (ctx.x + maxDx + 1 > gridW || ctx.y + maxDy + 1 > gridH) {
+    showPopup(`${entry.name} needs a ${maxDx+1}x${maxDy+1} area. Won't fit at (${ctx.x},${ctx.y}).`);
+    return;
+  }
+
+  // Collision check
+  const occupied = new Set();
+  for (const item of (parsedChar.items||[])) {
+    if (item.isMerc) continue;
+    if ((item.parent??item.location??0) !== 0) continue;
+    if ((item.storage??0) !== storage) continue;
+    const {w:ow,h:oh} = getItemSize(item.typeCode);
+    for (let dy=0;dy<oh;dy++) for (let dx=0;dx<ow;dx++) occupied.add(`${item.x+dx},${item.y+dy}`);
+  }
+  for (const p of layout) {
+    if (occupied.has(`${ctx.x + p.dx},${ctx.y + p.dy}`)) {
+      showPopup(`${entry.name}: cell (${ctx.x + p.dx},${ctx.y + p.dy}) is occupied.`);
+      return;
+    }
+  }
+
+  // Place runes
+  for (let i = 0; i < runes.length; i++) {
+    const runeCode = runes[i];
+    const { dx, dy } = layout[i];
+    const fakeOffset = -(Date.now() & 0x7FFFFFFF) - i;
+    const runeItem = {
+      byteOffset: fakeOffset,
+      identified: 1, socketed: 0, simple: 0, ethereal: 0, personalized: 0, runeword: 0,
+      typeIndex: 0, typeCode: runeCode,
+      numSockets: 0, itemLevel: 1, quality: 2,
+      isMerc: false, isVirtual: true,
+      parent: 0, location: 0, storage,
+      x: ctx.x + dx, y: ctx.y + dy, equipSlot: 0,
+    };
+    parsedChar.items.push(runeItem);
+  }
+
+  closeItemModal();
+  markDirty();
+
+  const active = document.querySelector('.tab.active');
+  if (active) active.click();
+  setStatus(`Inserted ${runes.length} runes for ${entry.name} — remember to Save .d2s`, 'modified');
+}
 
 // markDirty() defined earlier at ~line 4025 — handles status bar + save button
 
@@ -8499,13 +8973,15 @@ function buildSharedStashGrid(items, gridW, gridH, cellPx) {
         const clickList = stack.map(({item:it}) => it.byteOffset).join(',');
         const borderCls = itemQualityCls(topItem);
 
+        const displayName = abbreviateItemName(name, w, h);
         html += `<div class="inv-item ${borderCls}"
           style="grid-column:${col+1}/span ${w};grid-row:${row+1}/span ${h};position:relative"
           onclick="showSharedStashItemDetail([${clickList}],this);pinTooltip()"
           onmouseenter="showSharedStashItemDetail([${clickList}],this)"
-          onmouseleave="closeTooltip(false)">
+          onmouseleave="closeTooltip(false)"
+          title="${esc(name)}">
           ${countBadge}
-          <div class="inv-item-name ${cls}">${esc(name)}</div>
+          <div class="inv-item-name ${cls}">${esc(displayName)}</div>
         </div>`;
       } else if (!occupied.has(key)) {
         html += `<div class="inv-cell-empty"></div>`;
@@ -9429,16 +9905,19 @@ function buildGrailCategoryGrid(items, gridW, gridH, cellPx, pageIndex) {
         if (p.found && p.grailItem) {
           const { name, cls } = itemDisplayName(p.grailItem);
           const borderCls = itemQualityCls(p.grailItem);
+          const displayName = abbreviateItemName(name, p.w, p.h);
           html += `<div class="inv-item ${borderCls}"
             style="grid-column:${col + 1}/span ${p.w};grid-row:${row + 1}/span ${p.h};position:relative"
             onclick="showGrailItemDetail([${p.grailItem.byteOffset}],this);pinTooltip()"
             onmouseenter="showGrailItemDetail([${p.grailItem.byteOffset}],this)"
-            onmouseleave="closeTooltip(false)">
-            <div class="inv-item-name ${cls}">${esc(name)}</div>
+            onmouseleave="closeTooltip(false)"
+            title="${esc(name)}">
+            <div class="inv-item-name ${cls}">${esc(displayName)}</div>
           </div>`;
         } else {
+          const slotName = abbreviateItemName(p.entry.name, p.w, p.h);
           html += `<div style="grid-column:${col + 1}/span ${p.w};grid-row:${row + 1}/span ${p.h};background:rgba(40,40,40,0.6);display:flex;align-items:center;justify-content:center;border:1px solid rgba(60,60,60,0.4);opacity:0.35;cursor:default" title="${esc(p.entry.name)} (not found)">
-            <div style="font-size:8px;color:var(--d2-text-dim);text-align:center;line-height:1.1;word-break:break-word;padding:1px">${esc(p.entry.name)}</div>
+            <div style="font-size:8px;color:var(--d2-text-dim);text-align:center;line-height:1.1;word-break:break-word;padding:1px">${esc(slotName)}</div>
           </div>`;
         }
       } else if (!cellOccupied.has(key)) {
