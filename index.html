@@ -916,6 +916,14 @@ function L(key, fallback) {
   return stringTable[key] || fallback || key;
 }
 
+// Localized template with named-placeholder substitution. Replaces {name} tokens with params.name.
+// Example: Lfmt('ui_status_loaded', 'Loaded: {file}', { file: 'hero.d2s' })
+function Lfmt(key, fallback, params) {
+  let s = L(key, fallback);
+  if (params) for (const k in params) s = s.split('{'+k+'}').join(String(params[k]));
+  return s;
+}
+
 const ALL_FILES = [
   // ── Core item data (base types, catalog, name/size maps, insert modal) ──
   'weapons.txt',        // weapon base types: codes, tiers, sizes, namestr keys
@@ -958,9 +966,12 @@ const CRITICAL_FILES = new Set([
   'skills.txt','magicprefix.txt','magicsuffix.txt',
 ]);
 
-const CLASS_NAMES  = ['Amazon','Sorceress','Necromancer','Paladin','Barbarian','Druid','Assassin','Warlock'];
+// Display labels, localized on language switch via rebuildLocalizedLabels().
+let CLASS_NAMES    = ['Amazon','Sorceress','Necromancer','Paladin','Barbarian','Druid','Assassin','Warlock'];
+// Stable English identifiers — used as lookup keys against charstats.txt / inventory.txt rows. NEVER localize.
+const CLASS_KEYS   = ['Amazon','Sorceress','Necromancer','Paladin','Barbarian','Druid','Assassin','Warlock'];
 const CLASS_BADGES = ['A','S','N','P','B','D','X','W'];
-const DIFF_NAMES   = ['Normal','Nightmare','Hell'];
+let DIFF_NAMES     = ['Normal','Nightmare','Hell'];
 
 // D2R stat field IDs and their bit-widths in the gf section
 // Order matches the ID encoding in the file (9-bit field ID, then N-bit value)
@@ -1075,7 +1086,7 @@ function confirmFallback() {
 async function startBaseFileLoad() {
   baseData = {}; baseReady = false; usingFallback = false;
   showOnly('loadingView');
-  setStatus('Loading Reimagined data files...','loading');
+  setStatus(L('ui_status_loading_data','Loading Reimagined data files...'),'loading');
   document.getElementById('fileLog').innerHTML = '';
   document.getElementById('progressBar').style.width = '0%';
   document.getElementById('loadingSub').textContent = 'Connecting to repository...';
@@ -1122,7 +1133,7 @@ async function startBaseFileLoad() {
   if (failed.length > 0) {
     document.getElementById('errorList').innerHTML = failed.map(f=>`<li>${f}</li>`).join('');
     showOnly('errorView');
-    setStatus(`${failed.length} critical file(s) failed — editor blocked`, 'error');
+    setStatus(Lfmt('ui_status_critical_failed','{n} critical file(s) failed — editor blocked',{n:failed.length}), 'error');
     return;
   }
 
@@ -1169,7 +1180,9 @@ async function startBaseFileLoad() {
           const val = cleanStringValue(raw);
           const isSpecial = key.startsWith('ui_') || key.startsWith('q_') || key.startsWith('SkillCategory');
           if (isSpecial) { if (val) { stringTable[key] = val; added++; } continue; }
-          if (val && val.length > 1 && !val.includes('%')) {
+          // Allow format-token templates (%d, %+d, %s) through — item-modifiers.json stat
+          // templates like "%+d to Strength" are load-bearing for the descfunc tooltip pipeline.
+          if (val && val.length > 1) {
             stringTable[key] = val;
             added++;
           }
@@ -1210,13 +1223,14 @@ async function startBaseFileLoad() {
   }
 
   buildItemNameMap();
+  rebuildLocalizedLabels();
   _updateStaticUIStrings();
 
   showOnly('uploadView');
   renderRecentFiles();
-  const sk = warned.length > 0 ? `  (${warned.length} non-critical skipped)` : '';
-  const src = usingFallback ? '  ⚠ using bundled base files' : '';
-  setStatus(`Reimagined data ready — ${successCount} files + ${strLoaded} string tables loaded${sk}${src}`, 'ready');
+  const sk = warned.length > 0 ? Lfmt('ui_status_data_ready_note_skipped',' ({n} non-critical skipped)',{n:warned.length}) : '';
+  const src = usingFallback ? L('ui_status_data_ready_note_bundled','  ⚠ using bundled base files') : '';
+  setStatus(Lfmt('ui_status_data_ready','Reimagined data ready — {files} files + {strings} string tables loaded{suffix}',{files:successCount,strings:strLoaded,suffix:sk+src}), 'ready');
 }
 
 
@@ -1244,6 +1258,39 @@ let skillNameById = {};  // numeric skill ID → display name string
 // Per-class ordered skill IDs: SKILL_IDS_BY_CLASS['ama'] = [6,7,8,...35] (30 entries)
 let SKILL_IDS_BY_CLASS = {};
 
+// Rebuild localized label arrays/maps from stringTable. Called after language switch.
+// Uses Blizzard string keys where available (class names, quality, elements, item flags)
+// so the editor picks up the game's own 13-language translations automatically.
+function rebuildLocalizedLabels() {
+  CLASS_NAMES = [
+    L('Amazon','Amazon'),
+    L('Sorceress','Sorceress'),
+    L('Necromancer','Necromancer'),
+    L('Paladin','Paladin'),
+    L('Barbarian','Barbarian'),
+    L('druidstr','Druid'),
+    L('assassinstr','Assassin'),
+    L('Warlock','Warlock'),
+  ];
+  // Blizzard's game-create strings end in " - R"/" - N"/" - H" hotkey hints; strip them.
+  const stripHotkey = (s) => s.replace(/\s*[-–—]\s*[A-Za-zÀ-ÿ]{1,3}\s*$/, '').trim();
+  DIFF_NAMES = [
+    stripHotkey(L('strCreateGameNormalText','Normal')),
+    stripHotkey(L('strCreateGameNightmareText','Nightmare')),
+    stripHotkey(L('strCreateGameHellText','Hell')),
+  ];
+  ITEM_QUALITY = {
+    1:{code:'low',     label:L('ui_quality_low','Low'),                       cls:'iq-low'},
+    2:{code:'normal',  label:L('NormalQuality','Normal'),                      cls:'iq-norm'},
+    3:{code:'superior',label:L('LootFilterSuperiorRarity','Superior'),         cls:'iq-norm'},
+    4:{code:'magic',   label:L('LootFilterMagicRarity','Magic'),               cls:'iq-magic'},
+    5:{code:'set',     label:L('LootFilterSetRarity','Set'),                   cls:'iq-set'},
+    6:{code:'rare',    label:L('LootFilterRareRarity','Rare'),                 cls:'iq-rare'},
+    7:{code:'unique',  label:L('LootFilterUniqueRarity','Unique'),             cls:'iq-unique'},
+    8:{code:'crafted', label:L('ui_quality_crafted','Crafted'),                cls:'iq-craft'},
+  };
+}
+
 // Rebuild stringTable from raw entries for a given language, then rebuild all derived maps
 function rebuildStringsForLang(lang) {
   _currentLang = lang;
@@ -1257,11 +1304,14 @@ function rebuildStringsForLang(lang) {
     // UI/quest/skill-tab strings bypass strict filters — they're always valid
     const isSpecial = key.startsWith('ui_') || key.startsWith('q_') || key.startsWith('SkillCategory');
     if (isSpecial) { if (val) stringTable[key] = val; continue; }
-    if (val && val.length > 1 && !val.includes('%')) {
+    // Allow format-token templates (%d, %+d, %s) through — item-modifiers.json stat
+    // templates like "%+d to Strength" are load-bearing for the descfunc tooltip pipeline.
+    if (val && val.length > 1) {
       stringTable[key] = val;
     }
   }
   // Rebuild all maps that depend on stringTable
+  rebuildLocalizedLabels();
   buildSkillNameMap();
   buildSkillTreeData();
   buildMagicAffixMaps();
@@ -1311,12 +1361,24 @@ function _updateStaticUIStrings() {
   // Footer credits
   const credits = document.querySelector('.footer-credits');
   if (credits) credits.innerHTML = L('ui_made_by', 'Made by') + ' <span>GildyBoye</span>';
+  // Item insert modal chrome (the title is set dynamically per-open by openInsertModal)
+  const _setText = (id, text) => { const e = el(id); if (e) e.textContent = text; };
+  _setText('modalTitle',         L('ui_modal_insert_title','Insert Item'));
+  _setText('modalSearchLabel',   L('LobbySearch','Search'));
+  _setText('modalSelectedLabel', L('ui_modal_selected','Selected:'));
+  _setText('modalIlvlLabel',     L('ui_modal_item_level','Item Level'));
+  _setText('modalSocketLabel',   L('ui_label_sockets','Sockets:').replace(/:$/,''));
+  _setText('modalMaxValuesLabel',L('ui_modal_max_values','Max Values'));
+  _setText('modalInsertBtn',     L('ui_modal_insert_title','Insert Item'));
+  _setText('modalCancelBtn',     L('ui_cancel','Cancel'));
+  const searchInput = el('modalSearch');
+  if (searchInput) searchInput.placeholder = L('ui_search_items','Search items by name, type, or code…');
 }
 
 window.switchLanguage = function(lang) {
   if (lang === _currentLang) return;
   rebuildStringsForLang(lang);
-  setStatus(`Language switched to ${SUPPORTED_LANGS.find(l=>l.code===lang)?.label||lang}`, 'ready');
+  setStatus(Lfmt('ui_status_lang_switched','Language switched to {lang}',{lang:SUPPORTED_LANGS.find(l=>l.code===lang)?.label||lang}), 'ready');
 };
 
 function buildSkillNameMap() {
@@ -1649,6 +1711,65 @@ function buildStatByNameMap() {
   console.log(`buildStatByNameMap: ${Object.keys(STAT_BY_NAME).length} stat entries`);
 }
 
+// ═══════════════════════════════════════════════════════════
+//  STAT DESCRIPTORS (descfunc routing)
+//  Builds a per-stat-id metadata map from itemstatcost.txt so item tooltips
+//  can render stats via the game's own descriptor system. Each entry carries
+//  the descfunc number, descval positioning, the positive/negative/auxiliary
+//  string-table keys (ModStr* etc.), and the display-group metadata for
+//  collapsing related stats (e.g. 4 resistances → "All Resistances").
+//
+//  Consumed by applyDescfunc() / applyDgrpGrouping() in the tooltip pipeline.
+// ═══════════════════════════════════════════════════════════
+let STAT_DESCRIPTORS = {};          // statId -> descriptor object
+let STAT_DGRP_MEMBERS = {};          // dgrpId -> [statId, ...] (for grouping)
+
+// Elemental damage min-leader stat IDs → Blizzard range-template string keys.
+// The binary decoder sets `value2` on the min leader by pairing with its follow stat (max dmg).
+// applyDescfunc() consults this map before the per-stat descfunc so we emit a single
+// "Adds N-M Fire Damage" line instead of two separate lines.
+const ELEM_DMG_RANGE_KEY = {
+  48: 'strModFireDamageRange',       // firemindam  → firemaxdam
+  50: 'strModLightningDamageRange',  // lightmindam → lightmaxdam
+  52: 'strModMagicDamageRange',      // magicmindam → magicmaxdam (id 54 in vanilla, magic in D2RR)
+  54: 'strModColdDamageRange',       // coldmindam  → coldmaxdam
+  57: 'strModPoisonDamageRange',     // poisonmindam → poisonmaxdam (also has "over X seconds" token)
+};
+
+function buildStatDescriptors() {
+  STAT_DESCRIPTORS = {};
+  STAT_DGRP_MEMBERS = {};
+  const data = baseData['itemstatcost'];
+  if (!data) return;
+  for (const row of data.rows) {
+    const id = parseInt(row['*ID'] || row['ID'] || '', 10);
+    if (isNaN(id)) continue;
+    const func = parseInt(row['descfunc'] || '0', 10);
+    if (!func) continue; // no display descriptor → not user-visible
+    const desc = {
+      id,
+      stat:       (row['Stat'] || '').trim(),
+      priority:   parseInt(row['descpriority'] || '0', 10),
+      func,
+      val:        parseInt(row['descval'] || '1', 10),
+      strPos:     (row['descstrpos'] || '').trim(),
+      strNeg:     (row['descstrneg'] || '').trim(),
+      str2:       (row['descstr2']   || '').trim(),
+      dgrp:       parseInt(row['dgrp']     || '0', 10),
+      dgrpFunc:   parseInt(row['dgrpfunc'] || '0', 10),
+      dgrpVal:    parseInt(row['dgrpval']  || '1', 10),
+      dgrpStrPos: (row['dgrpstrpos'] || '').trim(),
+      dgrpStrNeg: (row['dgrpstrneg'] || '').trim(),
+      dgrpStr2:   (row['dgrpstr2']   || '').trim(),
+    };
+    STAT_DESCRIPTORS[id] = desc;
+    if (desc.dgrp) {
+      (STAT_DGRP_MEMBERS[desc.dgrp] ||= []).push(id);
+    }
+  }
+  console.log(`buildStatDescriptors: ${Object.keys(STAT_DESCRIPTORS).length} descriptors, ${Object.keys(STAT_DGRP_MEMBERS).length} groups`);
+}
+
 // Convert a property code + value into binary stat entries for the prop list.
 // Returns array of { id, param, value, saveBits, saveAdd, saveParamBits }.
 // Resolve a skill name (from par field in txt) to a numeric skill ID
@@ -1976,10 +2097,17 @@ function propToDisplay(code, min, max, par) {
     return lines;
   }
   if (code === 'allskills') { lines.push(`${sign}${val} to All Skills`); return lines; }
-  // Elemental skill properties
-  const ELEM_SKILL_CODES = {fireskill:'Fire',coldskill:'Cold',lightningskill:'Lightning',poisonskill:'Poison',magicskill:'Magic'};
-  if (ELEM_SKILL_CODES[code]) {
-    lines.push(`${sign}${val} to ${ELEM_SKILL_CODES[code]} Skills`);
+  // Elemental skill properties — element names pulled from Blizzard skill-tree strings (StrSklTree*)
+  const ELEM_SKILL_KEYS = {
+    fireskill:      ['StrSklTree25','Fire'],
+    coldskill:      ['StrSklTree23','Cold'],
+    lightningskill: ['StrSklTree24','Lightning'],
+    poisonskill:    ['StrSklTree17','Poison'],
+    magicskill:     ['strBSMagic','Magic'],
+  };
+  if (ELEM_SKILL_KEYS[code]) {
+    const [k, fb] = ELEM_SKILL_KEYS[code];
+    lines.push(`${sign}${val} to ${L(k, fb)} Skills`);
     return lines;
   }
 
@@ -2269,9 +2397,9 @@ function propToDisplay(code, min, max, par) {
   } else if (code === 'noheal') {
     lines.push('Prevent Monster Heal');
   } else if (code === 'nofreeze') {
-    lines.push('Cannot Be Frozen');
+    lines.push(L('ModStr5z','Cannot Be Frozen'));
   } else if (code === 'indestruct') {
-    lines.push('Indestructible');
+    lines.push(L('ModStre9s','Indestructible'));
   } else if (code === 'rip') {
     lines.push('Slain Monsters Rest in Peace');
   } else if (code === 'stupidity') {
@@ -3055,6 +3183,7 @@ function buildItemNameMap() {
   buildPropDisplayEngine();
   buildPropGroups();
   buildStatByNameMap();
+  buildStatDescriptors();
   buildSocketAndTypeMap();
   buildEquipRestrictions();
   buildWeaponAndBeltMeta();
@@ -3148,7 +3277,7 @@ function onFileLoaded() {
   if (rawBytes.length >= 8) {
     const ver = rawBytes[4] | (rawBytes[5]<<8) | (rawBytes[6]<<16) | (rawBytes[7]<<24);
     if (ver < 105) {
-      showPopup(`This save file uses an outdated format (version ${ver}).\n\nOnly D2R Reimagined 3.0+ saves (version 105) are supported.\n\nPlease update your character in-game before editing.`);
+      showPopup(Lfmt('ui_err_version_old','This save file uses an outdated format (version {ver}).\n\nOnly D2R Reimagined 3.0+ saves (version 105) are supported.\n\nPlease update your character in-game before editing.',{ver}));
       return;
     }
   }
@@ -3165,9 +3294,9 @@ function onFileLoaded() {
   document.querySelectorAll('.fire-side').forEach(el => el.classList.add('active'));
 
   if (parsedChar.error) {
-    setStatus(`Loaded: ${fileName} — parse warning: ${parsedChar.error}`,'loaded');
+    setStatus(Lfmt('ui_status_loaded_warning','Loaded: {file} — parse warning: {error}',{file:fileName,error:parsedChar.error}),'loaded');
   } else {
-    setStatus(`Loaded: ${fileName}  (${(rawBytes.length/1024).toFixed(1)} KB)`,'loaded');
+    setStatus(Lfmt('ui_status_loaded','Loaded: {file}  ({size} KB)',{file:fileName,size:(rawBytes.length/1024).toFixed(1)}),'loaded');
   }
   updateCharStrip();
   buildTabs();
@@ -3296,7 +3425,7 @@ async function openRecentFile(name) {
       loadFile(file);
     } catch (e) {}
   } else {
-    showPopup(`To reopen "${name}", please drag the file onto the page.\n\nD2RR saves are usually at:\nC:\\Users\\<you>\\Saved Games\\Diablo II Resurrected\\mods\\ReimaginedThree\\\n\n(Direct re-opening requires Chrome or Edge.)`);
+    showPopup(Lfmt('ui_err_recent_reopen','To reopen "{name}", please drag the file onto the page.\n\nD2RR saves are usually at:\nC:\\Users\\<you>\\Saved Games\\Diablo II Resurrected\\mods\\ReimaginedThree\\\n\n(Direct re-opening requires Chrome or Edge.)',{name}));
   }
 }
 
@@ -3312,22 +3441,22 @@ function removeRecentFile(name) {
 }
 
 window.clearRecentFiles = function() {
-  showConfirm('Clear all recent files?', () => {
+  showConfirm(L('ui_confirm_clear_recent','Clear all recent files?'), () => {
     saveRecentFiles([]);
     _recentFileHandles.clear();
     try {
       if (window.indexedDB) openRecentDB().then(db => db.transaction('handles', 'readwrite').objectStore('handles').clear());
     } catch (e) {}
     renderRecentFiles();
-  }, 'Clear');
+  }, L('ui_btn_clear','Clear'));
 };
 
 function timeAgo(ts) {
   const s = Math.floor((Date.now() - ts) / 1000);
-  if (s < 60) return 'just now';
-  if (s < 3600) return Math.floor(s / 60) + 'm ago';
-  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
-  return Math.floor(s / 86400) + 'd ago';
+  if (s < 60) return L('ui_time_just_now','just now');
+  if (s < 3600) return Math.floor(s / 60) + L('ui_time_m_ago','m ago');
+  if (s < 86400) return Math.floor(s / 3600) + L('ui_time_h_ago','h ago');
+  return Math.floor(s / 86400) + L('ui_time_d_ago','d ago');
 }
 
 function renderRecentFiles() {
@@ -3337,22 +3466,21 @@ function renderRecentFiles() {
   if (!list.length) { panel.style.display = 'none'; return; }
   panel.style.display = 'block';
 
-  const CLASS_NAMES_R = ['Amazon','Sorceress','Necromancer','Paladin','Barbarian','Druid','Assassin','Warlock'];
   let html = `<div style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;color:var(--d2-text-dim);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:40px">
-    <span>RECENT CHARACTERS</span>
-    <button onclick="clearRecentFiles()" style="background:none;border:1px solid var(--d2-border);border-radius:2px;padding:2px 8px;font-size:9px;color:var(--d2-text-dim);cursor:pointer;font-family:inherit;letter-spacing:0.5px">CLEAR</button>
+    <span>${esc(L('ui_recent_characters','RECENT CHARACTERS'))}</span>
+    <button onclick="clearRecentFiles()" style="background:none;border:1px solid var(--d2-border);border-radius:2px;padding:2px 8px;font-size:9px;color:var(--d2-text-dim);cursor:pointer;font-family:inherit;letter-spacing:0.5px">${esc(L('ui_recent_clear','CLEAR'))}</button>
   </div>`;
   html += `<div style="display:flex;flex-direction:column;gap:4px">`;
   for (const r of list) {
-    const cls = CLASS_NAMES_R[r.charClass] || '?';
-    const hcTag = r.isHC ? ' <span style="color:#d46060;font-size:9px">HC</span>' : '';
+    const cls = CLASS_NAMES[r.charClass] || '?';
+    const hcTag = r.isHC ? ` <span style="color:#d46060;font-size:9px">${esc(L('ui_recent_hc','HC'))}</span>` : '';
     html += `<div onclick="openRecentFile(${JSON.stringify(r.name).replace(/"/g,'&quot;')})"
       style="background:var(--d2-surface2);border:1px solid var(--d2-border);border-radius:3px;padding:8px 12px;cursor:pointer;transition:all 0.15s;display:flex;align-items:center;justify-content:space-between;gap:10px"
       onmouseenter="this.style.background='var(--d2-surface3)';this.style.borderColor='var(--d2-gold-dim)'"
       onmouseleave="this.style.background='var(--d2-surface2)';this.style.borderColor='var(--d2-border)'">
       <div style="flex:1;min-width:0;overflow:hidden">
         <div style="color:var(--d2-gold);font-family:'Cinzel',serif;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.charName || r.name)}${hcTag}</div>
-        <div style="color:var(--d2-text-dim);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Lvl ${r.charLevel} ${cls} &middot; ${esc(r.name)}</div>
+        <div style="color:var(--d2-text-dim);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(L('ui_recent_lvl','Lvl'))} ${r.charLevel} ${cls} &middot; ${esc(r.name)}</div>
       </div>
       <div style="color:var(--d2-text-dim);font-size:10px;white-space:nowrap">${timeAgo(r.lastOpened)}</div>
     </div>`;
@@ -3762,10 +3890,10 @@ window.selectNewCharClass = function(idx) {
 
 window.createNewCharacter = function() {
   const name = (document.getElementById('newCharName').value || '').trim().replace(/[^A-Za-z\-_]/g, '');
-  if (!name) { showPopup('Enter a character name (letters, hyphens, underscores only).'); return; }
+  if (!name) { showPopup(L('ui_err_invalid_char_name','Enter a character name (letters, hyphens, underscores only).')); return; }
   const cls = _newCharClass;
   const b64 = _CLASS_TEMPLATES[cls];
-  if (!b64) { showPopup('No template available for this class.'); return; }
+  if (!b64) { showPopup(L('ui_err_no_class_template','No template available for this class.')); return; }
 
   // Decode the real base save for this class
   const buf = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
@@ -3798,7 +3926,7 @@ window.createNewCharacter = function() {
   updateCharStrip();
   buildTabs();
   renderTab();
-  setStatus(`New character: ${name} (${CLASS_NAMES[cls]}) — save to create .d2s file`, 'modified');
+  setStatus(Lfmt('ui_status_new_char','New character: {name} ({class}) — save to create .d2s file',{name,class:CLASS_NAMES[cls]}), 'modified');
 };
 
 function _doReset() {
@@ -3846,12 +3974,12 @@ function _doReset() {
 
   showOnly('uploadView');
   renderRecentFiles();
-  setStatus('Reimagined data ready — load a .d2s file to begin', 'ready');
+  setStatus(L('ui_status_ready_load','Reimagined data ready — load a .d2s file to begin'), 'ready');
 }
 
 window.resetEditor = function() {
   if (!isDirty) { _doReset(); return; }
-  showConfirm('You have unsaved changes. Are you sure you want to reset?', _doReset, 'Reset');
+  showConfirm(L('ui_confirm_unsaved_reset','You have unsaved changes. Are you sure you want to reset?'), _doReset, L('ui_reset','Reset'));
 };
 
 function showConfirm(msg, onYes, yesLabel) {
@@ -3863,14 +3991,15 @@ function showConfirm(msg, onYes, yesLabel) {
     overlay.innerHTML = `<div style="background:linear-gradient(180deg,#1c1409,#0f0b06);border:1px solid var(--d2-gold-dim);border-radius:3px;padding:20px 28px;max-width:420px;min-width:260px;box-shadow:0 8px 40px rgba(0,0,0,0.9);text-align:center">
       <div id="confirmMsg" style="font-family:'Crimson Text',serif;font-size:14px;color:var(--d2-text);line-height:1.6;margin-bottom:16px;white-space:pre-line"></div>
       <div style="display:flex;gap:10px;justify-content:center">
-        <button id="confirmYes" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 22px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-green);background:linear-gradient(180deg,#0e2a0e,#081a08);color:var(--d2-green-bright);transition:all 0.15s">Confirm</button>
-        <button id="confirmNo" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 22px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-red);background:linear-gradient(180deg,#2a0e0e,#1a0808);color:#d46060;transition:all 0.15s">Cancel</button>
+        <button id="confirmYes" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 22px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-green);background:linear-gradient(180deg,#0e2a0e,#081a08);color:var(--d2-green-bright);transition:all 0.15s"></button>
+        <button id="confirmNo" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 22px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-red);background:linear-gradient(180deg,#2a0e0e,#1a0808);color:#d46060;transition:all 0.15s"></button>
       </div>
     </div>`;
     document.body.appendChild(overlay);
   }
   document.getElementById('confirmMsg').textContent = msg;
-  document.getElementById('confirmYes').textContent = yesLabel || 'Confirm';
+  document.getElementById('confirmYes').textContent = yesLabel || L('ui_confirm','Confirm');
+  document.getElementById('confirmNo').textContent = L('ui_cancel','Cancel');
   overlay.style.display = 'flex';
   document.getElementById('confirmNo').onclick = () => { overlay.style.display = 'none'; };
   document.getElementById('confirmYes').onclick = () => { overlay.style.display = 'none'; onYes(); };
@@ -4285,11 +4414,11 @@ function saveFile() {
   a.href=url; a.download=fileName; a.click();
   URL.revokeObjectURL(url);
   isDirty=false;
-  setStatus(`Saved: ${a.download}`,'loaded');
+  setStatus(Lfmt('ui_status_saved','Saved: {file}',{file:a.download}),'loaded');
 }
 
 function markDirty() {
-  if (!isDirty) { isDirty=true; setStatus(`${fileName} — unsaved changes`,'modified'); }
+  if (!isDirty) { isDirty=true; setStatus(Lfmt('ui_status_unsaved','{file} — unsaved changes',{file:fileName}),'modified'); }
   const saveBtn = document.getElementById('saveBtn');
   if (saveBtn) saveBtn.classList.remove('disabled');
 }
@@ -4805,11 +4934,11 @@ window.downgradeToSoftcore = function() {
     overlay.id = 'scPopup';
     overlay.style.cssText = 'position:fixed;inset:0;z-index:30000;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center';
     overlay.innerHTML = `<div style="background:linear-gradient(180deg,#1c1409,#0f0b06);border:1px solid var(--d2-gold-dim);border-radius:3px;padding:24px 32px;max-width:420px;box-shadow:0 8px 40px rgba(0,0,0,0.9);text-align:center">
-      <div style="font-family:'Cinzel',serif;font-size:16px;color:var(--d2-red-bright);margin-bottom:12px">Downgrade to Softcore</div>
-      <div style="font-family:'Crimson Text',serif;font-size:14px;color:var(--d2-text);line-height:1.6;margin-bottom:20px">Are you sure you want to convert this Hardcore character to Softcore?<br><span style="color:var(--d2-text-dim);font-size:12px">This will remove the Hardcore flag and clear the death flag if set. The character will appear in the Softcore character list.</span></div>
+      <div style="font-family:'Cinzel',serif;font-size:16px;color:var(--d2-red-bright);margin-bottom:12px">${esc(L('ui_hc_downgrade_title','Downgrade to Softcore'))}</div>
+      <div style="font-family:'Crimson Text',serif;font-size:14px;color:var(--d2-text);line-height:1.6;margin-bottom:20px">${esc(L('ui_hc_downgrade_text','Are you sure you want to convert this Hardcore character to Softcore?'))}<br><span style="color:var(--d2-text-dim);font-size:12px">${esc(L('ui_hc_downgrade_note','This will remove the Hardcore flag and clear the death flag if set. The character will appear in the Softcore character list.'))}</span></div>
       <div style="display:flex;gap:12px;justify-content:center">
-        <button onclick="document.getElementById('scPopup').style.display='none'" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 20px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-border);background:transparent;color:var(--d2-text-dim);transition:all 0.15s">Cancel</button>
-        <button onclick="doDowngradeToSoftcore()" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 20px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-red);background:linear-gradient(180deg,#2a0e0e,#1a0808);color:#d46060;transition:all 0.15s">Convert to Softcore</button>
+        <button onclick="document.getElementById('scPopup').style.display='none'" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 20px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-border);background:transparent;color:var(--d2-text-dim);transition:all 0.15s">${esc(L('ui_cancel','Cancel'))}</button>
+        <button onclick="doDowngradeToSoftcore()" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 20px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-red);background:linear-gradient(180deg,#2a0e0e,#1a0808);color:#d46060;transition:all 0.15s">${esc(L('ui_hc_downgrade_confirm','Convert to Softcore'))}</button>
       </div>
     </div>`;
     document.body.appendChild(overlay);
@@ -4838,11 +4967,11 @@ window.resurrectCharacter = function() {
     overlay.id = 'resPopup';
     overlay.style.cssText = 'position:fixed;inset:0;z-index:30000;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center';
     overlay.innerHTML = `<div style="background:linear-gradient(180deg,#1c1409,#0f0b06);border:1px solid var(--d2-gold-dim);border-radius:3px;padding:24px 32px;max-width:400px;box-shadow:0 8px 40px rgba(0,0,0,0.9);text-align:center">
-      <div style="font-family:'Cinzel',serif;font-size:16px;color:var(--d2-gold);margin-bottom:12px">Resurrect Character</div>
-      <div style="font-family:'Crimson Text',serif;font-size:14px;color:var(--d2-text);line-height:1.6;margin-bottom:20px">Would you like to resurrect this Hardcore character?<br><span style="color:var(--d2-text-dim);font-size:12px">This will clear the death flag, allowing the character to be played again.</span></div>
+      <div style="font-family:'Cinzel',serif;font-size:16px;color:var(--d2-gold);margin-bottom:12px">${esc(L('ui_hc_resurrect_title','Resurrect Character'))}</div>
+      <div style="font-family:'Crimson Text',serif;font-size:14px;color:var(--d2-text);line-height:1.6;margin-bottom:20px">${esc(L('ui_hc_resurrect_text','Would you like to resurrect this Hardcore character?'))}<br><span style="color:var(--d2-text-dim);font-size:12px">${esc(L('ui_hc_resurrect_note','This will clear the death flag, allowing the character to be played again.'))}</span></div>
       <div style="display:flex;gap:12px;justify-content:center">
-        <button onclick="document.getElementById('resPopup').style.display='none'" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 20px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-border);background:transparent;color:var(--d2-text-dim);transition:all 0.15s">No</button>
-        <button onclick="doResurrect()" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 20px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-gold-dim);background:linear-gradient(180deg,#2a1e0c,#1a1008);color:var(--d2-gold);transition:all 0.15s">Yes, Resurrect</button>
+        <button onclick="document.getElementById('resPopup').style.display='none'" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 20px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-border);background:transparent;color:var(--d2-text-dim);transition:all 0.15s">${esc(L('ui_btn_no','No'))}</button>
+        <button onclick="doResurrect()" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 20px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-gold-dim);background:linear-gradient(180deg,#2a1e0c,#1a1008);color:var(--d2-gold);transition:all 0.15s">${esc(L('ui_hc_resurrect_confirm','Yes, Resurrect'))}</button>
       </div>
     </div>`;
     document.body.appendChild(overlay);
@@ -5283,7 +5412,7 @@ function getSkillListForClass(cls) {
 
 function getCharStats(cls) {
   const cs=baseData['charstats']; if(!cs) return null;
-  const key=(CLASS_NAMES[cls]||'').toLowerCase();
+  const key=(CLASS_KEYS[cls]||'').toLowerCase();
   return cs.rows.find(r=>(r['class']||r['Class']||'').toLowerCase()===key)||null;
 }
 
@@ -5296,7 +5425,7 @@ function getInventoryDimensions(cls) {
   let invW = 10, invH = 8, stashW = 16, stashH = 13;
 
   if (inv) {
-    const className = (CLASS_NAMES[cls] || '').toLowerCase();
+    const className = (CLASS_KEYS[cls] || '').toLowerCase();
 
     // Find per-class inventory row
     for (const row of inv.rows) {
@@ -5351,9 +5480,9 @@ function getTabs() { return [
   {id:'char',label:L('ui_tab_char','Character')},{id:'skills',label:L('ui_tab_skills','Skills')},
   {id:'quests',label:L('ui_tab_quests','Quests')},{id:'waypoints',label:L('ui_tab_waypoints','Waypoints')},
   {id:'inventory',label:L('ui_tab_inventory','Inventory'),danger:true},{id:'stash',label:L('ui_tab_stash','Stash'),danger:true},
-  {id:'sharedstash',label:'Shared Stash',danger:true},
+  {id:'sharedstash',label:L('ui_tab_shared_stash','Shared Stash'),danger:true},
   {id:'mercenary',label:L('ui_tab_mercenary','Mercenary')},
-  {id:'grail',label:'Grail',danger:true},
+  {id:'grail',label:L('ui_tab_grail','Grail'),danger:true},
 ];}
 
 // Inventory/stash item parsing is gated behind an explicit unlock to prevent
@@ -5367,7 +5496,7 @@ function buildTabs() {
     const isDanger = t.danger && !inventoryUnlocked;
     b.className='tab'+(t.id===activeTab?' active':'')+(isDanger?' tab-danger':'');
     b.innerHTML=(TAB_ICONS[t.id]||'')+t.label;
-    b.title = isDanger ? 'Item editing not currently supported — click to see warning' : '';
+    b.title = isDanger ? L('ui_tab_danger_tooltip','Item editing not currently supported — click to see warning') : '';
     b.onclick=()=>{ applyCurrentTab(); activeTab=t.id; buildTabs(); renderTab(); };
     bar.appendChild(b);
   });
@@ -5467,11 +5596,11 @@ function renderChar(c) {
   const g   = k => s[k]!==undefined ? s[k] : (cr?(cr[k]||cr[k.toLowerCase()]||'0'):'0');
 
   c.innerHTML = `
-    ${parsedChar.error?`<p class="parse-error">Parse warning: ${esc(parsedChar.error)}</p>`:''}
+    ${parsedChar.error?`<p class="parse-error">${esc(L('ui_parse_warning','Parse warning:'))} ${esc(parsedChar.error)}</p>`:''}
     ${h2(L('ui_char_info','Character Info'))}
     <div class="stat-grid">
       ${card(L('ui_name','Name'),  txtIn(h.name,'inpName'))}
-      ${card(L('ui_class','Class'), `<div class="stat-input" style="cursor:default;opacity:0.8">${esc(CLASS_NAMES[cls]||'Unknown')}</div>`)}
+      ${card(L('ui_class','Class'), `<div class="stat-input" style="cursor:default;opacity:0.8">${esc(CLASS_NAMES[cls]||L('ui_unknown','Unknown'))}</div>`)}
       ${card(L('ui_level','Level'), numIn(h.level,1,100,'inpLevel'))}
       ${card(L('ui_experience','Experience'), numIn(parsedChar.stats.experience||0,0,'','inpExp'))}
     </div>
@@ -5497,8 +5626,8 @@ function renderChar(c) {
     </div>
     ${h2(L('ui_gold','Gold'))}
     <div class="stat-grid">
-      ${card('<span id="goldCapLabel">' + L('ui_gold_inventory','Gold in Inventory') + ' (max ' + ((parsedChar.header.level||1)*10000).toLocaleString() + ')</span>', numIn(g('gold'),0,(parsedChar.header.level||1)*10000,'','id="stGold"'))}
-      ${card(L('ui_gold_stash','Gold in Stash') + ' (max 33,554,432)', numIn(g('goldbank'),0,33554432,'','id="stGoldbank"'))}
+      ${card('<span id="goldCapLabel">' + esc(Lfmt('ui_gold_inv_with_max','{label} (max {max})',{label:L('ui_gold_inventory','Gold in Inventory'),max:((parsedChar.header.level||1)*10000).toLocaleString()})) + '</span>', numIn(g('gold'),0,(parsedChar.header.level||1)*10000,'','id="stGold"'))}
+      ${card(Lfmt('ui_gold_inv_with_max','{label} (max {max})',{label:L('ui_gold_stash','Gold in Stash'),max:'33,554,432'}), numIn(g('goldbank'),0,33554432,'','id="stGoldbank"'))}
     </div>`;
 
   // Wire Vit→Life and Enr→Mana auto-calculation
@@ -5538,7 +5667,7 @@ function renderChar(c) {
       // Update gold cap
       const goldCap = lvl * 10000;
       const goldLabel = document.getElementById('goldCapLabel');
-      if (goldLabel) goldLabel.textContent = 'Gold in Inventory (max ' + goldCap.toLocaleString() + ')';
+      if (goldLabel) goldLabel.textContent = Lfmt('ui_gold_inv_with_max','{label} (max {max})',{label:L('ui_gold_inventory','Gold in Inventory'),max:goldCap.toLocaleString()});
       const goldEl = document.getElementById('stGold');
       if (goldEl) {
         goldEl.max = goldCap;
@@ -5563,7 +5692,7 @@ function renderChar(c) {
         // Update gold cap
         const goldCap = newLvl * 10000;
         const goldLabel = document.getElementById('goldCapLabel');
-        if (goldLabel) goldLabel.textContent = 'Gold in Inventory (max ' + goldCap.toLocaleString() + ')';
+        if (goldLabel) goldLabel.textContent = Lfmt('ui_gold_inv_with_max','{label} (max {max})',{label:L('ui_gold_inventory','Gold in Inventory'),max:goldCap.toLocaleString()});
         const goldEl = document.getElementById('stGold');
         if (goldEl) {
           goldEl.max = goldCap;
@@ -5689,7 +5818,8 @@ function renderSkills(c) {
   const rawSkills = parsedChar.skills;
 
   if (!trees || trees.length === 0) {
-    c.innerHTML = `<p class="parse-error">No skill data found for ${CLASS_NAMES[cls]||'unknown class'}.</p>`;
+    const msg = L('ui_skills_no_data','No skill data found for {class}.').replace('{class}', CLASS_NAMES[cls]||'?');
+    c.innerHTML = `<p class="parse-error">${esc(msg)}</p>`;
     return;
   }
 
@@ -5701,7 +5831,7 @@ function renderSkills(c) {
   // Skill points remaining
   const spRem = parsedChar.stats?.newskills ?? 0;
   html += `<div style="display:flex;align-items:center;gap:16px;margin-bottom:12px;padding:8px 12px;background:var(--d2-surface2);border:1px solid var(--d2-border);border-radius:2px">
-    <span style="font-family:'Cinzel',serif;font-size:11px;color:var(--d2-text-dim);letter-spacing:0.5px">SKILL POINTS REMAINING</span>
+    <span style="font-family:'Cinzel',serif;font-size:11px;color:var(--d2-text-dim);letter-spacing:0.5px">${esc(L('ui_skills_points_remaining','SKILL POINTS REMAINING'))}</span>
     <input type="number" min="0" max="250" value="${spRem}"
       class="skill-sp-input"
       style="width:60px;background:var(--d2-surface);border:1px solid var(--d2-border);color:var(--d2-text);font-family:'Crimson Text',serif;font-size:14px;padding:3px 6px;border-radius:2px;text-align:center"
@@ -5709,7 +5839,15 @@ function renderSkills(c) {
       oninput="if(this.value!==''&&+this.value>250)this.value=250;if(this.value!==''&&+this.value<0)this.value=0">
   </div>`;
 
-  html += `<p class="note" style="margin-bottom:14px">Skill trees for <strong>${CLASS_NAMES[cls]}</strong>. ${rawSkills.length ? 'Levels read from save.' : 'No skill data in save.'}</p>`;
+  {
+    // Split the header template around {class} so we can keep <strong> wrapping intact
+    const header = L('ui_skills_trees_header','Skill trees for {class}.');
+    const [pre, post] = header.split('{class}');
+    const suffix = rawSkills.length
+      ? L('ui_skills_read_from_save','Levels read from save.')
+      : L('ui_skills_no_save_data','No skill data in save.');
+    html += `<p class="note" style="margin-bottom:14px">${esc(pre||'')}<strong>${esc(CLASS_NAMES[cls]||'')}</strong>${esc(post||'')} ${esc(suffix)}</p>`;
+  }
   html += '<div class="skill-tree-wrap">';
 
   trees.forEach(tree => {
@@ -5744,7 +5882,7 @@ function renderSkills(c) {
   });
 
   html += '</div>';
-  html += '<p class="note">Empty cells are unused grid positions. Apply writes all levels to the save binary.</p>';
+  html += `<p class="note">${esc(L('ui_skills_note','Empty cells are unused grid positions. Apply writes all levels to the save binary.'))}</p>`;
   c.innerHTML = html;
 }
 
@@ -5763,7 +5901,7 @@ window.applySkills = function() {
     parsedChar.stats.newskills = sp;
     commitStats({ newskills: sp });
   }
-  setStatus(`Skills updated — ${fileName} (unsaved)`, 'modified');
+  setStatus(Lfmt('ui_status_skills_updated','Skills updated — {file} (unsaved)',{file:fileName}), 'modified');
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -5991,15 +6129,16 @@ const ITEM_SLOT = {
   11:'Alt Right Hand', 12:'Alt Left Hand'
 };
 const ITEM_STORAGE = { 1:'inventory', 4:'shared stash', 5:'personal stash' };
-const ITEM_QUALITY = {
-  1:{label:'Low',     cls:'iq-low'},
-  2:{label:'Normal',  cls:'iq-norm'},
-  3:{label:'Superior',cls:'iq-norm'},
-  4:{label:'Magic',   cls:'iq-magic'},
-  5:{label:'Set',     cls:'iq-set'},
-  6:{label:'Rare',    cls:'iq-rare'},
-  7:{label:'Unique',  cls:'iq-unique'},
-  8:{label:'Crafted', cls:'iq-craft'},
+// Labels are localized on language switch via rebuildLocalizedLabels(); code field is stable for comparisons.
+let ITEM_QUALITY = {
+  1:{code:'low',     label:'Low',     cls:'iq-low'},
+  2:{code:'normal',  label:'Normal',  cls:'iq-norm'},
+  3:{code:'superior',label:'Superior',cls:'iq-norm'},
+  4:{code:'magic',   label:'Magic',   cls:'iq-magic'},
+  5:{code:'set',     label:'Set',     cls:'iq-set'},
+  6:{code:'rare',    label:'Rare',    cls:'iq-rare'},
+  7:{code:'unique',  label:'Unique',  cls:'iq-unique'},
+  8:{code:'crafted', label:'Crafted', cls:'iq-craft'},
 };
 
 // Build a display name for an item using typeCode, quality, and string table
@@ -6582,14 +6721,14 @@ window.equipSlotDrop = function(e, targetSlotId) {
   if (invItem) {
     // Dragging from inventory → equip slot
     if (!canEquipInSlot(invItem.typeCode, targetSlotId)) {
-      showPopup('This item cannot be equipped in that slot.');
+      showPopup(L('ui_err_cannot_equip_slot','This item cannot be equipped in that slot.'));
       _dragItem = null;
       renderTab();
       return;
     }
     const reqIssues = checkItemRequirements(invItem.typeCode, invItem.quality||2, invItem.uniqueId);
     if (reqIssues) {
-      showPopup('That item does not belong on this character!\n\n' + reqIssues);
+      showPopup(L('ui_err_wrong_class','That item does not belong on this character!') + '\n\n' + reqIssues);
       _dragItem = null;
       renderTab();
       return;
@@ -6609,7 +6748,7 @@ window.equipSlotDrop = function(e, targetSlotId) {
         const {w:ew,h:eh} = getItemSize(existing.typeCode);
         const freePos = _findFreeInventorySlot(ew, eh, invItem);
         if (!freePos) {
-          showPopup('Not enough inventory space to unequip the existing item.');
+          showPopup(L('ui_err_unequip_no_space','Not enough inventory space to unequip the existing item.'));
           _dragItem = null;
           renderTab();
           return;
@@ -6694,7 +6833,7 @@ document.addEventListener('drop', function(e) {
     if (occupied.has(`${dropX+dx},${dropY+dy}`)) blocked = true;
 
   if (blocked) {
-    showPopup('Not enough room in inventory for this item.');
+    showPopup(L('ui_err_inv_no_room','Not enough room in inventory for this item.'));
     _dragEquipItem = null;
     renderTab();
     return;
@@ -6744,7 +6883,7 @@ function renderInventory(c) {
         onmouseleave="closeTooltip(false)">
         <div class="pd-label">${label}</div>
         <div class="pd-name ${cls}">${esc(name)}</div>
-        ${q&&q.label!=='Normal'?`<div class="pd-qual ${cls}">${q.label}</div>`:''}
+        ${q&&q.code!=='normal'?`<div class="pd-qual ${cls}">${q.label}</div>`:''}
       </div>`;
     }
     const ctx = JSON.stringify({mode:'equip',slotId:id,label}).replace(/"/g,'&quot;');
@@ -6840,30 +6979,30 @@ function renderInventory(c) {
         <div style="grid-column:9;grid-row:1;justify-self:start">${weaponTabsL}</div>
 
         <!-- Row 2: Helm centered, Amulet to its right -->
-        <div style="grid-column:5;grid-row:2;justify-self:center">${slot(1, 'Helm', W2, H2)}</div>
-        <div style="grid-column:7;grid-row:2;align-self:end;justify-self:center">${slot(2, 'Amulet', W1, H1)}</div>
+        <div style="grid-column:5;grid-row:2;justify-self:center">${slot(1, L('ui_slot_helm','Helm'), W2, H2)}</div>
+        <div style="grid-column:7;grid-row:2;align-self:end;justify-self:center">${slot(2, L('amu','Amulet'), W1, H1)}</div>
 
         <!-- Weapons spanning rows 2-4, at edges (R.Hand left, L.Hand right to match in-game) -->
         <div style="grid-column:1;grid-row:2/5;align-self:start">
-          <div data-weapon-set="1">${slot(4, 'R. Hand', W2, H4)}</div>
-          <div data-weapon-set="2" style="display:none">${slot(11, 'Alt R.', W2, H4)}</div>
+          <div data-weapon-set="1">${slot(4, L('ui_slot_r_hand','R. Hand'), W2, H4)}</div>
+          <div data-weapon-set="2" style="display:none">${slot(11, L('ui_slot_alt_r','Alt R.'), W2, H4)}</div>
         </div>
         <div style="grid-column:9;grid-row:2/5;align-self:start">
-          <div data-weapon-set="1">${slot(5, 'L. Hand', W2, H4)}</div>
-          <div data-weapon-set="2" style="display:none">${slot(12, 'Alt L.', W2, H4)}</div>
+          <div data-weapon-set="1">${slot(5, L('ui_slot_l_hand','L. Hand'), W2, H4)}</div>
+          <div data-weapon-set="2" style="display:none">${slot(12, L('ui_slot_alt_l','Alt L.'), W2, H4)}</div>
         </div>
 
         <!-- Row 4: Torso centered -->
-        <div style="grid-column:5;grid-row:4;justify-self:center">${slot(3, 'Torso', W2, H3)}</div>
+        <div style="grid-column:5;grid-row:4;justify-self:center">${slot(3, L('ui_slot_torso','Torso'), W2, H3)}</div>
 
         <!-- Row 6: Bottom — Gloves at left edge, Boots at right edge -->
-        <div style="grid-column:1;grid-row:6;justify-self:center">${slot(10, 'Gloves', W2, H2)}</div>
-        <div style="grid-column:9;grid-row:6;justify-self:center">${slot(9, 'Boots', W2, H2)}</div>
+        <div style="grid-column:1;grid-row:6;justify-self:center">${slot(10, L('glove','Gloves'), W2, H2)}</div>
+        <div style="grid-column:9;grid-row:6;justify-self:center">${slot(9, L('boots','Boots'), W2, H2)}</div>
 
         <!-- Row 6: Rings flanking belt, all bottom-aligned -->
-        <div style="grid-column:3;grid-row:6;align-self:end;justify-self:center">${slot(6, 'R. Ring', W1, H1)}</div>
-        <div style="grid-column:5;grid-row:6;align-self:end;justify-self:center">${slot(8, 'Belt', W2, H1)}</div>
-        <div style="grid-column:7;grid-row:6;align-self:end;justify-self:center">${slot(7, 'L. Ring', W1, H1)}</div>
+        <div style="grid-column:3;grid-row:6;align-self:end;justify-self:center">${slot(6, L('ui_slot_r_ring','R. Ring'), W1, H1)}</div>
+        <div style="grid-column:5;grid-row:6;align-self:end;justify-self:center">${slot(8, L('StrHelp21','Belt'), W2, H1)}</div>
+        <div style="grid-column:7;grid-row:6;align-self:end;justify-self:center">${slot(7, L('ui_slot_l_ring','L. Ring'), W1, H1)}</div>
       </div>
     </div>`;
 
@@ -7010,7 +7149,7 @@ function insertBeltPotion(slotIdx, code) {
   markDirty();
   const active = document.querySelector('.tab.active');
   if (active) active.click();
-  setStatus(`Added ${itemNameByCode[code]||code} to belt slot ${slotIdx}`, 'modified');
+  setStatus(Lfmt('ui_status_added_belt','Added {item} to belt slot {slot}',{item:itemNameByCode[code]||code,slot:slotIdx}), 'modified');
 }
 
 function renderStash(c) {
@@ -7596,13 +7735,347 @@ function decodeItemProperties(buf, byteOff, item) {
   return r;
 }
 
-function _formatMod(id,param,value,value2){
-  // Blacklisted internal/system stats only — minimal list to avoid hiding valid D2RR stats
-  const _BL=new Set([56, 59, 67, 68, 71, 72, 73, 82, 88, 90, 94, 98, 109, 126, 140, 159, 160, 181, 200, 206, 207, 212, 213, 392, 393, 394, 395, 396, 419, 420]);
-  if(_BL.has(id))return null;
-  const def=STAT_DEF[id];
-  if(!def)return null;
-  let t=def[0];
+// ═══════════════════════════════════════════════════════════
+//  DESCFUNC ROUTER
+//  Formats a single stat (id + value + param) into a localized display line
+//  using the descfunc system from itemstatcost.txt + item-modifiers.json.
+//  Returns a string on success, or null to let the caller fall back to the
+//  legacy STAT_DEF template path.
+//
+//  Descfunc reference (standard D2 spec, D2RR follows same convention):
+//     1  +value str                     6  +value str str2
+//     2  value% str                     7  value% str str2
+//     3  value str                      8  +value% str str2
+//     4  +value% str                    9  value str str2
+//     5  value*100/128% str            10  value*100/128% str str2
+//    11  repairs 1 dur in value sec    19  plain template (Blizzard default)
+//    12  +value str (descval=2=after)  20/21  flipped sign variants
+//    13  +value to {class} skills      22  value% str [montype in param]
+//    14  +value to {skilltab} ({class})  23  ↑ same — damage vs montype
+//    15  chance% Cast Level N {skill} on {event}   24  Level N {skill} (charges)
+//    16  Level value {skill} Aura      27  +value to {skill} ({class} Only)
+//    17  +value str (by time)          28  +value to {skill}  (oskill)
+//    18  +value% str (by time)
+// ═══════════════════════════════════════════════════════════
+
+// Resolve a skill name from its numeric ID; falls back to a printable placeholder.
+function _skillNameByParam(id) {
+  return skillNameById[id] || 'Skill#' + id;
+}
+
+// Substitute Blizzard-style format tokens in a localized template.
+// Supports: %d (unsigned), %+d/%+i (signed with sign char), %s (string substitution from context),
+// %% (literal percent). The %s token consumes context.s in FIFO order so templates with two
+// string substitutions work correctly (rare but used by a handful of descfuncs).
+function _substituteTokens(template, value, context) {
+  if (template == null) return '';
+  const absStr    = String(Math.abs(value));
+  const signedStr = (value >= 0 ? '+' : '') + value;
+  const sList     = (context && context.s) || [];
+  let sIdx = 0;
+  return String(template)
+    .replace(/%%/g, '\x00PCT\x00')
+    .replace(/%\+d/g, signedStr)
+    .replace(/%\+i/g, signedStr)
+    .replace(/%d/g,   absStr)
+    .replace(/%i/g,   absStr)
+    .replace(/%s/g,   () => String(sList[sIdx++] ?? ''))
+    .replace(/\x00PCT\x00/g, '%');
+}
+
+// Format a stat via its itemstatcost descriptor. Returns a display string, or null if the
+// descriptor can't format this stat cleanly (caller falls back to the legacy STAT_DEF path).
+function applyDescfunc(desc, value, param, value2) {
+  if (!desc) return null;
+  const key = value >= 0 ? desc.strPos : (desc.strNeg || desc.strPos);
+  if (!key) return null;
+  const template = stringTable[key];
+  if (!template) return null; // template missing from string table → let legacy path handle it
+
+  const func = desc.func;
+  const tpl  = template;
+
+  // ── Elemental damage pairs ("Adds N-M Fire Damage") ──
+  // The binary decoder pairs min/max damage stats into a single (value, value2) entry on the
+  // min-damage leader. Use Blizzard's dedicated range templates so non-English locales get
+  // the correct grammar ("Fügt 5-10 Feuerschaden hinzu" etc.) instead of two separate lines.
+  if (value2 !== undefined) {
+    const rangeKey = ELEM_DMG_RANGE_KEY[desc.id];
+    if (rangeKey && stringTable[rangeKey]) {
+      let s = stringTable[rangeKey];
+      s = s.replace(/%d/, String(value));   // min
+      s = s.replace(/%d/, String(value2));  // max
+      return s;
+    }
+  }
+
+  // ── Per-level stats (descstr2 = "increaseswithplaylevelX") ──
+  // Stored value is units per 8 character levels; display the scaled current-level value
+  // alongside the per-level rate so perfection comparisons and roll inspection remain clear.
+  // This is orthogonal to descfunc, so we special-case it before the func switch.
+  if (desc.str2 === 'increaseswithplaylevelX' && value > 0) {
+    const charLvl = (parsedChar && parsedChar.header) ? (parsedChar.header.level || 1) : 1;
+    const scaled  = Math.floor(value * charLvl / 8);
+    const perLvl  = (value / 8).toFixed(value % 8 ? 1 : 0);
+    const suffix  = stringTable['increaseswithplaylevelX'] || '';
+    const base    = /%[+]?[dis]/.test(tpl)
+      ? _substituteTokens(tpl, scaled)
+      : ((scaled >= 0 ? '+' : '') + scaled + ' ' + tpl);
+    return base + (suffix ? ' ' + suffix : '') + ' (' + perLvl + ' per level)';
+  }
+
+  // Shared helpers used by several descfuncs that don't have tokens in the template
+  const signedVal = (value >= 0 ? '+' : '') + value;
+
+  switch (func) {
+    // ── Simple value + template ──
+    // descval controls value placement when the template has no explicit token:
+    //   1 = value before template string (default), 2 = value after, 0 = value hidden
+    case 1: case 2: case 3: case 4:
+    case 6: case 7: case 8: case 9: {
+      const str2 = desc.str2 ? (stringTable[desc.str2] || '') : '';
+      // If template already carries the value token (Blizzard default for %+d etc.),
+      // substitute in place; otherwise prepend/append per descval.
+      if (/%[+]?[disv]/.test(tpl)) {
+        return (str2 ? _substituteTokens(tpl, value) + ' ' + str2 : _substituteTokens(tpl, value));
+      }
+      const prefix = (func === 4 || func === 8) ? signedVal + '%'
+                   : (func === 2 || func === 7) ? value + '%'
+                   : (func === 1 || func === 6) ? signedVal
+                   :                              String(value);
+      const body = desc.val === 2 ? tpl + ' ' + prefix : prefix + ' ' + tpl;
+      return str2 ? body + ' ' + str2 : body;
+    }
+
+    // ── Scaled value (stored * 100 / 128 for percentage-style stats) ──
+    case 5: case 10: {
+      const scaled = Math.floor(value * 100 / 128);
+      const str2 = desc.str2 ? (stringTable[desc.str2] || '') : '';
+      if (/%[+]?[disv]/.test(tpl)) {
+        return str2 ? _substituteTokens(tpl, scaled) + ' ' + str2 : _substituteTokens(tpl, scaled);
+      }
+      const prefix = scaled + '%';
+      const body = desc.val === 2 ? tpl + ' ' + prefix : prefix + ' ' + tpl;
+      return str2 ? body + ' ' + str2 : body;
+    }
+
+    // ── Durability repair rate (descstrpos has a %d that expects seconds) ──
+    case 11:
+      return _substituteTokens(tpl, value);
+
+    // ── 12: +value str (descval=2 means append value after the string, no sign) ──
+    case 12:
+      if (/%[+]?[dis]/.test(tpl)) return _substituteTokens(tpl, value);
+      return desc.val === 2 ? tpl + ' ' + value : signedVal + ' ' + tpl;
+
+    // ── 13: +value to {class} Skill Levels (param = class index) ──
+    case 13: {
+      const className = CLASS_NAMES[param] || 'Class#' + param;
+      return _substituteTokens(tpl, value, { s: [className] });
+    }
+
+    // ── 14: +value to {skilltab} Skill Levels ({class} Only) ──
+    // Param layout: D2RR remaps vanilla `floor(tab/3)*8 + (tab%3)` back to (classIdx, localTab)
+    case 14: {
+      const classIdx = Math.floor(param / 8);
+      const localTab = param % 8;
+      const className = CLASS_NAMES[classIdx] || '';
+      const tabName   = (typeof getSkillTabName === 'function')
+        ? getSkillTabName(classIdx * 3 + localTab) || ''
+        : '';
+      // Blizzard's StrSklTabItem1 uses two %s slots: skilltab, class
+      return _substituteTokens(tpl, value, { s: [tabName, className] });
+    }
+
+    // ── 15: chance% Cast Level {level} {skill} on {event} ──
+    // Binary encoding packs skill+level in param: (skillId << 6) | (level & 0x3F)
+    case 15: {
+      const skillId = param >> 6;
+      const level   = param & 0x3F;
+      const skillName = _skillNameByParam(skillId);
+      // Template has %d (chance), %d (level), %s (skill)
+      return tpl
+        .replace(/%d%%/, value + '%')
+        .replace(/%d/,   String(level))
+        .replace(/%s/,   skillName);
+    }
+
+    // ── 16: Level {value} {skill} Aura When Equipped ──
+    case 16: {
+      const skillName = _skillNameByParam(param);
+      return tpl.replace(/%d/, String(value)).replace(/%s/, skillName);
+    }
+
+    // ── 17: +value str (per-level — secondary string is "(Based on Character Level)") ──
+    // Value is stored as units per 8 levels; display the scaled current-level value
+    // alongside the per-level rate in parentheses for clarity.
+    case 17: case 18: {
+      const charLvl = (parsedChar && parsedChar.header) ? (parsedChar.header.level || 1) : 1;
+      const scaled  = Math.floor(value * charLvl / 8);
+      const perLvl  = (value / 8).toFixed(value % 8 ? 1 : 0);
+      const str2    = desc.str2 ? (stringTable[desc.str2] || '') : '';
+      const base    = /%[+]?[dis]/.test(tpl) ? _substituteTokens(tpl, scaled) : (((scaled>=0?'+':'')+scaled) + ' ' + tpl);
+      return base + (str2 ? ' ' + str2 : '') + ' (' + perLvl + ' per level)';
+    }
+
+    // ── 19: plain-template descriptor (by far the most common case) ──
+    // Template already contains the token (%+d / %d / %s). Just substitute.
+    case 19:
+      return _substituteTokens(tpl, value);
+
+    // ── 20/21: value displayed with flipped sign (e.g. "−5% Faster Cast" stored positive) ──
+    case 20: case 21:
+      return _substituteTokens(tpl, -value);
+
+    // ── 22/23: value% vs. {montype} (param encodes monster type) ──
+    // Param-to-name mapping is complex (monstats2 lookup); leave the placeholder in the
+    // template if we can't resolve, which at least flags the stat correctly.
+    case 22: case 23:
+      return _substituteTokens(tpl, value, { s: ['Monsters'] });
+
+    // ── 24: Level {level} {skill} ({current}/{max} Charges) ──
+    // Stored value packs current|max charges: (max << 8) | current. Binary save_add is
+    // baked into the decoded `value`, so recover the raw stored int using saveAdd.
+    case 24: {
+      const skillId = param >> 6;
+      const level   = param & 0x3F;
+      const skillName = _skillNameByParam(skillId);
+      const def = (typeof STAT_DEF !== 'undefined') ? STAT_DEF[desc.id] : null;
+      const rawStored = value + (def ? def[1] : 0);
+      const cur = rawStored & 0xFF;
+      const max = (rawStored >> 8) & 0xFF;
+      // Template: "Level %d %s (%d/%d Charges)"
+      let s = tpl;
+      s = s.replace(/%d/, String(level));
+      s = s.replace(/%s/, skillName);
+      s = s.replace(/%d/, String(cur));
+      s = s.replace(/%d/, String(max));
+      return s;
+    }
+
+    // ── 27: +value to {skill} ({class} Only) ──
+    case 27: {
+      const skillName = _skillNameByParam(param);
+      // Template usually has %+d %s (skill); class-only suffix is Blizzard-localized
+      return _substituteTokens(tpl, value, { s: [skillName] });
+    }
+
+    // ── 28: +value to {skill}  (non-class skill / oskill) ──
+    case 28: {
+      const skillName = _skillNameByParam(param);
+      return _substituteTokens(tpl, value, { s: [skillName] });
+    }
+
+    default:
+      // Unknown descfunc — let the legacy STAT_DEF path handle it
+      return null;
+  }
+}
+
+// Collapse stats that share a dgrp into a single display line when all members of the
+// group are present with the same value. Returns a new mod list with:
+//   • Collapsed entries marked `{ _grouped: true, dgrp, value, displayLine }`
+//   • Consumed individual stats filtered out
+//   • Anything not in a complete group passed through unchanged
+function applyDgrpGrouping(mods) {
+  if (!mods || !mods.length || !Object.keys(STAT_DGRP_MEMBERS).length) return mods;
+
+  // Build value→[stat] map per dgrp present in the input
+  const byDgrpValue = new Map(); // `${dgrp}_${value}` -> Set<statId>
+  for (const m of mods) {
+    const d = STAT_DESCRIPTORS[m.id];
+    if (!d || !d.dgrp) continue;
+    const k = d.dgrp + '_' + m.value;
+    if (!byDgrpValue.has(k)) byDgrpValue.set(k, new Set());
+    byDgrpValue.get(k).add(m.id);
+  }
+
+  // For each group where every member is present at the same value, record the collapse
+  const collapsedIds = new Set();  // stat IDs consumed by group collapse
+  const groupLines   = [];          // synthetic entries inserted in priority order
+  for (const [key, ids] of byDgrpValue.entries()) {
+    const [dgrpStr, valStr] = key.split('_');
+    const dgrp = parseInt(dgrpStr, 10);
+    const value = parseInt(valStr, 10);
+    const members = STAT_DGRP_MEMBERS[dgrp] || [];
+    if (!members.length) continue;
+    // All members must be present in this (dgrp, value) bucket
+    const haveAll = members.every(id => ids.has(id));
+    if (!haveAll) continue;
+
+    // Use the first member's descriptor for dgrp* fields (all members share them)
+    const anchor = STAT_DESCRIPTORS[members[0]];
+    const strKey = value >= 0 ? anchor.dgrpStrPos : (anchor.dgrpStrNeg || anchor.dgrpStrPos);
+    const template = strKey ? stringTable[strKey] : '';
+    if (!template) continue; // no group template → fall through to individual lines
+
+    const line = /%[+]?[dis]/.test(template)
+      ? _substituteTokens(template, value)
+      : ((value >= 0 ? '+' : '') + value + ' ' + template);
+
+    members.forEach(id => collapsedIds.add(id));
+    // Find earliest byteOffset-style position of the group so display order is stable
+    const firstIdx = mods.findIndex(m => members.includes(m.id) && m.value === value);
+    groupLines.push({ _insertAt: firstIdx, _grouped: true, dgrp, value, displayLine: line });
+  }
+
+  if (!groupLines.length) return mods;
+
+  // Reconstruct the mod list: at each index, either emit the group line (once) or the
+  // individual stat. Consumed individual stats are dropped.
+  const groupAt = new Map();
+  for (const g of groupLines) groupAt.set(g._insertAt, g);
+  const out = [];
+  const emittedGroups = new Set();
+  for (let i = 0; i < mods.length; i++) {
+    if (groupAt.has(i) && !emittedGroups.has(groupAt.get(i).dgrp)) {
+      out.push(groupAt.get(i));
+      emittedGroups.add(groupAt.get(i).dgrp);
+      continue;
+    }
+    if (collapsedIds.has(mods[i].id)) continue;
+    out.push(mods[i]);
+  }
+  return out;
+}
+
+// Internal/system stat IDs that should never render in tooltips (handled as header flags,
+// follow stats consumed by a leader, or pure engine plumbing).
+const _FORMAT_MOD_BLACKLIST = new Set([
+  56, 59, 67, 68, 71, 72, 73, 82, 88, 90, 94, 98, 109, 126, 140, 159, 160, 181, 200,
+  206, 207, 212, 213, 392, 393, 394, 395, 396, 419, 420,
+]);
+
+// Stats that legitimately display with value=0 (flag/switch stats or socket counts).
+// All other stats with value=0 are filtered as noise.
+const _FORMAT_MOD_ZERO_OK = new Set([116, 152, 153, 194]);
+
+function _formatMod(id, param, value, value2) {
+  if (_FORMAT_MOD_BLACKLIST.has(id)) return null;
+
+  // Filter noise before doing any formatting work
+  if (id === 194 && value === 0) return null;              // numsockets=0 → item has no sockets
+  if (id === 97) return null;                               // oskill_hide companion stat
+  if (Math.abs(value) > 50000) return null;                 // absurd magnitude → decode error
+  if (value === 0 && !_FORMAT_MOD_ZERO_OK.has(id)) return null;
+
+  // Try the Blizzard descfunc path first — this pulls localized templates from item-modifiers.json.
+  // Falls through to the legacy STAT_DEF pipeline when the descriptor is missing, the template is
+  // absent from the current language's string table, or the descfunc isn't in applyDescfunc's table.
+  const desc = STAT_DESCRIPTORS[id];
+  if (desc) {
+    const fromDescfunc = applyDescfunc(desc, value, param, value2);
+    if (fromDescfunc) {
+      // Filter control-char artifacts that occasionally appear in raw Blizzard strings
+      if (fromDescfunc.includes('\u00ff') || fromDescfunc.charCodeAt(0) === 0xff) return null;
+      return fromDescfunc;
+    }
+  }
+
+  // ── Legacy STAT_DEF fallback (English templates) ──
+  const def = STAT_DEF[id];
+  if (!def) return null;
+  let t = def[0];
   // Per-level stats (IDs 218-267): stored value = units per 8 levels
   // Calculate actual value based on character level and show both
   if(id >= 218 && id <= 267 && value > 0){
@@ -7644,37 +8117,41 @@ function _formatMod(id,param,value,value2){
   if(t.includes('{p}')){
     let pname;
     if(id===83||id===309){
-      const classNames=['Amazon','Sorceress','Necromancer','Paladin','Barbarian','Druid','Assassin','Warlock'];
-      pname=classNames[param]||'Class '+param;
+      pname=CLASS_NAMES[param]||'Class '+param;
     } else {
       pname=skillNameById[param]||'Skill#'+param;
     }
     t=t.replace('{p}',pname);
   }
-  // Filter out internal/system stats that shouldn't show to the user
-  if(t.includes('\u00ff')||t.charCodeAt(0)===255||t.charCodeAt(0)===0xff) return null;
-  // Hide zero-value numsockets (item has no sockets)
-  if(id===194 && value===0) return null;
-  // Hide oskill_hide stats (non-class skill with hidden param)
-  if(id===97) return null;
-  // Filter absurdly large values that indicate binary decode errors
-  if(Math.abs(value)>50000) return null;
-  // Filter zero-value stats that aren't meaningful flags
-  if(value===0 && id!==152 && id!==153 && id!==116 && id!==194) return null;
+  // Control-char artifacts occasionally leak in from raw Blizzard strings
+  if (t.includes('\u00ff') || t.charCodeAt(0) === 0xff) return null;
   return t;
 }
-function _formatMods(mods, skipDedup){
-  const lines=[];const skip=new Set();
-  const seenIds=new Set();  // deduplicate unless skipDedup is true
-  for(let i=0;i<mods.length;i++){
-    if(skip.has(i))continue;
-    const {id,param,value,value2}=mods[i];
-    // Skip follow stats that have already been consumed as value2 of their leader
-    if(id===18&&i>0&&mods[i-1]&&mods[i-1].id===17) continue;
-    // Skip duplicate stat IDs — unless processing enchant mods (which can duplicate base stats)
-    if(!skipDedup && seenIds.has(id)) continue;
-    const l=_formatMod(id,param,value,value2);
-    if(l!==null){ lines.push(l); seenIds.add(id); }
+
+function _formatMods(mods, skipDedup) {
+  if (!mods || !mods.length) return [];
+
+  // First, let dgrp grouping collapse related stats (e.g. 4 resistances → "All Resistances").
+  // Pre-grouping runs on the raw mod list so individual stats get replaced by synthetic
+  // `_grouped` entries that carry a ready-to-render display line.
+  const grouped = applyDgrpGrouping(mods);
+
+  const lines = [];
+  const seenIds = new Set();
+  for (let i = 0; i < grouped.length; i++) {
+    const entry = grouped[i];
+    // Synthetic group line — already formatted by applyDgrpGrouping
+    if (entry._grouped) {
+      lines.push(entry.displayLine);
+      continue;
+    }
+    const { id, param, value, value2 } = entry;
+    // Skip follow stats already consumed as value2 of their leader (e.g. stat 18 following 17)
+    if (id === 18 && i > 0 && grouped[i - 1] && grouped[i - 1].id === 17) continue;
+    // Deduplicate by stat ID unless caller asked for raw output (e.g. enchant mod lists)
+    if (!skipDedup && seenIds.has(id)) continue;
+    const line = _formatMod(id, param, value, value2);
+    if (line !== null) { lines.push(line); seenIds.add(id); }
   }
   return lines;
 }
@@ -7784,11 +8261,11 @@ function buildItemTooltipHtml(item) {
       }
     }
   } else if(!item.simple && !item.isVirtual && item.byteOffset>=0 && item.identified===0){
-    propHtml='<div class="tt-mod" style="color:var(--d2-text-dim);font-style:italic">Unidentified</div>';
+    propHtml=`<div class="tt-mod" style="color:var(--d2-text-dim);font-style:italic">${esc(L('ItemStats1b','Unidentified'))}</div>`;
   }
-  if(!item.identified)flags.push('<span style="color:var(--d2-text-dim)">Unidentified</span>');
-  if(item.ethereal)flags.push('<span style="color:#7090d0">Ethereal</span>');
-  if(item.runeword)flags.push('<span style="color:var(--d2-gold)">Runeword</span>');
+  if(!item.identified)flags.push(`<span style="color:var(--d2-text-dim)">${esc(L('ItemStats1b','Unidentified'))}</span>`);
+  if(item.ethereal)flags.push(`<span style="color:#7090d0">${esc(L('ui_flag_ethereal','Ethereal'))}</span>`);
+  if(item.runeword)flags.push(`<span style="color:var(--d2-gold)">${esc(L('ui_flag_runeword','Runeword'))}</span>`);
   const q=ITEM_QUALITY[decodedQual];
   // Affix/set/runeword name lines
   let headerLines='';
@@ -7814,11 +8291,11 @@ function buildItemTooltipHtml(item) {
   return `
     <div class="tt-name ${cls}">${esc(name)}</div>
     ${headerLines}
-    ${QUEST_ITEM_CODES.has(code)?`<div class="tt-row"><b style="color:#c8a800">Quest Item</b></div>`:''}
-    ${q&&decodedQual!==2&&!QUEST_ITEM_CODES.has(code)?`<div class="tt-row"><span style="color:var(--d2-text-dim)">Quality:</span><b class="${q.cls}">${q.label}</b></div>`:''}
-    <div class="tt-row"><span style="color:var(--d2-text-dim)">Base:</span><b>${baseLabel}</b><span style="opacity:0.4;font-size:10px;margin-left:2px">${codeLabel}</span></div>
-    <div class="tt-row"><span style="color:var(--d2-text-dim)">Size:</span><b>${w}×${h}</b></div>
-    ${decodedIlvl?`<div class="tt-row"><span style="color:var(--d2-text-dim)">iLvl:</span><b>${decodedIlvl}</b></div>`:''}
+    ${QUEST_ITEM_CODES.has(code)?`<div class="tt-row"><b style="color:#c8a800">${esc(L('ui_flag_quest_item','Quest Item'))}</b></div>`:''}
+    ${q&&decodedQual!==2&&!QUEST_ITEM_CODES.has(code)?`<div class="tt-row"><span style="color:var(--d2-text-dim)">${esc(L('ui_label_quality','Quality:'))}</span><b class="${q.cls}">${q.label}</b></div>`:''}
+    <div class="tt-row"><span style="color:var(--d2-text-dim)">${esc(L('ui_label_base','Base:'))}</span><b>${baseLabel}</b><span style="opacity:0.4;font-size:10px;margin-left:2px">${codeLabel}</span></div>
+    <div class="tt-row"><span style="color:var(--d2-text-dim)">${esc(L('ui_label_size','Size:'))}</span><b>${w}×${h}</b></div>
+    ${decodedIlvl?`<div class="tt-row"><span style="color:var(--d2-text-dim)">${esc(L('ui_label_ilvl','iLvl:'))}</span><b>${decodedIlvl}</b></div>`:''}
     ${flags.length?`<div class="tt-flag">${flags.join(' &nbsp; ')}</div>`:''}
     ${(()=>{
       // Socket info for socketable items
@@ -7829,7 +8306,7 @@ function buildItemTooltipHtml(item) {
       // Binary items have complex variable-position socket fields that can't be safely patched
       if (item.isVirtual) {
         return `<div class="tt-row" style="align-items:center">
-          <span style="color:var(--d2-text-dim)">Sockets:</span>
+          <span style="color:var(--d2-text-dim)">${esc(L('ui_label_sockets','Sockets:'))}</span>
           <input type="number" min="0" max="${maxSock}" value="${curSock}"
             style="width:40px;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-gold-bright);font-size:12px;text-align:center;padding:1px 4px;border-radius:1px"
             onchange="updateItemSockets(${item.byteOffset},parseInt(this.value)||0,${maxSock})">
@@ -7837,8 +8314,8 @@ function buildItemTooltipHtml(item) {
         </div>`;
       }
       let sockHtml = curSock > 0
-        ? `<div class="tt-row"><span style="color:var(--d2-text-dim)">Sockets:</span><b>${curSock}</b><span style="color:var(--d2-text-dim);font-size:10px">/ ${maxSock} max</span></div>`
-        : `<div class="tt-row"><span style="color:var(--d2-text-dim)">Max Sockets:</span><b>${maxSock}</b></div>`;
+        ? `<div class="tt-row"><span style="color:var(--d2-text-dim)">${esc(L('ui_label_sockets','Sockets:'))}</span><b>${curSock}</b><span style="color:var(--d2-text-dim);font-size:10px">/ ${maxSock} max</span></div>`
+        : `<div class="tt-row"><span style="color:var(--d2-text-dim)">${esc(L('ui_label_max_sockets','Max Sockets:'))}</span><b>${maxSock}</b></div>`;
       // Show socketed item contents
       if (curSock > 0 && parsedChar?.items) {
         const myOff = item.byteOffset;
@@ -7864,8 +8341,8 @@ function buildItemTooltipHtml(item) {
     ${propHtml}
     ${item.isGrail || item.isSharedStash ? '' : `<hr class="tt-divider">
     <div style="display:flex;gap:6px;flex-wrap:wrap">
-      <button class="btn-apply" onclick="closeTooltip(true)" style="font-size:10px;padding:4px 10px">Close</button>
-      ${item.byteOffset!==undefined?`<button class="btn-apply" onclick="removeItemByOffset(${item.byteOffset})" style="font-size:10px;padding:4px 10px;border-color:var(--d2-red);color:#d46060">Remove</button>`:''}
+      <button class="btn-apply" onclick="closeTooltip(true)" style="font-size:10px;padding:4px 10px">${esc(L('ui_btn_close','Close'))}</button>
+      ${item.byteOffset!==undefined?`<button class="btn-apply" onclick="removeItemByOffset(${item.byteOffset})" style="font-size:10px;padding:4px 10px;border-color:var(--d2-red);color:#d46060">${esc(L('ui_btn_remove','Remove'))}</button>`:''}
     </div>`}`;
 }
 
@@ -7913,7 +8390,7 @@ window.showItemDetail = function(byteOffset, triggerEl) {
   if (item.parent === 0 && !item.isVirtual && workBytes && item.byteOffset >= 0) {
     html += `<hr class="tt-divider"><div style="text-align:center;padding:4px">
       <button class="btn btn-primary" style="font-size:11px;padding:4px 12px"
-        onclick="event.stopPropagation();startCopyItem(${byteOffset})">Copy Item</button>
+        onclick="event.stopPropagation();startCopyItem(${byteOffset})">${esc(L('ui_btn_copy_item','Copy Item'))}</button>
     </div>`;
   }
   content.innerHTML = html;
@@ -8031,7 +8508,7 @@ window.removeItemByOffset = function(byteOffset) {
   if (!parsedChar || !parsedChar.items) return;
   const idx = parsedChar.items.findIndex(it => it.byteOffset === byteOffset);
   if (idx < 0) return;
-  showConfirm('Remove this item from the save? This cannot be undone until you reload.', () => {
+  showConfirm(L('ui_confirm_remove_item','Remove this item from the save? This cannot be undone until you reload.'), () => {
     const item = parsedChar.items[idx];
     if (byteOffset >= 0 && !item.isVirtual) {
       _deletedItemOffsets.add(byteOffset);
@@ -8052,8 +8529,9 @@ let _modalSelectedIdx = null;
 window.openInsertModal = function(context) {
   _modalContext = context;
   _modalSelectedIdx = null;
-  document.getElementById('modalTitle').textContent =
-    context.mode === 'equip' ? `Insert into: ${context.label}` : `Insert at position (${context.x}, ${context.y})`;
+  document.getElementById('modalTitle').textContent = context.mode === 'equip'
+    ? Lfmt('ui_modal_insert_into','Insert into: {label}',{label:context.label})
+    : Lfmt('ui_modal_insert_at','Insert at position ({x}, {y})',{x:context.x,y:context.y});
   document.getElementById('modalSearch').value = '';
   document.getElementById('modalSelected').style.display = 'none';
   document.getElementById('modalInsertBtn').style.display = 'none';
@@ -8180,19 +8658,26 @@ function buildItemCatalog() {
       const isWeaponType = bodyLocs && (bodyLocs.has('rarm') || bodyLocs.has('larm')) && !isArmorType;
       const uCat = isQuestItem ? 'skip' : isJewelryCode ? 'Unique Jewelry' : isArmorType ? 'Unique Armor' : isWeaponType ? 'Unique Weapons' : 'Unique Other';
       if (uCat === 'skip') return; // quest uniques excluded from catalog
-      // Subcategory from type name
+      // Subcategory from type name. Values are [key, fallback] — most pulled from Blizzard item-names.json
+      // so translators get them for free; editor-specific ones (Amazon-class, throwing, hammers, orbs, claws)
+      // use custom ui_sub_* keys.
       const TYPE_NAMES_U = {
-        axe:'Axes',swor:'Swords',mace:'Maces',club:'Maces',hamm:'Hammers',scep:'Scepters',
-        pole:'Polearms',spea:'Spears',jave:'Javelins',ajav:'Amazon Javelins',aspe:'Amazon Spears',
-        bow:'Bows',abow:'Amazon Bows',xbow:'Crossbows',
-        knif:'Daggers',tkni:'Throwing Knives',taxe:'Throwing Axes',
-        wand:'Wands',staf:'Staves',orb:'Orbs',h2h:'Claws',h2h2:'Claws',
-        helm:'Helms',phlm:'Barbarian Helms',pelt:'Druid Pelts',circ:'Circlets',grim:'Warlock Shields',
-        tors:'Body Armor',shie:'Shields',ashd:'Paladin Shields',
-        glov:'Gloves',boot:'Boots',belt:'Belts',head:'Necro Shields',
-        ring:'Rings',amul:'Amulets',
+        axe:['axes','Axes'],swor:['sword','Swords'],mace:['maces','Maces'],club:['maces','Maces'],
+        hamm:['ui_sub_hammers','Hammers'],scep:['scept','Scepters'],
+        pole:['poles','Polearms'],spea:['spear','Spears'],jave:['javel','Javelins'],
+        ajav:['ui_sub_amazon_javelins','Amazon Javelins'],aspe:['ui_sub_amazon_spears','Amazon Spears'],
+        bow:['bows','Bows'],abow:['ui_sub_amazon_bows','Amazon Bows'],xbow:['xbows','Crossbows'],
+        knif:['daggs','Daggers'],tkni:['ui_sub_throwing_knives','Throwing Knives'],taxe:['ui_sub_throwing_axes','Throwing Axes'],
+        wand:['wands','Wands'],staf:['stave','Staves'],orb:['ui_sub_orbs','Orbs'],
+        h2h:['ui_sub_claws','Claws'],h2h2:['ui_sub_claws','Claws'],
+        helm:['helms','Helms'],phlm:['ui_grail_cat_barb_helms','Barbarian Helms'],pelt:['ui_grail_cat_druid_pelts','Druid Pelts'],
+        circ:['circl','Circlets'],grim:['ui_grail_cat_warlock_shields','Warlock Shields'],
+        tors:['r_arm','Body Armor'],shie:['shlds','Shields'],ashd:['ui_grail_cat_paladin_shields','Paladin Shields'],
+        glov:['glove','Gloves'],boot:['boots','Boots'],belt:['belts','Belts'],head:['ui_sub_necro_shields','Necro Shields'],
+        ring:['Rings','Rings'],amul:['amule','Amulets'],
       };
-      const uSubCat = TYPE_NAMES_U[typeCode] || baseName;
+      const uSubCatEntry = TYPE_NAMES_U[typeCode];
+      const uSubCat = uSubCatEntry ? L(uSubCatEntry[0], uSubCatEntry[1]) : baseName;
       UNIQUE_CATALOG.push({ code, uniqueName, baseName, qual:7, uniqueId: idx, category: uCat, subCategory: uSubCat,
         searchKey: (uniqueName + ' ' + baseName + ' ' + code + ' ' + uSubCat).toLowerCase() });
     });
@@ -8361,25 +8846,38 @@ window.filterModalItems = function() {
     html += '</div>';
   }
 
-  // Render categories
-  if (Object.keys(weaponGroups).length) renderCategory('Base Weapons', 'var(--d2-text)', weaponGroups);
-  if (Object.keys(armorGroups).length) renderCategory('Base Armor', 'var(--d2-text)', armorGroups);
-  if (Object.keys(uniqueWeaponGroups).length) renderCategory('Unique Weapons', '#c88030', uniqueWeaponGroups);
-  if (Object.keys(uniqueArmorGroups).length) renderCategory('Unique Armor', '#c88030', uniqueArmorGroups);
-  if (uniqueJewelry.length) renderFlatCategory('Unique Jewelry', '#c88030', uniqueJewelry);
-  if (Object.keys(setGroups).length) renderCategory('Set Items', '#00c800', setGroups);
-  if (runewordList.length) renderFlatCategory('Runewords', '#c88030', runewordList);
+  // Render categories — category headers pulled from Blizzard (Runewords) or editor-specific keys (Base/Unique/Misc).
+  // Subcategory keys inside miscGroups are translated at render time via MISC_SUBCAT_LABELS.
+  const MISC_SUBCAT_LABELS = {
+    Jewelry:        L('ui_misc_jewelry','Jewelry'),
+    Runes:          L('runes','Runes'),
+    Gems:           L('gems','Gems'),
+    Charms:         L('charm','Charms'),
+    Orbs:           L('ui_misc_orbs','Orbs'),
+    'Special Items':L('ui_misc_special','Special Items'),
+    'Quest Items':  L('ui_misc_quest','Quest Items'),
+    Miscellaneous:  L('ui_misc_misc','Miscellaneous'),
+  };
+  const labelMisc = (k) => MISC_SUBCAT_LABELS[k] || k;
+  // renderCategory/renderFlatCategory receive the display title directly.
+  if (Object.keys(weaponGroups).length) renderCategory(L('ui_insert_cat_base_weapons','Base Weapons'), 'var(--d2-text)', weaponGroups);
+  if (Object.keys(armorGroups).length) renderCategory(L('ui_insert_cat_base_armor','Base Armor'), 'var(--d2-text)', armorGroups);
+  if (Object.keys(uniqueWeaponGroups).length) renderCategory(L('ui_insert_cat_unique_weapons','Unique Weapons'), '#c88030', uniqueWeaponGroups);
+  if (Object.keys(uniqueArmorGroups).length) renderCategory(L('ui_insert_cat_unique_armor','Unique Armor'), '#c88030', uniqueArmorGroups);
+  if (uniqueJewelry.length) renderFlatCategory(L('ui_grail_cat_unique_jewelry','Unique Jewelry'), '#c88030', uniqueJewelry);
+  if (Object.keys(setGroups).length) renderCategory(L('ui_grail_section_set','Set Items'), '#00c800', setGroups);
+  if (runewordList.length) renderFlatCategory(L('Runewords','Runewords'), '#c88030', runewordList);
 
-  // Misc subcategories (Runes, Gems, Charms, Jewelry, etc.)
+  // Misc subcategories (Runes, Gems, Charms, Jewelry, etc.) — translate the group keys for display
   const miscOrder = ['Jewelry','Runes','Gems','Charms','Orbs','Special Items','Quest Items','Miscellaneous'];
   const sortedMisc = {};
-  for (const k of miscOrder) { if (miscGroups[k]) sortedMisc[k] = miscGroups[k]; }
-  for (const k of Object.keys(miscGroups).sort()) { if (!sortedMisc[k]) sortedMisc[k] = miscGroups[k]; }
-  if (Object.keys(sortedMisc).length) renderCategory('Misc / Consumables', 'var(--d2-text-dim)', sortedMisc);
+  for (const k of miscOrder) { if (miscGroups[k]) sortedMisc[labelMisc(k)] = miscGroups[k]; }
+  for (const k of Object.keys(miscGroups).sort()) { if (!sortedMisc[labelMisc(k)]) sortedMisc[labelMisc(k)] = miscGroups[k]; }
+  if (Object.keys(sortedMisc).length) renderCategory(L('ui_insert_cat_misc','Misc / Consumables'), 'var(--d2-text-dim)', sortedMisc);
 
   // If searching and no results
   if (!html) {
-    list.innerHTML = `<div style="padding:8px 10px;font-size:12px;color:var(--d2-text-dim)">No items found</div>`;
+    list.innerHTML = `<div style="padding:8px 10px;font-size:12px;color:var(--d2-text-dim)">${esc(L('ui_insert_no_items','No items found'))}</div>`;
     list._entries = [];
     return;
   }
@@ -8494,7 +8992,7 @@ window.confirmInsertItem = function() {
 
     // Check bounds
     if (ix + w > gridW || iy + h > gridH) {
-      showPopup(`This item (${w}×${h}) does not fit at position (${ix},${iy}). Try another location.`);
+      showPopup(Lfmt('ui_err_item_wont_fit_pos','This item ({w}×{h}) does not fit at position ({x},{y}). Try another location.',{w,h,x:ix,y:iy}));
       return;
     }
 
@@ -8512,7 +9010,7 @@ window.confirmInsertItem = function() {
       if (occupied.has(`${ix+dx},${iy+dy}`)) blocked = true;
 
     if (blocked) {
-      showPopup(`This item (${w}×${h}) does not fit here — it would overlap with another item. Try a different position.`);
+      showPopup(Lfmt('ui_err_item_overlap','This item ({w}×{h}) does not fit here — it would overlap with another item. Try a different position.',{w,h}));
       return;
     }
   }
@@ -8520,13 +9018,13 @@ window.confirmInsertItem = function() {
   // ── Equip slot validation ──
   if (ctx.mode === 'equip') {
     if (!canEquipInSlot(typeCode, ctx.slotId)) {
-      showPopup(`This item cannot be equipped in the ${ctx.label} slot.\nPut it in your inventory instead!`);
+      showPopup(Lfmt('ui_err_cannot_equip_in_slot','This item cannot be equipped in the {slot} slot.\nPut it in your inventory instead!',{slot:ctx.label}));
       return;
     }
     // Check level/stat requirements
     const reqIssues = checkItemRequirements(typeCode, qual, entry.uniqueId);
     if (reqIssues) {
-      showPopup(`That item does not belong on this character!\n\n${reqIssues}\n\nPut it in your inventory instead!`);
+      showPopup(Lfmt('ui_err_wrong_class_detailed','That item does not belong on this character!\n\n{issues}\n\nPut it in your inventory instead!',{issues:reqIssues}));
       return;
     }
   }
@@ -8603,7 +9101,7 @@ window.confirmInsertItem = function() {
   // Re-render current tab
   const active = document.querySelector('.tab.active');
   if (active) active.click();
-  setStatus(`Inserted: ${itemNameByCode[typeCode]||typeCode} — remember to Save .d2s`, 'modified');
+  setStatus(Lfmt('ui_status_inserted','Inserted: {item} — remember to Save .d2s',{item:itemNameByCode[typeCode]||typeCode}), 'modified');
 };
 
 // Runeword layout offsets — compact 2x3 bounding box
@@ -8620,11 +9118,11 @@ function insertRunewordRunes(entry, ctx) {
   const runes = entry.runes;
   const layout = RUNEWORD_LAYOUTS[runes.length];
   if (!layout) {
-    showPopup(`Can't insert ${entry.name} — unsupported rune count (${runes.length}).`);
+    showPopup(Lfmt('ui_err_runeword_unsupported',"Can't insert {name} — unsupported rune count ({count}).",{name:entry.name,count:runes.length}));
     return;
   }
   if (ctx.mode !== 'inventory' && ctx.mode !== 'stash') {
-    showPopup('Runewords can only be inserted into inventory or stash.');
+    showPopup(L('ui_err_runeword_inv_only','Runewords can only be inserted into inventory or stash.'));
     return;
   }
 
@@ -8637,7 +9135,7 @@ function insertRunewordRunes(entry, ctx) {
   let maxDx = 0, maxDy = 0;
   for (const p of layout) { if (p.dx > maxDx) maxDx = p.dx; if (p.dy > maxDy) maxDy = p.dy; }
   if (ctx.x + maxDx + 1 > gridW || ctx.y + maxDy + 1 > gridH) {
-    showPopup(`${entry.name} needs a ${maxDx+1}x${maxDy+1} area. Won't fit at (${ctx.x},${ctx.y}).`);
+    showPopup(Lfmt('ui_err_runeword_wont_fit',"{name} needs a {w}x{h} area. Won't fit at ({x},{y}).",{name:entry.name,w:maxDx+1,h:maxDy+1,x:ctx.x,y:ctx.y}));
     return;
   }
 
@@ -8652,7 +9150,7 @@ function insertRunewordRunes(entry, ctx) {
   }
   for (const p of layout) {
     if (occupied.has(`${ctx.x + p.dx},${ctx.y + p.dy}`)) {
-      showPopup(`${entry.name}: cell (${ctx.x + p.dx},${ctx.y + p.dy}) is occupied.`);
+      showPopup(Lfmt('ui_err_cell_occupied','{name}: cell ({x},{y}) is occupied.',{name:entry.name,x:ctx.x+p.dx,y:ctx.y+p.dy}));
       return;
     }
   }
@@ -8679,7 +9177,7 @@ function insertRunewordRunes(entry, ctx) {
 
   const active = document.querySelector('.tab.active');
   if (active) active.click();
-  setStatus(`Inserted ${runes.length} runes for ${entry.name} — remember to Save .d2s`, 'modified');
+  setStatus(Lfmt('ui_status_inserted_runes','Inserted {count} runes for {name} — remember to Save .d2s',{count:runes.length,name:entry.name}), 'modified');
 }
 
 // markDirty() defined earlier at ~line 4025 — handles status bar + save button
@@ -8763,24 +9261,26 @@ let sharedStashParsed = null; // { gold, tabs:[{jmOff, count, items:[]}] }
 let sharedStashOpenTab = -1;  // which tab is expanded (-1 = none)
 
 function renderSharedStash(c) {
+  // Intro line uses a {d2i} token that gets replaced with `<code>.d2i</code>` after escaping the rest.
+  const introRaw = L('ui_ss_intro','Load a {d2i} shared stash file to view and edit its contents. This is separate from the character save — it stores items across all characters.');
+  const introHtml = esc(introRaw).replace('{d2i}', '<code>.d2i</code>');
   c.innerHTML = `
     <div style="padding:20px;max-width:700px;margin:0 auto">
-      <h2 style="color:var(--d2-gold);font-family:'Cinzel',serif;margin:0 0 16px">Shared Stash</h2>
+      <h2 style="color:var(--d2-gold);font-family:'Cinzel',serif;margin:0 0 16px">${esc(L('ui_tab_shared_stash','Shared Stash'))}</h2>
       <div style="color:var(--d2-text-dim);margin-bottom:16px">
-        Load a <code>.d2i</code> shared stash file to view and edit its contents.
-        This is separate from the character save — it stores items across all characters.
+        ${introHtml}
       </div>
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
         <label class="btn btn-primary" style="cursor:pointer;margin:0">
-          Browse .d2i
+          ${esc(L('ui_ss_browse_btn','Browse .d2i'))}
           <input type="file" accept=".d2i" id="sharedStashFileInput" style="display:none"
             onchange="loadSharedStash(this.files[0])">
         </label>
         <span id="sharedStashFileName" style="color:var(--d2-text-dim);font-size:12px">
-          ${sharedStashData ? esc(sharedStashName) + ' (' + sharedStashData.length + ' bytes)' : 'No file loaded'}
+          ${sharedStashData ? esc(sharedStashName) + ' (' + sharedStashData.length + ' bytes)' : esc(L('ui_ss_no_file','No file loaded'))}
         </span>
       </div>
-      <div id="sharedStashContent">${sharedStashData ? '' : '<div style="color:var(--d2-text-dim);font-style:italic">No shared stash loaded.</div>'}</div>
+      <div id="sharedStashContent">${sharedStashData ? '' : `<div style="color:var(--d2-text-dim);font-style:italic">${esc(L('ui_ss_empty','No shared stash loaded.'))}</div>`}</div>
     </div>`;
   if (sharedStashData) renderSharedStashTabs();
 }
@@ -8791,7 +9291,7 @@ window.loadSharedStash = function(file) {
   reader.onload = function(e) {
     const buf = new Uint8Array(e.target.result);
     if (buf.length < 0x44 || buf[0] !== 0x55 || buf[1] !== 0xAA || buf[2] !== 0x55 || buf[3] !== 0xAA) {
-      showPopup('Invalid .d2i file — expected 0x55AA55AA signature.');
+      showPopup(L('ui_invalid_d2i','Invalid .d2i file — expected 0x55AA55AA signature.'));
       return;
     }
     sharedStashData = buf;
@@ -8904,7 +9404,7 @@ function renderSharedStashTabs() {
 
   const stashW = 16, stashH = 13, cellPx = 29;
 
-  let html = `<div style="color:var(--d2-gold);margin-bottom:12px">Gold: ${sharedStashParsed.gold.toLocaleString()}</div>`;
+  let html = `<div style="color:var(--d2-gold);margin-bottom:12px">${esc(L('ui_ss_gold_label','Gold:'))} ${sharedStashParsed.gold.toLocaleString()}</div>`;
 
   for (let t = 0; t < sharedStashParsed.tabs.length; t++) {
     const tab = sharedStashParsed.tabs[t];
@@ -8913,8 +9413,8 @@ function renderSharedStashTabs() {
 
     html += `<div style="background:var(--d2-surface2);border:1px solid ${isOpen ? 'var(--d2-gold-dim)' : 'var(--d2-border)'};border-radius:4px;margin-bottom:8px;overflow:hidden">`;
     html += `<div onclick="toggleSharedStashTab(${t})" style="padding:10px 14px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none">`;
-    html += `<div><span style="color:var(--d2-gold);font-family:'Cinzel',serif;font-size:13px">${arrow} Tab ${t + 1}</span></div>`;
-    html += `<div style="color:var(--d2-text-dim);font-size:11px">${tab.count} item(s)</div>`;
+    html += `<div><span style="color:var(--d2-gold);font-family:'Cinzel',serif;font-size:13px">${arrow} ${esc(L('ui_ss_tab_prefix','Tab'))} ${t + 1}</span></div>`;
+    html += `<div style="color:var(--d2-text-dim);font-size:11px">${tab.count} ${esc(L('ui_ss_items_suffix','item(s)'))}</div>`;
     html += `</div>`;
 
     if (isOpen) {
@@ -9002,37 +9502,46 @@ let grailItems = [];       // flat array of all items in the grail d2i
 let grailFound = new Set();       // set of "u_<uniqueId>" or "s_<setId>" keys found in grail
 let grailFoundItems = new Map();  // key -> item object (for stash grid display)
 
+// `name` is the stable internal identifier (used as Map key for grouping); never localize it.
+// `key` is the localization string-table key; rendering uses `grailCatLabel(name)` to look it up.
 const GRAIL_CATEGORIES = [
-  { name: 'Unique Helms', types: ['helm','circ'], qual: 7 },
-  { name: 'Unique Jewelry', types: ['ring','amul','jewl'], qual: 7 },
-  { name: 'Unique Body Armor', types: ['tors'], qual: 7 },
-  { name: 'Unique Gloves', types: ['glov'], qual: 7 },
-  { name: 'Unique Boots', types: ['boot'], qual: 7 },
-  { name: 'Unique Belts', types: ['belt'], qual: 7 },
-  { name: 'Unique Shields', types: ['shie'], qual: 7 },
-  { name: 'Unique Axes', types: ['axe'], qual: 7 },
-  { name: 'Unique Swords', types: ['swor'], qual: 7 },
-  { name: 'Unique Daggers', types: ['knif'], qual: 7 },
-  { name: 'Unique Maces', types: ['club','mace','hamm'], qual: 7 },
-  { name: 'Unique Scepters', types: ['scep'], qual: 7 },
-  { name: 'Unique Staves', types: ['staf'], qual: 7 },
-  { name: 'Unique Wands', types: ['wand'], qual: 7 },
-  { name: 'Unique Polearms', types: ['pole'], qual: 7 },
-  { name: 'Unique Spears', types: ['spea'], qual: 7 },
-  { name: 'Unique Javelins', types: ['jave'], qual: 7 },
-  { name: 'Unique Bows', types: ['bow'], qual: 7 },
-  { name: 'Unique Crossbows', types: ['xbow'], qual: 7 },
-  { name: 'Unique Throwing', types: ['tkni','taxe','tpot'], qual: 7 },
-  { name: 'Barbarian Helms', types: ['phlm'], qual: 7, group: 'class' },
-  { name: 'Druid Pelts', types: ['pelt'], qual: 7, group: 'class' },
-  { name: 'Assassin Claws', types: ['h2h','h2h2'], qual: 7, group: 'class' },
-  { name: 'Sorceress Orbs', types: ['orb'], qual: 7, group: 'class' },
-  { name: 'Amazon Bows & Javelins', types: ['abow','ajav','aspe'], qual: 7, group: 'class' },
-  { name: 'Paladin Shields', types: ['ashd'], qual: 7, group: 'class' },
-  { name: 'Necromancer Shields', types: ['head'], qual: 7, group: 'class' },
-  { name: 'Warlock Shields', types: ['grim'], qual: 7, group: 'class' },
-  { name: 'Unique Other', types: ['__other__'], qual: 7 },
+  { name: 'Unique Helms',       key: 'ui_grail_cat_unique_helms',       types: ['helm','circ'], qual: 7 },
+  { name: 'Unique Jewelry',     key: 'ui_grail_cat_unique_jewelry',     types: ['ring','amul','jewl'], qual: 7 },
+  { name: 'Unique Body Armor',  key: 'ui_grail_cat_unique_body_armor',  types: ['tors'], qual: 7 },
+  { name: 'Unique Gloves',      key: 'ui_grail_cat_unique_gloves',      types: ['glov'], qual: 7 },
+  { name: 'Unique Boots',       key: 'ui_grail_cat_unique_boots',       types: ['boot'], qual: 7 },
+  { name: 'Unique Belts',       key: 'ui_grail_cat_unique_belts',       types: ['belt'], qual: 7 },
+  { name: 'Unique Shields',     key: 'ui_grail_cat_unique_shields',     types: ['shie'], qual: 7 },
+  { name: 'Unique Axes',        key: 'ui_grail_cat_unique_axes',        types: ['axe'], qual: 7 },
+  { name: 'Unique Swords',      key: 'ui_grail_cat_unique_swords',      types: ['swor'], qual: 7 },
+  { name: 'Unique Daggers',     key: 'ui_grail_cat_unique_daggers',     types: ['knif'], qual: 7 },
+  { name: 'Unique Maces',       key: 'ui_grail_cat_unique_maces',       types: ['club','mace','hamm'], qual: 7 },
+  { name: 'Unique Scepters',    key: 'ui_grail_cat_unique_scepters',    types: ['scep'], qual: 7 },
+  { name: 'Unique Staves',      key: 'ui_grail_cat_unique_staves',      types: ['staf'], qual: 7 },
+  { name: 'Unique Wands',       key: 'ui_grail_cat_unique_wands',       types: ['wand'], qual: 7 },
+  { name: 'Unique Polearms',    key: 'ui_grail_cat_unique_polearms',    types: ['pole'], qual: 7 },
+  { name: 'Unique Spears',      key: 'ui_grail_cat_unique_spears',      types: ['spea'], qual: 7 },
+  { name: 'Unique Javelins',    key: 'ui_grail_cat_unique_javelins',    types: ['jave'], qual: 7 },
+  { name: 'Unique Bows',        key: 'ui_grail_cat_unique_bows',        types: ['bow'], qual: 7 },
+  { name: 'Unique Crossbows',   key: 'ui_grail_cat_unique_crossbows',   types: ['xbow'], qual: 7 },
+  { name: 'Unique Throwing',    key: 'ui_grail_cat_unique_throwing',    types: ['tkni','taxe','tpot'], qual: 7 },
+  { name: 'Barbarian Helms',    key: 'ui_grail_cat_barb_helms',         types: ['phlm'], qual: 7, group: 'class' },
+  { name: 'Druid Pelts',        key: 'ui_grail_cat_druid_pelts',        types: ['pelt'], qual: 7, group: 'class' },
+  { name: 'Assassin Claws',     key: 'ui_grail_cat_assassin_claws',     types: ['h2h','h2h2'], qual: 7, group: 'class' },
+  { name: 'Sorceress Orbs',     key: 'ui_grail_cat_sorc_orbs',          types: ['orb'], qual: 7, group: 'class' },
+  { name: 'Amazon Bows & Javelins', key: 'ui_grail_cat_amazon_bows',    types: ['abow','ajav','aspe'], qual: 7, group: 'class' },
+  { name: 'Paladin Shields',    key: 'ui_grail_cat_paladin_shields',    types: ['ashd'], qual: 7, group: 'class' },
+  { name: 'Necromancer Shields',key: 'ui_grail_cat_necro_shields',      types: ['head'], qual: 7, group: 'class' },
+  { name: 'Warlock Shields',    key: 'ui_grail_cat_warlock_shields',    types: ['grim'], qual: 7, group: 'class' },
+  { name: 'Unique Other',       key: 'ui_grail_cat_unique_other',       types: ['__other__'], qual: 7 },
 ];
+
+// Look up localized label for a grail category using its stable English name as the index.
+const _grailCatKeyByName = Object.fromEntries(GRAIL_CATEGORIES.map(c => [c.name, c.key]));
+function grailCatLabel(name) {
+  const key = _grailCatKeyByName[name];
+  return key ? L(key, name) : name;
+}
 
 function getGrailCategory(item) {
   const typeCode = ITEM_TYPE_BY_CODE[item.code] || '';
@@ -9297,7 +9806,7 @@ window.loadGrailFile = function(file) {
   reader.onload = function(e) {
     const buf = new Uint8Array(e.target.result);
     if (buf.length < 0x44 || buf[0] !== 0x55 || buf[1] !== 0xAA || buf[2] !== 0x55 || buf[3] !== 0xAA) {
-      showPopup('Invalid .d2i file — expected 0x55AA55AA signature.');
+      showPopup(L('ui_invalid_d2i','Invalid .d2i file — expected 0x55AA55AA signature.'));
       return;
     }
     grailD2i = buf;
@@ -9309,7 +9818,7 @@ window.loadGrailFile = function(file) {
 };
 
 window.saveGrailFile = function() {
-  if (!grailD2i) { showPopup('No grail data to save.'); return; }
+  if (!grailD2i) { showPopup(L('ui_grail_no_data','No grail data to save.')); return; }
   const blob = new Blob([grailD2i], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -9351,7 +9860,7 @@ window.moveItemsToGrail = function() {
     }
   }
 
-  if (!eligible.length) { showPopup('No new unique or set items found in inventory, stash, or shared stash.'); return; }
+  if (!eligible.length) { showPopup(L('ui_grail_nothing_eligible','No new unique or set items found in inventory, stash, or shared stash.')); return; }
 
   // Group by source for display
   const charItems = eligible.filter(e => e.source === 'char');
@@ -9375,12 +9884,12 @@ window.moveItemsToGrail = function() {
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999';
   modal.innerHTML = `
     <div style="background:var(--d2-surface);border:2px solid var(--d2-gold-dim);border-radius:4px;padding:20px;max-width:450px;max-height:80vh;overflow-y:auto">
-      <h3 style="color:var(--d2-gold);font-family:'Cinzel',serif;margin:0 0 12px">Move Items to Grail</h3>
-      <div style="color:var(--d2-text-dim);margin-bottom:12px">Found ${eligible.length} eligible item(s):</div>
+      <h3 style="color:var(--d2-gold);font-family:'Cinzel',serif;margin:0 0 12px">${esc(L('ui_grail_move_items_title','Move Items to Grail'))}</h3>
+      <div style="color:var(--d2-text-dim);margin-bottom:12px">${esc(L('ui_grail_eligible_found','Found {n} eligible item(s):').replace('{n}', eligible.length))}</div>
       <div style="margin-bottom:16px;font-size:13px">${listHtml}</div>
       <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
-        <button class="btn btn-primary" onclick="executeGrailTransfer(false);this.closest('div[style*=fixed]').remove()">Copy to Grail</button>
-        <button class="btn" onclick="this.closest('div[style*=fixed]').remove()">Cancel</button>
+        <button class="btn btn-primary" onclick="executeGrailTransfer(false);this.closest('div[style*=fixed]').remove()">${esc(L('ui_grail_modal_copy_btn','Copy to Grail'))}</button>
+        <button class="btn" onclick="this.closest('div[style*=fixed]').remove()">${esc(L('ui_cancel','Cancel'))}</button>
       </div>
     </div>`;
   document.body.appendChild(modal);
@@ -9467,7 +9976,10 @@ window.executeGrailTransfer = function(removeOriginals) {
 
   window._grailTransferList = null;
   renderGrail(document.getElementById('tabContent'));
-  showPopup(`${eligible.length} item(s) ${removeOriginals ? 'moved' : 'copied'} to grail.`);
+  showPopup(
+    (removeOriginals ? L('ui_grail_items_moved','{n} item(s) moved to grail.') : L('ui_grail_items_copied','{n} item(s) copied to grail.'))
+      .replace('{n}', eligible.length)
+  );
 };
 
 // Add isGrail support to ensureItemProps
@@ -9494,21 +10006,21 @@ function renderGrail(c) {
   const barWidth = totalItems > 0 ? (totalFound / totalItems * 100) : 0;
 
   let html = `<div style="padding:20px;max-width:800px;margin:0 auto">
-    <h2 style="color:var(--d2-gold);font-family:'Cinzel',serif;margin:0 0 16px">Holy Grail</h2>
+    <h2 style="color:var(--d2-gold);font-family:'Cinzel',serif;margin:0 0 16px">${esc(L('ui_grail_heading','Holy Grail'))}</h2>
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap">
       <label class="btn btn-primary" style="cursor:pointer;margin:0">
-        Load Grail .d2i
+        ${esc(L('ui_grail_load_btn','Load Grail .d2i'))}
         <input type="file" accept=".d2i" style="display:none" onchange="loadGrailFile(this.files[0])">
       </label>
-      <button class="btn btn-primary" onclick="moveItemsToGrail()">Copy Items to Grail</button>
-      <span style="color:var(--d2-text-dim);font-size:12px">${grailD2i ? esc(grailFileName) : 'No grail loaded'}</span>
+      <button class="btn btn-primary" onclick="moveItemsToGrail()">${esc(L('ui_grail_copy_items_btn','Copy Items to Grail'))}</button>
+      <span style="color:var(--d2-text-dim);font-size:12px">${grailD2i ? esc(grailFileName) : esc(L('ui_grail_no_loaded','No grail loaded'))}</span>
     </div>
     <div style="margin-bottom:16px">
-      <button class="btn" onclick="saveGrailFile()" ${grailD2i ? '' : 'disabled'}>Save Grail .d2i</button>
+      <button class="btn" onclick="saveGrailFile()" ${grailD2i ? '' : 'disabled'}>${esc(L('ui_grail_save_btn','Save Grail .d2i'))}</button>
     </div>
 
     <div style="margin-bottom:20px">
-      <div style="color:var(--d2-gold);font-size:14px;margin-bottom:4px">Progress: ${totalFound} / ${totalItems} (${pct}%)</div>
+      <div style="color:var(--d2-gold);font-size:14px;margin-bottom:4px">${esc(L('ui_grail_progress_label','Progress:'))} ${totalFound} / ${totalItems} (${pct}%)</div>
       <div style="background:var(--d2-surface2);border:1px solid var(--d2-border);border-radius:3px;height:16px;overflow:hidden">
         <div style="background:linear-gradient(90deg,#8b6914,#d4aa30);height:100%;width:${barWidth}%;transition:width 0.3s"></div>
       </div>
@@ -9524,7 +10036,7 @@ function renderGrail(c) {
   let uFound = 0, uTotal = 0;
   for (const [, list] of checklist) { uFound += list.filter(i => i.found).length; uTotal += list.length; }
   html += `<div style="margin-bottom:12px">
-    <div style="color:var(--d2-gold);font-family:'Cinzel',serif;font-size:15px;margin-bottom:8px;border-bottom:1px solid var(--d2-gold-dim);padding-bottom:4px">Unique Items (${uFound}/${uTotal})</div>`;
+    <div style="color:var(--d2-gold);font-family:'Cinzel',serif;font-size:15px;margin-bottom:8px;border-bottom:1px solid var(--d2-gold-dim);padding-bottom:4px">${esc(L('ui_grail_section_unique','Unique Items'))} (${uFound}/${uTotal})</div>`;
 
   // Regular unique categories (not class, not other)
   for (const [catName, items] of regularCats) {
@@ -9542,7 +10054,7 @@ function renderGrail(c) {
     html += `<div style="margin-bottom:6px;border:1px solid var(--d2-border);border-radius:4px;overflow:hidden">
       <div onclick="toggleGrailGrid('u_class_group')"
         style="padding:8px 14px;cursor:pointer;background:var(--d2-surface2);display:flex;align-items:center;justify-content:space-between;user-select:none">
-        <span style="color:var(--d2-gold);font-family:'Cinzel',serif;font-size:12px">${classArrow} Unique Class Items</span>
+        <span style="color:var(--d2-gold);font-family:'Cinzel',serif;font-size:12px">${classArrow} ${esc(L('ui_grail_section_class_items','Unique Class Items'))}</span>
         <span style="color:var(--d2-text-dim);font-size:11px">${cFound}/${cTotal}</span>
       </div>`;
     if (classOpen) {
@@ -9569,7 +10081,7 @@ function renderGrail(c) {
     let sFound = 0, sTotal = 0;
     for (const [, items] of setGroups) { sFound += items.filter(i => i.found).length; sTotal += items.length; }
     html += `<div style="margin-bottom:12px">
-      <div style="color:#00c800;font-family:'Cinzel',serif;font-size:15px;margin-bottom:8px;border-bottom:1px solid #006000;padding-bottom:4px">Set Items (${sFound}/${sTotal})</div>`;
+      <div style="color:#00c800;font-family:'Cinzel',serif;font-size:15px;margin-bottom:8px;border-bottom:1px solid #006000;padding-bottom:4px">${esc(L('ui_grail_section_set','Set Items'))} (${sFound}/${sTotal})</div>`;
     for (const [groupName, items] of [...setGroups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
       const gFound = items.filter(i => i.found).length;
       html += renderGrailSection(groupName, items, gFound, '#00c800', 's');
@@ -9605,10 +10117,10 @@ window.showGrailItemDetail = function(byteOffsets, triggerEl) {
   html += `<hr class="tt-divider"><div style="text-align:center;padding:4px;display:flex;gap:6px;justify-content:center">`;
   if (parsedChar && parsedChar.items) {
     html += `<button class="btn" style="font-size:11px;padding:4px 12px;background:#0e2a0e;border-color:var(--d2-green);color:#fff"
-      onclick="event.stopPropagation();startGrailCopyToInventory(${byteOffsets[0]})">Copy to Inv</button>`;
+      onclick="event.stopPropagation();startGrailCopyToInventory(${byteOffsets[0]})">${esc(L('ui_btn_copy_to_inv','Copy to Inv'))}</button>`;
   }
   html += `<button class="btn" style="font-size:11px;padding:4px 12px;background:#8b2020;color:#fff"
-    onclick="event.stopPropagation();removeGrailItem(${byteOffsets[0]})">Remove from Grail</button>`;
+    onclick="event.stopPropagation();removeGrailItem(${byteOffsets[0]})">${esc(L('ui_btn_remove_from_grail','Remove from Grail'))}</button>`;
   html += `</div>`;
   content.innerHTML = html;
   positionTooltip(tt, triggerEl || null);
@@ -9621,7 +10133,7 @@ window.removeGrailItem = function(byteOffset) {
   if (!item) return;
   const { name } = itemDisplayName(item);
 
-  showConfirm(`Are you sure you want to remove this item?\n\n${name}`, function() {
+  showConfirm(`${L('ui_confirm_remove_grail_prompt','Are you sure you want to remove this item?')}\n\n${name}`, function() {
     const grailAllItems = grailParsed.tabs.flatMap(t => t.items);
     const len = getItemBinaryLength(grailD2i, byteOffset, grailAllItems);
 
@@ -9650,8 +10162,8 @@ window.removeGrailItem = function(byteOffset) {
 
     closeTooltip(true);
     renderGrail(document.getElementById('tabContent'));
-    showPopup(`${name} removed from grail.`);
-  }, 'Yes');
+    showPopup(L('ui_grail_removed','{name} removed from grail.').replace('{name}', name));
+  }, L('ui_btn_yes','Yes'));
 };
 
 let _grailCopyItem = null; // item being copied from grail to inventory
@@ -9783,7 +10295,7 @@ function placeGrailItemAt(x, y) {
   // Clean up placement mode
   cancelGrailPlacement();
   renderTab();
-  showPopup(`${name} placed in inventory.`);
+  showPopup(L('ui_grail_placed','{name} placed in inventory.').replace('{name}', name));
 }
 
 window.cancelGrailPlacement = function() {
@@ -9801,16 +10313,18 @@ function renderGrailSection(catName, items, found, accentColor, prefix) {
 
   let html = `<div style="margin-bottom:6px;border:1px solid var(--d2-border);border-radius:4px;overflow:hidden">`;
 
-  // Header row
+  // Header row — catName is the stable English internal ID; grailCatLabel looks up the localized display string.
+  // (Set bonus groupings that arrive here keep their own display name since they're not registered in GRAIL_CATEGORIES.)
+  const displayName = grailCatLabel(catName);
   html += `<div style="padding:8px 14px;background:var(--d2-surface2);display:flex;align-items:center;justify-content:space-between;user-select:none">
     <div style="cursor:pointer;flex:1" onclick="toggleGrailGrid('${sectionId}_list')">
-      <span style="color:${accentColor};font-family:'Cinzel',serif;font-size:12px">${arrow} ${esc(catName)}</span>
+      <span style="color:${accentColor};font-family:'Cinzel',serif;font-size:12px">${arrow} ${esc(displayName)}</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px">
       <span style="color:var(--d2-text-dim);font-size:11px">${found}/${items.length}</span>
       <button onclick="event.stopPropagation();toggleGrailGrid('${sectionId}_grid')"
-        style="background:${isGridOpen ? 'var(--d2-gold-dim)' : 'var(--d2-surface)'};border:1px solid var(--d2-border);border-radius:3px;padding:2px 6px;cursor:pointer;font-size:10px;color:var(--d2-text)" title="Toggle stash view">
-        ${isGridOpen ? '\u25A3' : '\u25A1'} Stash
+        style="background:${isGridOpen ? 'var(--d2-gold-dim)' : 'var(--d2-surface)'};border:1px solid var(--d2-border);border-radius:3px;padding:2px 6px;cursor:pointer;font-size:10px;color:var(--d2-text)" title="${esc(L('ui_grail_stash_toggle_title','Toggle stash view'))}">
+        ${isGridOpen ? '\u25A3' : '\u25A1'} ${esc(L('ui_grail_stash_toggle','Stash'))}
       </button>
     </div>
   </div>`;
@@ -9835,7 +10349,7 @@ function renderGrailSection(catName, items, found, accentColor, prefix) {
       html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <button onclick="grailGridPageNav('${sectionId}', -1)" ${grid.currentPage <= 0 ? 'disabled' : ''}
           style="background:var(--d2-surface);border:1px solid var(--d2-border);border-radius:3px;padding:2px 8px;cursor:pointer;color:var(--d2-text);font-size:14px">\u25C0</button>
-        <span style="color:var(--d2-text-dim);font-size:11px">Page ${grid.currentPage + 1} / ${grid.totalPages}</span>
+        <span style="color:var(--d2-text-dim);font-size:11px">${esc(L('ui_grail_page_label','Page'))} ${grid.currentPage + 1} / ${grid.totalPages}</span>
         <button onclick="grailGridPageNav('${sectionId}', 1)" ${grid.currentPage >= grid.totalPages - 1 ? 'disabled' : ''}
           style="background:var(--d2-surface);border:1px solid var(--d2-border);border-radius:3px;padding:2px 8px;cursor:pointer;color:var(--d2-text);font-size:14px">\u25B6</button>
       </div>`;
@@ -9990,7 +10504,7 @@ window.setQuestDiff = function(d) {
 window.toggleQuest = function(diff, index, complete) {
   // Prevent resetting quests that were completed when the file was loaded
   if (!complete && _questsCompletedOnLoad[diff]?.[index]) {
-    showPopup('This quest was already completed when the save was loaded. It cannot be reset.');
+    showPopup(L('ui_err_quest_already_done','This quest was already completed when the save was loaded. It cannot be reset.'));
     renderTab();
     return;
   }
@@ -10224,7 +10738,7 @@ function renderMercenary(c) {
       return `<div class="pd-slot has-item ${borderCls}" style="${style}" onclick="showItemDetail(${item.byteOffset},this);pinTooltip()" title="${esc(label)}: ${esc(name)}">
         <div class="pd-label">${label}</div>
         <div class="pd-name ${cls}">${esc(name)}</div>
-        ${q&&q.label!=='Normal'?`<div class="pd-qual ${cls}">${q.label}</div>`:''}
+        ${q&&q.code!=='normal'?`<div class="pd-qual ${cls}">${q.label}</div>`:''}
       </div>`;
     }
     return `<div class="pd-slot empty" style="${style}"><div class="pd-label">${label}</div></div>`;
@@ -10240,22 +10754,22 @@ function renderMercenary(c) {
     <div class="paperdoll-wrap">
       <div style="display:grid;grid-template-columns:${mGridCols};grid-template-rows:${mGridRows};justify-items:center;align-items:end">
         <!-- Row 1: Helm centered, Amulet to its right -->
-        <div style="grid-column:5;grid-row:1;justify-self:center">${mercSlot(1, 'Helm', W2, H2)}</div>
-        <div style="grid-column:7;grid-row:1;align-self:end;justify-self:center">${mercSlot(2, 'Amulet', W1, H1)}</div>
+        <div style="grid-column:5;grid-row:1;justify-self:center">${mercSlot(1, L('ui_slot_helm','Helm'), W2, H2)}</div>
+        <div style="grid-column:7;grid-row:1;align-self:end;justify-self:center">${mercSlot(2, L('amu','Amulet'), W1, H1)}</div>
 
         <!-- Weapons spanning rows 1-3, at edges -->
-        <div style="grid-column:1;grid-row:1/4;align-self:start">${mercSlot(4, 'R. Hand', W2, H4)}</div>
-        <div style="grid-column:9;grid-row:1/4;align-self:start">${mercSlot(5, 'L. Hand', W2, H4)}</div>
+        <div style="grid-column:1;grid-row:1/4;align-self:start">${mercSlot(4, L('ui_slot_r_hand','R. Hand'), W2, H4)}</div>
+        <div style="grid-column:9;grid-row:1/4;align-self:start">${mercSlot(5, L('ui_slot_l_hand','L. Hand'), W2, H4)}</div>
 
         <!-- Row 3: Torso centered -->
-        <div style="grid-column:5;grid-row:3;justify-self:center">${mercSlot(3, 'Torso', W2, H3)}</div>
+        <div style="grid-column:5;grid-row:3;justify-self:center">${mercSlot(3, L('ui_slot_torso','Torso'), W2, H3)}</div>
 
         <!-- Row 5: Bottom — Gloves, Rings, Belt, Boots -->
-        <div style="grid-column:1;grid-row:5;justify-self:center">${mercSlot(10, 'Gloves', W2, H2)}</div>
-        <div style="grid-column:9;grid-row:5;justify-self:center">${mercSlot(9, 'Boots', W2, H2)}</div>
-        <div style="grid-column:3;grid-row:5;align-self:end;justify-self:center">${mercSlot(6, 'R. Ring', W1, H1)}</div>
-        <div style="grid-column:5;grid-row:5;align-self:end;justify-self:center">${mercSlot(8, 'Belt', W2, H1)}</div>
-        <div style="grid-column:7;grid-row:5;align-self:end;justify-self:center">${mercSlot(7, 'L. Ring', W1, H1)}</div>
+        <div style="grid-column:1;grid-row:5;justify-self:center">${mercSlot(10, L('glove','Gloves'), W2, H2)}</div>
+        <div style="grid-column:9;grid-row:5;justify-self:center">${mercSlot(9, L('boots','Boots'), W2, H2)}</div>
+        <div style="grid-column:3;grid-row:5;align-self:end;justify-self:center">${mercSlot(6, L('ui_slot_r_ring','R. Ring'), W1, H1)}</div>
+        <div style="grid-column:5;grid-row:5;align-self:end;justify-self:center">${mercSlot(8, L('StrHelp21','Belt'), W2, H1)}</div>
+        <div style="grid-column:7;grid-row:5;align-self:end;justify-self:center">${mercSlot(7, L('ui_slot_l_ring','L. Ring'), W1, H1)}</div>
       </div>
     </div>`;
 
@@ -10289,7 +10803,7 @@ function renderMercenary(c) {
       </div>`;
     }
   }
-  if (!skillsHtml) skillsHtml = '<p class="note">No skills data.</p>';
+  if (!skillsHtml) skillsHtml = `<p class="note">${esc(L('ui_no_skills_data','No skills data.'))}</p>`;
 
   c.innerHTML = `
     ${h2(L('ui_tab_mercenary','Mercenary'))}
@@ -10309,7 +10823,7 @@ function renderMercenary(c) {
     </div>
     <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
       <div>
-        ${h2(L('ui_equipped','Equipment'))}
+        ${h2(L('LootFilterEquipment','Equipment'))}
         ${paperdoll}
       </div>
       <div style="min-width:180px">
@@ -10401,36 +10915,36 @@ window.addEventListener('DOMContentLoaded', startBaseFileLoad);
   <div class="modal-box">
     <div class="modal-title" id="modalTitle">Insert Item</div>
     <div class="modal-row">
-      <div class="modal-label">Search</div>
+      <div class="modal-label" id="modalSearchLabel">Search</div>
       <input class="modal-input" id="modalSearch" placeholder="Search items by name, type, or code…" oninput="filterModalItems()" autocomplete="off">
     </div>
     <div id="modalItemList" style="max-height:420px;overflow-y:auto;border:1px solid var(--d2-border);border-radius:2px;margin-bottom:10px"></div>
     <div id="modalSelected" style="display:none">
       <hr class="tt-divider">
       <div class="modal-row">
-        <div class="modal-label">Selected: <span id="modalSelectedName" style="color:var(--d2-gold)"></span></div>
+        <div class="modal-label"><span id="modalSelectedLabel">Selected:</span> <span id="modalSelectedName" style="color:var(--d2-gold)"></span></div>
         <div class="modal-size-preview" id="modalSizePreview"></div>
       </div>
       <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px">
         <div class="modal-row" id="modalIlvlRow" style="margin:0;flex:0 0 auto">
-          <div class="modal-label">Item Level</div>
+          <div class="modal-label" id="modalIlvlLabel">Item Level</div>
           <input class="modal-input" id="modalIlvl" type="number" min="1" max="99" value="80" style="width:70px">
         </div>
         <div class="modal-row" id="modalSocketRow" style="margin:0;flex:0 0 auto;display:none">
-          <div class="modal-label">Sockets <span id="modalSocketMax" style="color:var(--d2-text-dim)"></span></div>
+          <div class="modal-label"><span id="modalSocketLabel">Sockets</span> <span id="modalSocketMax" style="color:var(--d2-text-dim)"></span></div>
           <input class="modal-input" id="modalSockets" type="number" min="0" max="6" value="0" style="width:70px">
         </div>
         <div class="modal-row" style="margin:0;flex:0 0 auto;display:flex;align-items:flex-end">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:4px 0">
             <input type="checkbox" id="modalMaxValues" style="accent-color:var(--d2-gold);cursor:pointer">
-            <span class="modal-label" style="margin:0;cursor:pointer">Max Values</span>
+            <span class="modal-label" id="modalMaxValuesLabel" style="margin:0;cursor:pointer">Max Values</span>
           </label>
         </div>
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-primary" id="modalInsertBtn" onclick="confirmInsertItem()" style="display:none">Insert Item</button>
-      <button class="btn btn-primary" onclick="closeItemModal()" style="opacity:0.7">Cancel</button>
+      <button class="btn btn-primary" id="modalCancelBtn" onclick="closeItemModal()" style="opacity:0.7">Cancel</button>
     </div>
   </div>
 </div>
