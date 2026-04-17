@@ -141,6 +141,7 @@
   .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-bottom: 20px; }
   .stat-card { background: var(--d2-surface2); border: 1px solid var(--d2-border); border-radius: 2px; padding: 10px 12px; }
   .stat-label { font-size: 11px; font-family: 'Cinzel', serif; letter-spacing: 1px; color: var(--d2-text-dim); margin-bottom: 6px; }
+  .stat-label-hint { font-size: 9px; font-family: 'Cinzel', serif; letter-spacing: 0.5px; color: var(--d2-text-dim); opacity: 0.7; margin-top: 1px; text-transform: none; }
   .stat-input { width: 100%; background: var(--d2-bg); border: 1px solid var(--d2-border-bright); border-radius: 1px; color: var(--d2-gold-bright); font-family: 'Crimson Text', serif; font-size: 16px; padding: 4px 8px; outline: none; transition: border-color 0.15s; }
   .stat-input:focus { border-color: var(--d2-gold); }
   .stat-input.modified { border-color: #c8a030; color: #f0cc6e; }
@@ -5626,8 +5627,14 @@ function renderChar(c) {
     </div>
     ${h2(L('ui_gold','Gold'))}
     <div class="stat-grid">
-      ${card('<span id="goldCapLabel">' + esc(Lfmt('ui_gold_inv_with_max','{label} (max {max})',{label:L('ui_gold_inventory','Gold in Inventory'),max:((parsedChar.header.level||1)*10000).toLocaleString()})) + '</span>', numIn(g('gold'),0,(parsedChar.header.level||1)*10000,'','id="stGold"'))}
-      ${card(Lfmt('ui_gold_inv_with_max','{label} (max {max})',{label:L('ui_gold_stash','Gold in Stash'),max:'33,554,432'}), numIn(g('goldbank'),0,33554432,'','id="stGoldbank"'))}
+      ${card(
+        `${esc(L('ui_gold_inventory','Gold in Inventory'))}<div class="stat-label-hint" id="goldCapHint">${esc(Lfmt('ui_gold_max_hint','(max {max})',{max:((parsedChar.header.level||1)*10000).toLocaleString()}))}</div>`,
+        numIn(g('gold'),0,(parsedChar.header.level||1)*10000,'','id="stGold"')
+      )}
+      ${card(
+        `${esc(L('ui_gold_stash','Gold in Stash'))}<div class="stat-label-hint">${esc(Lfmt('ui_gold_max_hint','(max {max})',{max:'33,554,432'}))}</div>`,
+        numIn(g('goldbank'),0,33554432,'','id="stGoldbank"')
+      )}
     </div>`;
 
   // Wire Vit→Life and Enr→Mana auto-calculation
@@ -5666,8 +5673,8 @@ function renderChar(c) {
       prevLevel = lvl;
       // Update gold cap
       const goldCap = lvl * 10000;
-      const goldLabel = document.getElementById('goldCapLabel');
-      if (goldLabel) goldLabel.textContent = Lfmt('ui_gold_inv_with_max','{label} (max {max})',{label:L('ui_gold_inventory','Gold in Inventory'),max:goldCap.toLocaleString()});
+      const goldLabel = document.getElementById('goldCapHint');
+      if (goldLabel) goldLabel.textContent = Lfmt('ui_gold_max_hint','(max {max})',{max:goldCap.toLocaleString()});
       const goldEl = document.getElementById('stGold');
       if (goldEl) {
         goldEl.max = goldCap;
@@ -5691,8 +5698,8 @@ function renderChar(c) {
         prevLevel = newLvl;
         // Update gold cap
         const goldCap = newLvl * 10000;
-        const goldLabel = document.getElementById('goldCapLabel');
-        if (goldLabel) goldLabel.textContent = Lfmt('ui_gold_inv_with_max','{label} (max {max})',{label:L('ui_gold_inventory','Gold in Inventory'),max:goldCap.toLocaleString()});
+        const goldLabel = document.getElementById('goldCapHint');
+        if (goldLabel) goldLabel.textContent = Lfmt('ui_gold_max_hint','(max {max})',{max:goldCap.toLocaleString()});
         const goldEl = document.getElementById('stGold');
         if (goldEl) {
           goldEl.max = goldCap;
@@ -9262,8 +9269,8 @@ let sharedStashOpenTab = -1;  // which tab is expanded (-1 = none)
 
 function renderSharedStash(c) {
   // Intro line uses a {d2i} token that gets replaced with `<code>.d2i</code>` after escaping the rest.
-  const introRaw = L('ui_ss_intro','Load a {d2i} shared stash file to view and edit its contents. This is separate from the character save — it stores items across all characters.');
-  const introHtml = esc(introRaw).replace('{d2i}', '<code>.d2i</code>');
+  const introRaw = L('ui_ss_intro','Load a {d2i} shared stash file to view and edit its contents. This is separate from the character save — it stores items across all characters.\nIf a shared stash is loaded, Grail import will search it too.');
+  const introHtml = esc(introRaw).replace('{d2i}', '<code>.d2i</code>').replace(/\n/g, '<br>');
   c.innerHTML = `
     <div style="padding:20px;max-width:700px;margin:0 auto">
       <h2 style="color:var(--d2-gold);font-family:'Cinzel',serif;margin:0 0 16px">${esc(L('ui_tab_shared_stash','Shared Stash'))}</h2>

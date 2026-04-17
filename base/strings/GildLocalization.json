@@ -1494,7 +1494,7 @@
     },
     {
         "Key": "ui_ss_intro",
-        "enUS": "Load a {d2i} shared stash file to view and edit its contents. This is separate from the character save — it stores items across all characters."
+        "enUS": "Load a {d2i} shared stash file to view and edit its contents. This is separate from the character save — it stores items across all characters.\nIf a shared stash is loaded, Grail import will search it too."
     },
     {
         "Key": "ui_ss_browse_btn",
@@ -1901,8 +1901,8 @@
         "enUS": "No skills data."
     },
     {
-        "Key": "ui_gold_inv_with_max",
-        "enUS": "{label} (max {max})"
+        "Key": "ui_gold_max_hint",
+        "enUS": "(max {max})"
     },
     {
         "Key": "ui_modal_insert_title",
