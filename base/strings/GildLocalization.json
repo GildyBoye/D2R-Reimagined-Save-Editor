@@ -1905,6 +1905,10 @@
         "enUS": "(max {max})"
     },
     {
+        "Key": "ui_per_level_rate",
+        "enUS": "({rate} per level)"
+    },
+    {
         "Key": "ui_modal_insert_title",
         "enUS": "Insert Item"
     },

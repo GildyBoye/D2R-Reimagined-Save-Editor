@@ -7658,18 +7658,22 @@ let WEAPON_SET=new Set();
 let STACK_SET=new Set('tbk ibk tsc isc aqv cqv hp1 hp2 hp3 hp4 hp5 mp1 mp2 mp3 mp4 mp5 rvs rvl vps yps wms key'.split(' '));
 let MISC_SET=new Set('box rin amu jew cm1 cm2 cm3 cm4 gld ear toa tch bks bkd qey qhr qbr hrt brz jaw eyz hrn tal flg fng qll sol scz spe'.split(' '));
 
-function _readPropList(buf, byteOff, startBit) {
+// Low-level prop-list reader — decodes stats starting at exactly `startBit`. Returns
+// `{mods, endBit, terminated}` where `terminated` is true only if we reached the 511 sentinel
+// (i.e. the decode was clean). Callers use the flag to detect misalignment and retry.
+function _readPropListAt(buf, byteOff, startBit) {
   const mods=[]; let bit=startBit;
   const rbL=(b,n)=>{let v=0;for(let i=0;i<n;i++){const p=byteOff*8+b+i;v|=((buf[p>>3]>>(p&7))&1)<<i;}return v;};
+  let terminated=false;
   let consecInvalid=0;
   for(let g=0;g<300;g++){
     if(bit+9>buf.length*8)break;
     const id=rbL(bit,9);bit+=9;
-    if(id===511)break;
+    if(id===511){ terminated=true; break; }
     if(id>=SAVE_BITS.length)break;
     const sb=SAVE_BITS[id];
     if(!sb){
-      // sb=0: stat ID exists but no value stored.
+      // sb=0: stat ID exists in itemstatcost but has no stored value.
       // Track consecutive such stats — too many means we've drifted past the real prop list.
       consecInvalid++;
       if(consecInvalid>=3)break;
@@ -7693,7 +7697,24 @@ function _readPropList(buf, byteOff, startBit) {
     }
     mods.push({id,param,stored,value,value2});
   }
-  return {mods,endBit:bit};
+  return {mods,endBit:bit,terminated};
+}
+
+// Public prop-list reader with alignment recovery.
+// D2RR V105 has a one-bit gap between the item header and the property list for some item
+// classes (notably unique/set non-armor items like charms and rings). When we detect that
+// decoding at `startBit` produced a misaligned stream — the stream didn't reach the 511
+// sentinel — we retry at `startBit+1` and adopt the retry only if it strictly improves
+// (terminates cleanly at 511 with at least as many stats).
+function _readPropList(buf, byteOff, startBit) {
+  const primary = _readPropListAt(buf, byteOff, startBit);
+  if (primary.terminated) return primary;
+  // Primary decode bailed out early; try shifting one bit later.
+  const shifted = _readPropListAt(buf, byteOff, startBit + 1);
+  if (shifted.terminated && shifted.mods.length >= primary.mods.length) {
+    return shifted;
+  }
+  return primary;
 }
 
 function decodeItemProperties(buf, byteOff, item) {
@@ -7824,17 +7845,21 @@ function applyDescfunc(desc, value, param, value2) {
 
   // ── Per-level stats (descstr2 = "increaseswithplaylevelX") ──
   // Stored value is units per 8 character levels; display the scaled current-level value
-  // alongside the per-level rate so perfection comparisons and roll inspection remain clear.
-  // This is orthogonal to descfunc, so we special-case it before the func switch.
-  if (desc.str2 === 'increaseswithplaylevelX' && value > 0) {
+  // plus the per-level rate so perfection comparisons and roll inspection remain clear.
+  // (The rate annotation already implies level scaling, so we omit the Blizzard
+  // "Based on Character Level" suffix to avoid a redundant double-parenthetical.)
+  //
+  // Restricted to stat IDs 218-267 to match legacy behaviour — in D2 / D2RR, hp/mana
+  // perlevel (216/217) are used in contexts where the scaling math doesn't apply the
+  // same way, so we leave those to the plain-template path.
+  if (desc.str2 === 'increaseswithplaylevelX' && value > 0 && desc.id >= 218 && desc.id <= 267) {
     const charLvl = (parsedChar && parsedChar.header) ? (parsedChar.header.level || 1) : 1;
     const scaled  = Math.floor(value * charLvl / 8);
     const perLvl  = (value / 8).toFixed(value % 8 ? 1 : 0);
-    const suffix  = stringTable['increaseswithplaylevelX'] || '';
     const base    = /%[+]?[dis]/.test(tpl)
       ? _substituteTokens(tpl, scaled)
       : ((scaled >= 0 ? '+' : '') + scaled + ' ' + tpl);
-    return base + (suffix ? ' ' + suffix : '') + ' (' + perLvl + ' per level)';
+    return base + ' ' + Lfmt('ui_per_level_rate', '({rate} per level)', { rate: perLvl });
   }
 
   // Shared helpers used by several descfuncs that don't have tokens in the template
@@ -7919,16 +7944,14 @@ function applyDescfunc(desc, value, param, value2) {
       return tpl.replace(/%d/, String(value)).replace(/%s/, skillName);
     }
 
-    // ── 17: +value str (per-level — secondary string is "(Based on Character Level)") ──
-    // Value is stored as units per 8 levels; display the scaled current-level value
-    // alongside the per-level rate in parentheses for clarity.
+    // ── 17/18: "by-time" stats that increase over in-game time ──
+    // These scale during gameplay via game-hour counters the editor doesn't simulate.
+    // Matching legacy behaviour, we just substitute the raw stored value into the template;
+    // the secondary-string hint ("Increases near ...") is appended when provided.
     case 17: case 18: {
-      const charLvl = (parsedChar && parsedChar.header) ? (parsedChar.header.level || 1) : 1;
-      const scaled  = Math.floor(value * charLvl / 8);
-      const perLvl  = (value / 8).toFixed(value % 8 ? 1 : 0);
-      const str2    = desc.str2 ? (stringTable[desc.str2] || '') : '';
-      const base    = /%[+]?[dis]/.test(tpl) ? _substituteTokens(tpl, scaled) : (((scaled>=0?'+':'')+scaled) + ' ' + tpl);
-      return base + (str2 ? ' ' + str2 : '') + ' (' + perLvl + ' per level)';
+      const str2 = desc.str2 ? (stringTable[desc.str2] || '') : '';
+      const base = /%[+]?[dis]/.test(tpl) ? _substituteTokens(tpl, value) : (((value>=0?'+':'')+value) + ' ' + tpl);
+      return str2 ? base + ' ' + str2 : base;
     }
 
     // ── 19: plain-template descriptor (by far the most common case) ──
