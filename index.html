@@ -26,6 +26,13 @@
     --d2-tab-inactive: #150f08;
     --d2-green: #2a5a2a;
     --d2-green-bright: #4a9a4a;
+    /* Themed gradients — centralized so buttons, dialogs, and modals stay in sync. */
+    --d2-grad-gold-btn:    linear-gradient(180deg, #2a1e0c, #1a1008);
+    --d2-grad-gold-active: linear-gradient(180deg, #3a2810, #221408);
+    --d2-grad-red-btn:     linear-gradient(180deg, #2a0e0e, #1a0808);
+    --d2-grad-green-btn:   linear-gradient(180deg, #0e2a0e, #081a08);
+    --d2-grad-box:         linear-gradient(180deg, #1c1409, #0f0b06);
+    --d2-grad-box-alt:     linear-gradient(180deg, #1c1409, #110d06);
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -65,13 +72,13 @@
   .header-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 
   .btn { font-family: 'Cinzel', serif; font-size: 11px; letter-spacing: 1px; padding: 7px 14px; border-radius: 2px; cursor: pointer; border: 1px solid; transition: all 0.15s; white-space: nowrap; }
-  .btn-primary { background: linear-gradient(180deg,#2a1e0c,#1a1008); border-color: var(--d2-gold-dim); color: var(--d2-gold); }
-  .btn-primary:hover { border-color: var(--d2-gold); color: var(--d2-gold-bright); background: linear-gradient(180deg,#3a2810,#221408); }
+  .btn-primary { background: var(--d2-grad-gold-btn); border-color: var(--d2-gold-dim); color: var(--d2-gold); }
+  .btn-primary:hover { border-color: var(--d2-gold); color: var(--d2-gold-bright); background: var(--d2-grad-gold-active); }
   .btn-primary.disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
-  .btn-save { background: linear-gradient(180deg,#2a0e0e,#1a0808); border-color: var(--d2-red); color: #d46060; }
+  .btn-save { background: var(--d2-grad-red-btn); border-color: var(--d2-red); color: #d46060; }
   .btn-save:hover { border-color: var(--d2-red-bright); color: #f08080; }
   .btn-save.disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
-  .btn-warn { background: linear-gradient(180deg,#2a0e0e,#1a0808); border-color: var(--d2-red); color: #d46060; margin-top: 8px; }
+  .btn-warn { background: var(--d2-grad-red-btn); border-color: var(--d2-red); color: #d46060; margin-top: 8px; }
   .btn-warn:hover { border-color: var(--d2-red-bright); color: #f08080; }
 
   /* ── Loading view ── */
@@ -305,12 +312,14 @@
   .tt-row    { display: flex; gap: 6px; margin: 2px 0; font-size: 12px; color: var(--d2-text-dim); }
   .tt-row b  { color: var(--d2-text); }
   .tt-flag   { font-size: 11px; margin-top: 4px; }
-  .tt-close  { position: absolute; top: 5px; right: 8px; cursor: pointer; color: var(--d2-text-dim); font-size: 14px; line-height: 1; }
+  .tt-close  { position: absolute; top: 5px; right: 8px; cursor: pointer; color: var(--d2-text-dim); font-size: 14px; line-height: 1; background: none; border: 0; padding: 0; font-family: inherit; }
   .tt-close:hover { color: var(--d2-gold); }
+  .tt-close:focus-visible { outline: 1px solid var(--d2-gold-dim); outline-offset: 2px; }
   .tt-divider { border: none; border-top: 1px solid var(--d2-border); margin: 6px 0; }
   .tt-mod { font-size: 12px; color: #8888ff; padding: 1px 0; font-family: 'Crimson Text', serif; }
   .tt-stack-item { cursor: pointer; padding: 4px 0; }
   .tt-stack-item:hover .tt-name { color: var(--d2-gold-bright); }
+  .tt-action-row { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; padding: 4px; }
 
   /* ── Item insert modal ── */
   #itemModal {
@@ -324,7 +333,7 @@
   }
   #itemModal.visible { display: flex; }
   .modal-box {
-    background: linear-gradient(180deg,#1c1409,#0f0b06);
+    background: var(--d2-grad-box);
     border: 1px solid var(--d2-gold-dim);
     border-radius: 3px;
     padding: 20px 24px;
@@ -560,7 +569,7 @@
 
   .save-bar { background: var(--d2-surface2); border: 1px solid var(--d2-border); border-radius: 2px; padding: 10px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .save-bar-text { flex: 1; font-size: 13px; color: var(--d2-text-dim); }
-  .btn-apply { font-family: 'Cinzel', serif; font-size: 11px; letter-spacing: 1px; padding: 6px 14px; border-radius: 2px; cursor: pointer; border: 1px solid var(--d2-gold-dim); background: linear-gradient(180deg,#2a1e0c,#1a1008); color: var(--d2-gold); transition: all 0.15s; }
+  .btn-apply { font-family: 'Cinzel', serif; font-size: 11px; letter-spacing: 1px; padding: 6px 14px; border-radius: 2px; cursor: pointer; border: 1px solid var(--d2-gold-dim); background: var(--d2-grad-gold-btn); color: var(--d2-gold); transition: all 0.15s; }
   .btn-apply:hover { border-color: var(--d2-gold); color: var(--d2-gold-bright); }
 
   /* ── Pixel fire (side columns + bottom bar) ── */
@@ -918,6 +927,13 @@ function cleanStringValue(s) {
 // Localization lookup: returns the UI string for the given key, or the fallback
 function L(key, fallback) {
   return stringTable[key] || fallback || key;
+}
+
+// Log a caught error with a context tag so developers can spot silent failures during
+// development without breaking the user experience. Used for bulk loops where one bad
+// item shouldn't abort the whole decode, and for non-critical best-effort code paths.
+function _logCaught(context, err) {
+  try { console.warn('[' + context + ']', err); } catch (_) { /* console may be unavailable */ }
 }
 
 // Localized template with named-placeholder substitution. Replaces {name} tokens with params.name.
@@ -1357,14 +1373,14 @@ function _updateStaticUIStrings() {
   if (charNameLabel) charNameLabel.textContent = L('ui_char_name', 'Character Name');
   // Upload/browse page
   const uploadTitle = el('uploadTitle');
-  if (uploadTitle) uploadTitle.innerHTML = L('ui_browse_title', 'Diablo II: Resurrected') + '<span style="display:block;font-size:17px;letter-spacing:4px;color:var(--d2-gold-dim);margin-top:4px;font-weight:400">REIMAGINED</span>';
+  if (uploadTitle) uploadTitle.innerHTML = esc(L('ui_browse_title', 'Diablo II: Resurrected')) + '<span style="display:block;font-size:17px;letter-spacing:4px;color:var(--d2-gold-dim);margin-top:4px;font-weight:400">REIMAGINED</span>';
   const uploadBadge = el('uploadBadge');
   if (uploadBadge) uploadBadge.textContent = '✓ ' + L('ui_browse_badge', 'Reimagined data loaded');
   const uploadSub = el('uploadSub');
   if (uploadSub) uploadSub.textContent = L('ui_browse_sub', 'Load a Reimagined character save file to begin editing. Your original file will never be overwritten — always save to a new location first.');
   // Footer credits
   const credits = document.querySelector('.footer-credits');
-  if (credits) credits.innerHTML = L('ui_made_by', 'Made by') + ' <span>GildyBoye</span>'
+  if (credits) credits.innerHTML = esc(L('ui_made_by', 'Made by')) + ' <span>GildyBoye</span>'
     + '<a class="footer-github" href="https://github.com/GildyBoye/D2R-Reimagined-Save-Editor" target="_blank" rel="noopener noreferrer" title="View on GitHub" aria-label="View on GitHub">'
     + '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>'
     + '</a>';
@@ -2848,7 +2864,7 @@ function _getExpectedStatIds(item) {
         for (const e of entries) {
           if (e.id !== undefined) counts.set(e.id, (counts.get(e.id) || 0) + 1);
         }
-      } catch(e) {}
+      } catch(e) { _logCaught('stat-count.' + code, e); }
     }
   }
 
@@ -2874,18 +2890,18 @@ function _getExpectedStatIds(item) {
         for (const m of MAGIC_PREFIX_MODS[item._prefixId].mods) {
           try { const entries = propCodeToStatEntries(m.code, m.min, m.max, m.param||'', true);
             for (const e of entries) { if (e.id !== undefined) counts.set(e.id, (counts.get(e.id)||0)+1); }
-          } catch(e) {}
+          } catch(e) { _logCaught('stat-count.magic-prefix.' + m.code, e); }
         }
       }
       if (item._suffixId && MAGIC_SUFFIX_MODS && MAGIC_SUFFIX_MODS[item._suffixId]) {
         for (const m of MAGIC_SUFFIX_MODS[item._suffixId].mods) {
           try { const entries = propCodeToStatEntries(m.code, m.min, m.max, m.param||'', true);
             for (const e of entries) { if (e.id !== undefined) counts.set(e.id, (counts.get(e.id)||0)+1); }
-          } catch(e) {}
+          } catch(e) { _logCaught('stat-count.magic-suffix.' + m.code, e); }
         }
       }
     }
-  } catch(e) {}
+  } catch(e) { _logCaught('stat-count.outer', e); }
   // Mark as incomplete if some property codes failed to resolve
   counts._complete = (totalProps > 0 && resolvedProps >= totalProps);
   return counts;
@@ -2913,7 +2929,7 @@ function _getExpectedStatValues(item) {
             vals.set(e.id, (vals.get(e.id) || 0) + displayVal);
           }
         }
-      } catch(e) {}
+      } catch(e) { _logCaught('stat-values.' + code, e); }
     }
   }
 
@@ -2935,7 +2951,7 @@ function _getExpectedStatValues(item) {
       const sData = baseData['setitems'];
       if (sData && sData.rows[item.setItemId]) addValues(sData.rows[item.setItemId], 'prop', 'min', 'max', 'par', 9);
     }
-  } catch(e) {}
+  } catch(e) { _logCaught('stat-values.outer', e); }
   return vals;
 }
 
@@ -3265,6 +3281,31 @@ function showOnly(id) {
 // ═══════════════════════════════════════════════════════════
 //  FILE I/O
 // ═══════════════════════════════════════════════════════════
+
+// Hard cap on file size we'll read into memory. Real D2R saves are a few KB;
+// even a heavily-loaded shared-stash .d2i is under 1 MB. 10 MB is generous for
+// edge cases but protects against accidental (or malicious) reads of huge files.
+const MAX_SAVE_FILE_BYTES = 10 * 1024 * 1024;
+
+// Returns an error message to show to the user, or null if the file passes size validation.
+function validateSaveFileSize(file) {
+  if (!file || file.size === undefined) return null;
+  if (file.size > MAX_SAVE_FILE_BYTES) {
+    return Lfmt('ui_err_file_too_large', 'File is too large ({size} MB). Maximum supported size is {max} MB.', {
+      size: (file.size / (1024 * 1024)).toFixed(1),
+      max:  (MAX_SAVE_FILE_BYTES / (1024 * 1024)).toFixed(0),
+    });
+  }
+  return null;
+}
+
+// Verify the 4-byte D2 save magic (0x55 0xAA 0x55 0xAA, stored LE for both .d2s and .d2i).
+function hasValidSaveMagic(buf) {
+  return buf && buf.length >= 4
+      && buf[0] === 0x55 && buf[1] === 0xAA
+      && buf[2] === 0x55 && buf[3] === 0xAA;
+}
+
 function handleFile(input) { const f=input.files[0]; if(f) loadFile(f); input.value=''; }
 function handleDrop(e) {
   e.preventDefault();
@@ -3273,9 +3314,21 @@ function handleDrop(e) {
 }
 function loadFile(file) {
   if (!baseReady) return;
+  const sizeErr = validateSaveFileSize(file);
+  if (sizeErr) { showPopup(sizeErr); return; }
   fileName=file.name;
   const reader=new FileReader();
-  reader.onload=ev => { rawBytes=new Uint8Array(ev.target.result); onFileLoaded(); };
+  reader.onload=ev => {
+    const buf = new Uint8Array(ev.target.result);
+    // Early magic-number rejection: parseD2S() also validates, but that's deep in the pipeline —
+    // better to reject before we mutate any editor state (workBytes, fileName, UI visibility).
+    if (!hasValidSaveMagic(buf)) {
+      showPopup(L('ui_err_invalid_d2s', 'Invalid .d2s file — expected 0x55AA55AA signature.'));
+      return;
+    }
+    rawBytes = buf;
+    onFileLoaded();
+  };
   reader.readAsArrayBuffer(file);
 }
 
@@ -3318,7 +3371,7 @@ function onFileLoaded() {
 const RECENT_FILES_KEY = 'd2rr_recent_files';
 const RECENT_FILES_MAX = 2;
 // Clean up any leftover persistent entries from previous version
-try { localStorage.removeItem(RECENT_FILES_KEY); } catch (e) {}
+try { localStorage.removeItem(RECENT_FILES_KEY); } catch (e) { /* best-effort: localStorage may be disabled */ }
 
 // Session-only recent files — cleared on page reload
 let _sessionRecentFiles = [];
@@ -3361,7 +3414,7 @@ async function storeRecentFileHandle(name, handle) {
       // Persist the last-used handle for next-session startIn hint
       tx.objectStore('handles').put(handle, '__lastUsed__');
     }
-  } catch (e) {}
+  } catch (e) { /* best-effort: IndexedDB unavailable or quota exceeded */ }
 }
 
 async function getStartInHint() {
@@ -3430,7 +3483,7 @@ async function openRecentFile(name) {
       const file = await fh.getFile();
       fileName = fh.name;
       loadFile(file);
-    } catch (e) {}
+    } catch (e) { /* best-effort: user cancelled the picker, or handle was revoked */ }
   } else {
     showPopup(Lfmt('ui_err_recent_reopen','To reopen "{name}", please drag the file onto the page.\n\nD2RR saves are usually at:\nC:\\Users\\<you>\\Saved Games\\Diablo II Resurrected\\mods\\ReimaginedThree\\\n\n(Direct re-opening requires Chrome or Edge.)',{name}));
   }
@@ -3443,7 +3496,7 @@ function removeRecentFile(name) {
     if (window.indexedDB) {
       openRecentDB().then(db => db.transaction('handles', 'readwrite').objectStore('handles').delete(name));
     }
-  } catch (e) {}
+  } catch (e) { /* best-effort: IndexedDB unavailable */ }
   renderRecentFiles();
 }
 
@@ -3453,7 +3506,7 @@ window.clearRecentFiles = function() {
     _recentFileHandles.clear();
     try {
       if (window.indexedDB) openRecentDB().then(db => db.transaction('handles', 'readwrite').objectStore('handles').clear());
-    } catch (e) {}
+    } catch (e) { /* best-effort: IndexedDB unavailable */ }
     renderRecentFiles();
   }, L('ui_btn_clear','Clear'));
 };
@@ -3521,7 +3574,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const file = await handle.getFile();
         fileName = handle.name;
         loadFile(file);
-      } catch (e) {}
+      } catch (e) { /* best-effort: user cancelled the picker */ }
     });
 
     // Capture file handles from drag-and-drop too (Chrome/Edge)
@@ -3955,10 +4008,8 @@ function _doReset() {
 
   // Close any open tooltips/popups/modals
   closeTooltip(true);
-  const confirmOvl = document.getElementById('confirmOverlay');
-  if (confirmOvl) confirmOvl.style.display = 'none';
-  const popupOvl = document.getElementById('popupOverlay');
-  if (popupOvl) popupOvl.style.display = 'none';
+  const dialogOvl = document.getElementById('sharedDialogOverlay');
+  if (dialogOvl) dialogOvl.style.display = 'none';
   const itemModal = document.getElementById('itemModal');
   if (itemModal) itemModal.classList.remove('visible');
 
@@ -3989,27 +4040,110 @@ window.resetEditor = function() {
   showConfirm(L('ui_confirm_unsaved_reset','You have unsaved changes. Are you sure you want to reset?'), _doReset, L('ui_reset','Reset'));
 };
 
-function showConfirm(msg, onYes, yesLabel) {
-  let overlay = document.getElementById('confirmOverlay');
+// ═══════════════════════════════════════════════════════════
+//  DIALOGS (themed modals)
+//  showDialog() is the single entry point. Helpers like showConfirm / showPopup
+//  are thin wrappers over it; bespoke dialogs (HC downgrade, resurrect) call it
+//  directly with richer options.
+// ═══════════════════════════════════════════════════════════
+
+// Button tone → per-button inline styling. Kept centralized so the themed look
+// stays consistent across every dialog in the app.
+const _DIALOG_BTN_STYLES = {
+  primary: 'border:1px solid var(--d2-gold-dim);background:var(--d2-grad-gold-btn);color:var(--d2-gold)',
+  success: 'border:1px solid var(--d2-green);background:var(--d2-grad-green-btn);color:var(--d2-green-bright)',
+  danger:  'border:1px solid var(--d2-red);background:var(--d2-grad-red-btn);color:#d46060',
+  ghost:   'border:1px solid var(--d2-border);background:transparent;color:var(--d2-text-dim)',
+};
+const _DIALOG_TITLE_COLORS = {
+  red:  'var(--d2-red-bright)',
+  gold: 'var(--d2-gold)',
+};
+const _DIALOG_BTN_BASE = "font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 22px;border-radius:2px;cursor:pointer;transition:all 0.15s;";
+
+// Show a themed modal dialog. Returns a `close()` function the caller can invoke
+// programmatically; the dialog also closes automatically when a button is clicked
+// (after its onClick fires) and when the overlay backdrop is clicked.
+//
+// options:
+//   title:     optional headline string (escaped)
+//   titleTone: 'red' | 'gold' — colors the title line
+//   message:   main body text (escaped; preserves newlines via pre-line)
+//   note:      optional dimmed secondary line below the message
+//   buttons:   array of { label, tone, onClick? }. tone ∈ DIALOG_BTN_STYLES.
+//              Buttons render left-to-right in the order given. Clicking any
+//              button closes the dialog (after its onClick, if any).
+//   dismissOnBackdrop: default true — clicking outside the box closes the dialog
+function showDialog(options) {
+  const opts = options || {};
+  const buttons = Array.isArray(opts.buttons) && opts.buttons.length ? opts.buttons
+    : [{ label: L('ui_btn_close', 'Close'), tone: 'primary' }];
+
+  let overlay = document.getElementById('sharedDialogOverlay');
   if (!overlay) {
     overlay = document.createElement('div');
-    overlay.id = 'confirmOverlay';
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:30000;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center';
-    overlay.innerHTML = `<div style="background:linear-gradient(180deg,#1c1409,#0f0b06);border:1px solid var(--d2-gold-dim);border-radius:3px;padding:20px 28px;max-width:420px;min-width:260px;box-shadow:0 8px 40px rgba(0,0,0,0.9);text-align:center">
-      <div id="confirmMsg" style="font-family:'Crimson Text',serif;font-size:14px;color:var(--d2-text);line-height:1.6;margin-bottom:16px;white-space:pre-line"></div>
-      <div style="display:flex;gap:10px;justify-content:center">
-        <button id="confirmYes" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 22px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-green);background:linear-gradient(180deg,#0e2a0e,#081a08);color:var(--d2-green-bright);transition:all 0.15s"></button>
-        <button id="confirmNo" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 22px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-red);background:linear-gradient(180deg,#2a0e0e,#1a0808);color:#d46060;transition:all 0.15s"></button>
-      </div>
-    </div>`;
+    overlay.id = 'sharedDialogOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:30000;background:rgba(0,0,0,0.7);display:none;align-items:center;justify-content:center';
     document.body.appendChild(overlay);
   }
-  document.getElementById('confirmMsg').textContent = msg;
-  document.getElementById('confirmYes').textContent = yesLabel || L('ui_confirm','Confirm');
-  document.getElementById('confirmNo').textContent = L('ui_cancel','Cancel');
+
+  // Build the dialog box. Using innerHTML is safe because all user-supplied
+  // text is routed through esc() below.
+  const titleColor = opts.titleTone ? _DIALOG_TITLE_COLORS[opts.titleTone] : '';
+  const titleHtml = opts.title
+    ? `<div class="dlg-title" style="font-family:'Cinzel',serif;font-size:16px;${titleColor?`color:${titleColor};`:''}margin-bottom:12px">${esc(opts.title)}</div>`
+    : '';
+  const messageHtml = opts.message
+    ? `<div class="dlg-msg" style="font-family:'Crimson Text',serif;font-size:14px;color:var(--d2-text);line-height:1.6;margin-bottom:${opts.note ? '8' : '16'}px;white-space:pre-line">${esc(opts.message)}</div>`
+    : '';
+  const noteHtml = opts.note
+    ? `<div class="dlg-note" style="color:var(--d2-text-dim);font-size:12px;line-height:1.5;margin-bottom:20px;white-space:pre-line">${esc(opts.note)}</div>`
+    : '';
+  const buttonsHtml = buttons.map((b, i) => {
+    const tone = _DIALOG_BTN_STYLES[b.tone] || _DIALOG_BTN_STYLES.primary;
+    return `<button type="button" class="dlg-btn" data-dlg-idx="${i}" style="${_DIALOG_BTN_BASE}${tone}">${esc(b.label || '')}</button>`;
+  }).join('');
+
+  overlay.innerHTML = `<div role="dialog" aria-modal="true" style="background:var(--d2-grad-box);border:1px solid var(--d2-gold-dim);border-radius:3px;padding:${opts.title ? '24px 32px' : '20px 28px'};max-width:420px;min-width:260px;box-shadow:0 8px 40px rgba(0,0,0,0.9);text-align:center">
+    ${titleHtml}${messageHtml}${noteHtml}
+    <div style="display:flex;gap:${opts.title ? '12' : '10'}px;justify-content:center;flex-wrap:wrap">${buttonsHtml}</div>
+  </div>`;
+
+  function close() { overlay.style.display = 'none'; }
+
+  // Wire buttons via addEventListener (no inline onclick strings → no XSS surface).
+  overlay.querySelectorAll('.dlg-btn').forEach(btn => {
+    const idx = parseInt(btn.dataset.dlgIdx, 10);
+    btn.addEventListener('click', () => {
+      const spec = buttons[idx];
+      close();
+      if (spec && typeof spec.onClick === 'function') {
+        try { spec.onClick(); } catch (e) { _logCaught('dialog.' + (spec.label || 'btn'), e); }
+      }
+    });
+  });
+
+  // Backdrop dismiss — clicking outside the dialog box closes it.
+  if (opts.dismissOnBackdrop !== false) {
+    overlay.addEventListener('click', function onBackdrop(e) {
+      if (e.target === overlay) close();
+    });
+  }
+
   overlay.style.display = 'flex';
-  document.getElementById('confirmNo').onclick = () => { overlay.style.display = 'none'; };
-  document.getElementById('confirmYes').onclick = () => { overlay.style.display = 'none'; onYes(); };
+  return close;
+}
+
+// Two-button confirmation dialog. Legacy signature kept for backward compatibility;
+// internally delegates to showDialog().
+function showConfirm(msg, onYes, yesLabel) {
+  showDialog({
+    message: msg,
+    buttons: [
+      { label: yesLabel || L('ui_confirm', 'Confirm'), tone: 'success', onClick: onYes },
+      { label: L('ui_cancel', 'Cancel'),               tone: 'danger' },
+    ],
+  });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4393,7 +4527,9 @@ function flushVirtualItems() {
   console.log(`flushVirtualItems: wrote ${encoded.length} item(s), new count=${cnt}`);
 }
 
-// Apply edits from the currently visible tab before switching away
+// Apply edits from the currently visible tab before switching away.
+// Wrapped in try/catch so a failing apply on one tab doesn't block switching;
+// errors are logged so they're visible in devtools for diagnosis.
 function applyCurrentTab() {
   try {
     switch(activeTab) {
@@ -4401,14 +4537,16 @@ function applyCurrentTab() {
       case 'skills':    applySkills(); break;
       case 'mercenary': if (window.applyMerc) applyMerc(); break;
     }
-  } catch(_){}
+  } catch (e) { _logCaught('applyCurrentTab.' + activeTab, e); }
 }
 
 function saveFile() {
   if (!workBytes) return;
   // Apply edits from the currently visible tab + always apply merc
   applyCurrentTab();
-  try { applyMerc(); } catch(_) {}
+  // applyMerc re-runs even if mercenary tab isn't active (the tab might hold pending edits).
+  // Wrapped so a merc-tab failure doesn't abort the whole save; logged for diagnosis.
+  try { applyMerc(); } catch (e) { _logCaught('saveFile.applyMerc', e); }
   // Remove deleted items from binary
   flushDeletedItems();
   // Flush any editor-inserted virtual items into the binary
@@ -4935,26 +5073,19 @@ function commitClass(clsIdx) {
 // Write level at HDR.LEVEL (single byte, max 255)
 window.downgradeToSoftcore = function() {
   if (!parsedChar || !parsedChar.header.isHC) return;
-  let overlay = document.getElementById('scPopup');
-  if (!overlay) {
-    overlay = document.createElement('div');
-    overlay.id = 'scPopup';
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:30000;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center';
-    overlay.innerHTML = `<div style="background:linear-gradient(180deg,#1c1409,#0f0b06);border:1px solid var(--d2-gold-dim);border-radius:3px;padding:24px 32px;max-width:420px;box-shadow:0 8px 40px rgba(0,0,0,0.9);text-align:center">
-      <div style="font-family:'Cinzel',serif;font-size:16px;color:var(--d2-red-bright);margin-bottom:12px">${esc(L('ui_hc_downgrade_title','Downgrade to Softcore'))}</div>
-      <div style="font-family:'Crimson Text',serif;font-size:14px;color:var(--d2-text);line-height:1.6;margin-bottom:20px">${esc(L('ui_hc_downgrade_text','Are you sure you want to convert this Hardcore character to Softcore?'))}<br><span style="color:var(--d2-text-dim);font-size:12px">${esc(L('ui_hc_downgrade_note','This will remove the Hardcore flag and clear the death flag if set. The character will appear in the Softcore character list.'))}</span></div>
-      <div style="display:flex;gap:12px;justify-content:center">
-        <button onclick="document.getElementById('scPopup').style.display='none'" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 20px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-border);background:transparent;color:var(--d2-text-dim);transition:all 0.15s">${esc(L('ui_cancel','Cancel'))}</button>
-        <button onclick="doDowngradeToSoftcore()" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 20px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-red);background:linear-gradient(180deg,#2a0e0e,#1a0808);color:#d46060;transition:all 0.15s">${esc(L('ui_hc_downgrade_confirm','Convert to Softcore'))}</button>
-      </div>
-    </div>`;
-    document.body.appendChild(overlay);
-  }
-  overlay.style.display = 'flex';
+  showDialog({
+    title:     L('ui_hc_downgrade_title',   'Downgrade to Softcore'),
+    titleTone: 'red',
+    message:   L('ui_hc_downgrade_text',    'Are you sure you want to convert this Hardcore character to Softcore?'),
+    note:      L('ui_hc_downgrade_note',    'This will remove the Hardcore flag and clear the death flag if set. The character will appear in the Softcore character list.'),
+    buttons: [
+      { label: L('ui_cancel', 'Cancel'), tone: 'ghost' },
+      { label: L('ui_hc_downgrade_confirm', 'Convert to Softcore'), tone: 'danger', onClick: doDowngradeToSoftcore },
+    ],
+  });
 };
 
-window.doDowngradeToSoftcore = function() {
-  document.getElementById('scPopup').style.display = 'none';
+function doDowngradeToSoftcore() {
   if (!parsedChar || !workBytes) return;
   const off = parsedChar.header.statusOffset ?? 20;
   workBytes[off] &= ~0x04;  // clear bit 2 (HC flag)
@@ -4963,38 +5094,30 @@ window.doDowngradeToSoftcore = function() {
   parsedChar.header.isDead = false;
   markDirty();
   updateCharStrip();
-};
+}
 
 window.resurrectCharacter = function() {
   if (!parsedChar || !parsedChar.header.isDead) return;
-  // Show themed popup with yes/no
-  let overlay = document.getElementById('resPopup');
-  if (!overlay) {
-    overlay = document.createElement('div');
-    overlay.id = 'resPopup';
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:30000;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center';
-    overlay.innerHTML = `<div style="background:linear-gradient(180deg,#1c1409,#0f0b06);border:1px solid var(--d2-gold-dim);border-radius:3px;padding:24px 32px;max-width:400px;box-shadow:0 8px 40px rgba(0,0,0,0.9);text-align:center">
-      <div style="font-family:'Cinzel',serif;font-size:16px;color:var(--d2-gold);margin-bottom:12px">${esc(L('ui_hc_resurrect_title','Resurrect Character'))}</div>
-      <div style="font-family:'Crimson Text',serif;font-size:14px;color:var(--d2-text);line-height:1.6;margin-bottom:20px">${esc(L('ui_hc_resurrect_text','Would you like to resurrect this Hardcore character?'))}<br><span style="color:var(--d2-text-dim);font-size:12px">${esc(L('ui_hc_resurrect_note','This will clear the death flag, allowing the character to be played again.'))}</span></div>
-      <div style="display:flex;gap:12px;justify-content:center">
-        <button onclick="document.getElementById('resPopup').style.display='none'" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 20px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-border);background:transparent;color:var(--d2-text-dim);transition:all 0.15s">${esc(L('ui_btn_no','No'))}</button>
-        <button onclick="doResurrect()" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 20px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-gold-dim);background:linear-gradient(180deg,#2a1e0c,#1a1008);color:var(--d2-gold);transition:all 0.15s">${esc(L('ui_hc_resurrect_confirm','Yes, Resurrect'))}</button>
-      </div>
-    </div>`;
-    document.body.appendChild(overlay);
-  }
-  overlay.style.display = 'flex';
+  showDialog({
+    title:     L('ui_hc_resurrect_title',   'Resurrect Character'),
+    titleTone: 'gold',
+    message:   L('ui_hc_resurrect_text',    'Would you like to resurrect this Hardcore character?'),
+    note:      L('ui_hc_resurrect_note',    'This will clear the death flag, allowing the character to be played again.'),
+    buttons: [
+      { label: L('ui_btn_no', 'No'),                                 tone: 'ghost' },
+      { label: L('ui_hc_resurrect_confirm', 'Yes, Resurrect'),       tone: 'primary', onClick: doResurrect },
+    ],
+  });
 };
 
-window.doResurrect = function() {
-  document.getElementById('resPopup').style.display = 'none';
+function doResurrect() {
   if (!parsedChar || !workBytes) return;
   const off = parsedChar.header.statusOffset ?? 20;
   workBytes[off] &= ~0x08;  // clear bit 3 (died flag)
   parsedChar.header.isDead = false;
   markDirty();
   updateCharStrip();
-};
+}
 
 function commitLevel(lvl) {
   lvl = Math.max(1, Math.min(255, lvl|0));
@@ -5502,7 +5625,9 @@ function buildTabs() {
     const b=document.createElement('button');
     const isDanger = t.danger && !inventoryUnlocked;
     b.className='tab'+(t.id===activeTab?' active':'')+(isDanger?' tab-danger':'');
-    b.innerHTML=(TAB_ICONS[t.id]||'')+t.label;
+    // Icon is a trusted hardcoded SVG literal; label is user-facing localized text and
+    // must be escaped so a translated string with stray markup can't inject into the DOM.
+    b.innerHTML=(TAB_ICONS[t.id]||'')+esc(t.label);
     b.title = isDanger ? L('ui_tab_danger_tooltip','Item editing not currently supported — click to see warning') : '';
     b.onclick=()=>{ applyCurrentTab(); activeTab=t.id; buildTabs(); renderTab(); };
     bar.appendChild(b);
@@ -7105,7 +7230,7 @@ window.showBeltPotionPicker = function(slotIdx, el) {
 
   const picker = document.createElement('div');
   picker.id = 'beltPotionPicker';
-  picker.style.cssText = 'position:fixed;z-index:20000;background:linear-gradient(180deg,#1c1409,#110d06);border:1px solid var(--d2-gold-dim);border-radius:3px;padding:6px;box-shadow:0 4px 24px rgba(0,0,0,0.8);min-width:140px';
+  picker.style.cssText = 'position:fixed;z-index:20000;background:var(--d2-grad-box-alt);border:1px solid var(--d2-gold-dim);border-radius:3px;padding:6px;box-shadow:0 4px 24px rgba(0,0,0,0.8);min-width:140px';
 
   for (const p of BELT_POTIONS) {
     const row = document.createElement('div');
@@ -7232,21 +7357,13 @@ let _tooltipOpenFrom = null;
 
 let _tooltipPinned = false;  // true = opened by click, stays until explicitly closed
 
-// Themed popup message — replaces native alert() with a styled modal
+// Themed popup message — replaces native alert() with a styled modal.
+// Thin wrapper over showDialog() with a single OK button.
 function showPopup(msg) {
-  let overlay = document.getElementById('popupOverlay');
-  if (!overlay) {
-    overlay = document.createElement('div');
-    overlay.id = 'popupOverlay';
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:30000;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center';
-    overlay.innerHTML = `<div id="popupBox" style="background:linear-gradient(180deg,#1c1409,#0f0b06);border:1px solid var(--d2-gold-dim);border-radius:3px;padding:20px 28px;max-width:420px;min-width:260px;box-shadow:0 8px 40px rgba(0,0,0,0.9);text-align:center">
-      <div id="popupMsg" style="font-family:'Crimson Text',serif;font-size:14px;color:var(--d2-text);line-height:1.6;margin-bottom:16px;white-space:pre-line"></div>
-      <button onclick="document.getElementById('popupOverlay').style.display='none'" style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;padding:7px 22px;border-radius:2px;cursor:pointer;border:1px solid var(--d2-gold-dim);background:linear-gradient(180deg,#2a1e0c,#1a1008);color:var(--d2-gold);transition:all 0.15s">OK</button>
-    </div>`;
-    document.body.appendChild(overlay);
-  }
-  document.getElementById('popupMsg').textContent = msg;
-  overlay.style.display = 'flex';
+  showDialog({
+    message: msg,
+    buttons: [{ label: L('ui_btn_ok', 'OK'), tone: 'primary' }],
+  });
 }
 
 function closeTooltip(force) {
@@ -7361,7 +7478,7 @@ function ensureItemProps(item) {
       item._enchantCount = enchCounterMod.value;
       item._maxEnchants = ENCH_MAX[enchCounterMod.id] || item._maxEnchants || 5;
     }
-  } catch(e) {}
+  } catch(e) { _logCaught('enchant-count', e); }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -8244,7 +8361,12 @@ function calcItemPerfection(item, quality) {
   return totalPerfection / statCount;
 }
 
-function buildItemTooltipHtml(item) {
+// options.actionButtons: optional HTML string of <button> elements to render in a
+// divider-separated action row at the bottom of the tooltip. When omitted, no action
+// row is rendered — lets each caller (grail, shared stash, main item) fully own its
+// buttons instead of buildItemTooltipHtml making per-source assumptions.
+function buildItemTooltipHtml(item, options) {
+  const opts = options || {};
   const {name,cls} = itemDisplayName(item);
   const code = item.typeCode || '';
   const baseLabel = itemNameByCode[code] || code || '?';
@@ -8375,11 +8497,17 @@ function buildItemTooltipHtml(item) {
       <label for="ttMaxVals_${item.byteOffset}" style="font-size:10px;font-family:'Cinzel',serif;color:var(--d2-text-dim);cursor:pointer;letter-spacing:0.5px">MAX VALUES</label>
     </div>` : ''}
     ${propHtml}
-    ${item.isGrail || item.isSharedStash ? '' : `<hr class="tt-divider">
-    <div style="display:flex;gap:6px;flex-wrap:wrap">
-      <button class="btn-apply" onclick="closeTooltip(true)" style="font-size:10px;padding:4px 10px">${esc(L('ui_btn_close','Close'))}</button>
-      ${item.byteOffset!==undefined?`<button class="btn-apply" onclick="removeItemByOffset(${item.byteOffset})" style="font-size:10px;padding:4px 10px;border-color:var(--d2-red);color:#d46060">${esc(L('ui_btn_remove','Remove'))}</button>`:''}
-    </div>`}`;
+    ${opts.actionButtons ? `<hr class="tt-divider"><div class="tt-action-row">${opts.actionButtons}</div>` : ''}`;
+}
+
+// Build the standard Close/Remove action-button HTML used by the main item tooltip.
+// Extracted so callers that want these buttons + extras (like Copy Item) can compose cleanly.
+function _tooltipCloseRemoveButtons(item) {
+  const closeBtn = `<button type="button" class="btn-apply" onclick="closeTooltip(true)" style="font-size:10px;padding:4px 10px">${esc(L('ui_btn_close','Close'))}</button>`;
+  const removeBtn = item.byteOffset !== undefined
+    ? `<button type="button" class="btn-apply" onclick="removeItemByOffset(${item.byteOffset})" style="font-size:10px;padding:4px 10px;border-color:var(--d2-red);color:#d46060">${esc(L('ui_btn_remove','Remove'))}</button>`
+    : '';
+  return closeBtn + removeBtn;
 }
 
 function findSharedStashItem(byteOffset) {
@@ -8400,6 +8528,7 @@ window.showSharedStashItemDetail = function(byteOffsets, triggerEl) {
   if (byteOffsets.length === 1) {
     const item = findSharedStashItem(byteOffsets[0]);
     if (!item) return;
+    // Shared stash items are read-only in the current editor — no action buttons.
     content.innerHTML = buildItemTooltipHtml(item);
   } else {
     let html = `<div class="tt-name" style="color:var(--d2-gold)">Stack x${byteOffsets.length}</div><hr class="tt-divider">`;
@@ -8421,15 +8550,14 @@ window.showItemDetail = function(byteOffset, triggerEl) {
   const tt = document.getElementById('itemTooltip');
   const content = document.getElementById('itemTooltipContent');
   if (!tt || !content) return;
-  let html = buildItemTooltipHtml(item);
-  // Add Copy Item button for non-virtual stored items
+
+  // Compose the action-button row: standard Close/Remove, plus an optional "Copy Item"
+  // for non-virtual stored items (real binary items we can duplicate safely).
+  let actionButtons = _tooltipCloseRemoveButtons(item);
   if (item.parent === 0 && !item.isVirtual && workBytes && item.byteOffset >= 0) {
-    html += `<hr class="tt-divider"><div style="text-align:center;padding:4px">
-      <button class="btn btn-primary" style="font-size:11px;padding:4px 12px"
-        onclick="event.stopPropagation();startCopyItem(${byteOffset})">${esc(L('ui_btn_copy_item','Copy Item'))}</button>
-    </div>`;
+    actionButtons += `<button type="button" class="btn btn-primary" style="font-size:11px;padding:4px 12px" onclick="event.stopPropagation();startCopyItem(${byteOffset})">${esc(L('ui_btn_copy_item','Copy Item'))}</button>`;
   }
-  content.innerHTML = html;
+  content.innerHTML = buildItemTooltipHtml(item, { actionButtons });
   positionTooltip(tt, triggerEl || null);
   _tooltipOpenFrom = byteOffset;
 };
@@ -8589,173 +8717,232 @@ let UNIQUE_CATALOG = []; // { code, uniqueName, baseName, qual:7 }
 let SET_CATALOG    = []; // { code, setName, baseName, qual:5 }
 let RUNEWORD_CATALOG = []; // { name, runes:[codes], displayName }
 
-function buildItemCatalog() {
-  ITEM_CATALOG   = [];
-  UNIQUE_CATALOG = [];
-  SET_CATALOG    = [];
-  RUNEWORD_CATALOG = [];
+// ═══════════════════════════════════════════════════════════
+//  ITEM CATALOG BUILDERS
+//  Each sub-builder populates one of the four top-level catalogs from baseData.
+//  Split out so each catalog's logic is self-contained and testable independently;
+//  buildItemCatalog() at the bottom is the single orchestrator the rest of the app calls.
+// ═══════════════════════════════════════════════════════════
 
-  // Codes to hide from all catalogs (grabbers, pliers, stacks, keys)
-  const HIDE_CODES = new Set([
-    'agr','tgr','sgr','egr','rgr','mgr','kgr','ogr','tkg','hkg','dkg',
-    'rup','jwp','key','kch',
-    '1am','1tp','1sa','1em','1rb','1di','1sk','1so','1ka',
-    '1os','1oc','1oa','1oi','1oe','1or',
-    's01','s02','s03','s04','s05','s06','s07','s08','s09','s10',
-    's11','s12','s13','s14','s15','s16','s17','s18','s19','s20',
-    's21','s22','s23','s24','s25','s26','s27','s28','s29','s30',
-    's31','s32','s33',
-  ]);
+// Derive the hide-codes set from misc.txt. See comment in-function for the 3 rules.
+function _deriveHideCodes() {
+  // `key` and `kch` are the raw Key / Key Chain base items — they're stackables with no
+  // natural misc.txt pattern flagging them, so seed them explicitly. Everything else is
+  // derived from misc.txt so the list stays in sync as D2RR adds new stacks/utility items:
+  //   - type 'gemx' / 'runx' / 'orbx' → gem/rune/orb stack variants (internal storage)
+  //   - name ending in ' Grabber' or ' Pliers' → crafting utility items hidden from player
+  const hide = new Set(['key', 'kch']);
+  const miscData = baseData['misc'];
+  if (miscData) {
+    for (const row of miscData.rows) {
+      const code = (row['code'] || '').trim();
+      const type = (row['type'] || '').trim();
+      const name = (row['name'] || '').trim();
+      if (!code) continue;
+      if (type === 'gemx' || type === 'runx' || type === 'orbx') hide.add(code);
+      else if (/\s(?:Grabber|Pliers)$/.test(name)) hide.add(code);
+    }
+  }
+  return hide;
+}
 
-  // ── Base items (weapons + armor + misc) ──
-  const tierSuffix = { N:'', Exc:' (Exceptional)', Eli:' (Elite)' };
-  const tierColor  = { N:'var(--d2-text)', Exc:'#a0b8d8', Eli:'#d8c080' };
+// Weapon / armor base-type-code → display category name (used for the insert modal's
+// subcategory grouping). Module-level const so both the base and unique builders see
+// the same mapping; keeping one canonical source avoids drift.
+const _BASE_TYPE_CATEGORY_NAMES = {
+  axe:'Axes',swor:'Swords',mace:'Maces',club:'Maces',hamm:'Maces',scep:'Scepters',
+  pole:'Polearms',spea:'Spears',jave:'Javelins',ajav:'Amazon Javelins',aspe:'Amazon Spears',
+  bow:'Bows',abow:'Amazon Bows',xbow:'Crossbows',
+  knif:'Daggers',tkni:'Throwing Knives',taxe:'Throwing Axes',tpot:'Throwing Potions',
+  wand:'Wands',staf:'Staves',orb:'Orbs',h2h:'Claws',h2h2:'Claws',
+  helm:'Helms',phlm:'Barbarian Helms',pelt:'Druid Pelts',circ:'Circlets',grim:'Warlock Shields',
+  tors:'Body Armor',shie:'Shields',ashd:'Paladin Shields',
+  glov:'Gloves',boot:'Boots',belt:'Belts',head:'Necro Shields',
+};
 
-  // Type code → friendly category name
-  const TYPE_NAMES = {
-    axe:'Axes',swor:'Swords',mace:'Maces',club:'Maces',hamm:'Maces',scep:'Scepters',
-    pole:'Polearms',spea:'Spears',jave:'Javelins',ajav:'Amazon Javelins',aspe:'Amazon Spears',
-    bow:'Bows',abow:'Amazon Bows',xbow:'Crossbows',
-    knif:'Daggers',tkni:'Throwing Knives',taxe:'Throwing Axes',tpot:'Throwing Potions',
-    wand:'Wands',staf:'Staves',orb:'Orbs',h2h:'Claws',h2h2:'Claws',
-    helm:'Helms',phlm:'Barbarian Helms',pelt:'Druid Pelts',circ:'Circlets',grim:'Warlock Shields',
-    tors:'Body Armor',shie:'Shields',ashd:'Paladin Shields',
-    glov:'Gloves',boot:'Boots',belt:'Belts',head:'Necro Shields',
-  };
+// Items normally hidden (spawnable=0) that should still appear in the catalog.
+const _FORCE_SHOW_BASE_CODES = new Set(['ua1','ua2','ua3','ua4','ua5','pk1','pk2','pk3']);
 
-  for (const src of ['weapons','armor','misc']) {
+// Unique-item type-code → [string-table key, English fallback] for subcategory labels.
+// Pulls from Blizzard item-names.json where possible so translators get subcategory
+// names for free; editor-specific labels (Amazon/throwing/hammers/orbs/claws) use ui_sub_*.
+const _UNIQUE_SUBCATEGORY_KEYS = {
+  axe:['axes','Axes'],swor:['sword','Swords'],mace:['maces','Maces'],club:['maces','Maces'],
+  hamm:['ui_sub_hammers','Hammers'],scep:['scept','Scepters'],
+  pole:['poles','Polearms'],spea:['spear','Spears'],jave:['javel','Javelins'],
+  ajav:['ui_sub_amazon_javelins','Amazon Javelins'],aspe:['ui_sub_amazon_spears','Amazon Spears'],
+  bow:['bows','Bows'],abow:['ui_sub_amazon_bows','Amazon Bows'],xbow:['xbows','Crossbows'],
+  knif:['daggs','Daggers'],tkni:['ui_sub_throwing_knives','Throwing Knives'],taxe:['ui_sub_throwing_axes','Throwing Axes'],
+  wand:['wands','Wands'],staf:['stave','Staves'],orb:['ui_sub_orbs','Orbs'],
+  h2h:['ui_sub_claws','Claws'],h2h2:['ui_sub_claws','Claws'],
+  helm:['helms','Helms'],phlm:['ui_grail_cat_barb_helms','Barbarian Helms'],pelt:['ui_grail_cat_druid_pelts','Druid Pelts'],
+  circ:['circl','Circlets'],grim:['ui_grail_cat_warlock_shields','Warlock Shields'],
+  tors:['r_arm','Body Armor'],shie:['shlds','Shields'],ashd:['ui_grail_cat_paladin_shields','Paladin Shields'],
+  glov:['glove','Gloves'],boot:['boots','Boots'],belt:['belts','Belts'],head:['ui_sub_necro_shields','Necro Shields'],
+  ring:['Rings','Rings'],amul:['amule','Amulets'],
+};
+
+// Populate ITEM_CATALOG with base weapons + armor + misc entries.
+function _buildBaseItemCatalog(hideCodes) {
+  for (const src of ['weapons', 'armor', 'misc']) {
     const data = baseData[src];
     if (!data) continue;
     const hasTiers = src !== 'misc';
     for (const row of data.rows) {
-      const code = (row['code']||'').trim();
-      const rawName = (row['name']||'').trim();
+      const code = (row['code'] || '').trim();
+      const rawName = (row['name'] || '').trim();
       if (!code || !rawName || rawName === 'Expansion') continue;
-      const name = itemNameByCode[code] || rawName;
-      const typeCode = (row['type']||'').trim();
-      const category = src === 'misc' ? 'misc' : src;  // 'weapons', 'armor', or 'misc'
-      const typeName = TYPE_NAMES[typeCode] || (src === 'weapons' ? 'Other Weapons' : src === 'armor' ? 'Other Armor' : '');
-      // Detect runes and gems for subcategorization
-      const isRune = /^r\d{2}$/.test(code) || /^s\d{2}$/.test(code);
-      const isGem = /^(gm[a-z]|gc[a-z]|gf[a-z]|gs[a-z]|gl[a-z]|gp[a-z]|1[a-z]{2})$/.test(code) || (name.includes('Stack') && !isRune);
-      const isCharm = /^cm[1-5]$/.test(code) || /^cs[12]$/.test(code);
+      if (hideCodes.has(code)) continue;
 
-      // Respect spawnable column — items marked spawnable=0 are excluded, with exceptions
-      const FORCE_SHOW = new Set(['ua1','ua2','ua3','ua4','ua5','pk1','pk2','pk3']);
+      // spawnable=0 items are normally excluded, with an explicit allowlist for Ubers
       const spawnable = (row['spawnable'] || '').trim();
-      if (spawnable === '0' && !FORCE_SHOW.has(code)) continue;
+      if (spawnable === '0' && !_FORCE_SHOW_BASE_CODES.has(code)) continue;
 
-      if (HIDE_CODES.has(code)) continue;
+      const name = itemNameByCode[code] || rawName;
+      const typeCode = (row['type'] || '').trim();
+      const category = src === 'misc' ? 'misc' : src;
+      const typeName = _BASE_TYPE_CATEGORY_NAMES[typeCode]
+        || (src === 'weapons' ? 'Other Weapons' : src === 'armor' ? 'Other Armor' : '');
 
       if (hasTiers) {
-        const norm  = (row['normcode']||'').trim();
-        const uber  = (row['ubercode']||'').trim();
-        const ultra = (row['ultracode']||'').trim();
+        // Weapons and armor carry normal/exceptional/elite tier triples.
+        const norm  = (row['normcode']  || '').trim();
+        const uber  = (row['ubercode']  || '').trim();
+        const ultra = (row['ultracode'] || '').trim();
         let tier = 'N';
-        if (norm && norm !== code && uber === code)  tier = 'Exc';
+        if (norm && norm !== code && uber  === code) tier = 'Exc';
         if (norm && norm !== code && ultra === code) tier = 'Eli';
         const normName = (tier === 'N') ? name : (itemNameByCode[norm] || norm || name);
-        ITEM_CATALOG.push({ code, name, tier, normCode: norm||code, normName, qual:2, category, typeName, typeCode,
-          searchKey: (name + ' ' + normName + ' ' + code + ' ' + typeName).toLowerCase() });
+        ITEM_CATALOG.push({
+          code, name, tier, normCode: norm || code, normName, qual: 2, category, typeName, typeCode,
+          searchKey: (name + ' ' + normName + ' ' + code + ' ' + typeName).toLowerCase(),
+        });
       } else {
-        const isJewelry = /^(rin|amu|jew)$/.test(code) || typeCode === 'ring' || typeCode === 'amul';
-        const isOrb = /^(oos|ooc|ooa|ooi|ooe|oor|ka3|1os|1oc|1oa|1oi|1oe|1or|1ka)$/.test(code) || name.includes('Orb of');
-        const isSpecialMod = /^(rup|jwp|dkg|gmo|1so|1gc|mfp|xpp|php)$/.test(code)
-          || name.includes('Pliers') || name.includes('Grabber') || name.includes('Cluster');
+        // Misc items get a richer subcategory breakdown for the insert modal.
+        const isRune     = /^r\d{2}$/.test(code) || /^s\d{2}$/.test(code);
+        const isGem      = /^(gm[a-z]|gc[a-z]|gf[a-z]|gs[a-z]|gl[a-z]|gp[a-z]|1[a-z]{2})$/.test(code)
+                         || (name.includes('Stack') && !isRune);
+        const isCharm    = /^cm[1-5]$/.test(code) || /^cs[12]$/.test(code);
+        const isJewelry  = /^(rin|amu|jew)$/.test(code) || typeCode === 'ring' || typeCode === 'amul';
+        const isOrb      = /^(oos|ooc|ooa|ooi|ooe|oor|ka3|1os|1oc|1oa|1oi|1oe|1or|1ka)$/.test(code)
+                         || name.includes('Orb of');
+        const isSpecial  = /^(rup|jwp|dkg|gmo|1so|1gc|mfp|xpp|php)$/.test(code)
+                         || name.includes('Pliers') || name.includes('Grabber') || name.includes('Cluster');
+
         let miscCat = 'Miscellaneous';
         if (QUEST_ITEM_CODES.has(code)) miscCat = 'Quest Items';
         else if (isJewelry) miscCat = 'Jewelry';
-        else if (isRune) miscCat = 'Runes';
-        else if (isGem) miscCat = 'Gems';
-        else if (isCharm) miscCat = 'Charms';
-        else if (isOrb) miscCat = 'Orbs';
-        else if (isSpecialMod) miscCat = 'Special Items';
-        ITEM_CATALOG.push({ code, name, tier:'misc', normCode:code, normName:name, qual:2, category:'misc', typeName:miscCat, typeCode:'',
-          searchKey: (name + ' ' + code + ' ' + miscCat).toLowerCase() });
+        else if (isRune)    miscCat = 'Runes';
+        else if (isGem)     miscCat = 'Gems';
+        else if (isCharm)   miscCat = 'Charms';
+        else if (isOrb)     miscCat = 'Orbs';
+        else if (isSpecial) miscCat = 'Special Items';
+
+        ITEM_CATALOG.push({
+          code, name, tier: 'misc', normCode: code, normName: name, qual: 2,
+          category: 'misc', typeName: miscCat, typeCode: '',
+          searchKey: (name + ' ' + code + ' ' + miscCat).toLowerCase(),
+        });
       }
     }
   }
+}
 
-  // ── Unique items (store row index as uniqueId for binary encoding) ──
+// Populate UNIQUE_CATALOG with entries from uniqueitems.txt. Row index is the uniqueId
+// used by the binary encoder; must match the order the editor's propCodeToStatEntries
+// expects for legit save-file compatibility.
+function _buildUniqueItemCatalog(hideCodes) {
   const uData = baseData['uniqueitems'];
-  if (uData) {
-    uData.rows.forEach((row, idx) => {
-      const uniqueName = (row['index']||'').trim();
-      const code       = (row['code']||'').trim();
-      if (!uniqueName || !code) return;
-      if (HIDE_CODES.has(code)) return;
-      const baseName = itemNameByCode[code] || code;
-      const typeCode = ITEM_TYPE_BY_CODE[code] || '';
-      const isJewelryCode = /^(ring|amul)$/.test(typeCode) || /^(rin|amu|jew)$/.test(code);
-      const isQuestItem = QUEST_ITEM_CODES.has(code);
-      // Determine category using bodyloc from itemtypes.txt (more reliable than ARMOR_SET timing)
-      const bodyLocs = ITEM_BODYLOC[typeCode];
-      const isArmorType = bodyLocs && (bodyLocs.has('head') || bodyLocs.has('tors') || bodyLocs.has('feet') || bodyLocs.has('glov') || bodyLocs.has('belt'));
-      const isWeaponType = bodyLocs && (bodyLocs.has('rarm') || bodyLocs.has('larm')) && !isArmorType;
-      const uCat = isQuestItem ? 'skip' : isJewelryCode ? 'Unique Jewelry' : isArmorType ? 'Unique Armor' : isWeaponType ? 'Unique Weapons' : 'Unique Other';
-      if (uCat === 'skip') return; // quest uniques excluded from catalog
-      // Subcategory from type name. Values are [key, fallback] — most pulled from Blizzard item-names.json
-      // so translators get them for free; editor-specific ones (Amazon-class, throwing, hammers, orbs, claws)
-      // use custom ui_sub_* keys.
-      const TYPE_NAMES_U = {
-        axe:['axes','Axes'],swor:['sword','Swords'],mace:['maces','Maces'],club:['maces','Maces'],
-        hamm:['ui_sub_hammers','Hammers'],scep:['scept','Scepters'],
-        pole:['poles','Polearms'],spea:['spear','Spears'],jave:['javel','Javelins'],
-        ajav:['ui_sub_amazon_javelins','Amazon Javelins'],aspe:['ui_sub_amazon_spears','Amazon Spears'],
-        bow:['bows','Bows'],abow:['ui_sub_amazon_bows','Amazon Bows'],xbow:['xbows','Crossbows'],
-        knif:['daggs','Daggers'],tkni:['ui_sub_throwing_knives','Throwing Knives'],taxe:['ui_sub_throwing_axes','Throwing Axes'],
-        wand:['wands','Wands'],staf:['stave','Staves'],orb:['ui_sub_orbs','Orbs'],
-        h2h:['ui_sub_claws','Claws'],h2h2:['ui_sub_claws','Claws'],
-        helm:['helms','Helms'],phlm:['ui_grail_cat_barb_helms','Barbarian Helms'],pelt:['ui_grail_cat_druid_pelts','Druid Pelts'],
-        circ:['circl','Circlets'],grim:['ui_grail_cat_warlock_shields','Warlock Shields'],
-        tors:['r_arm','Body Armor'],shie:['shlds','Shields'],ashd:['ui_grail_cat_paladin_shields','Paladin Shields'],
-        glov:['glove','Gloves'],boot:['boots','Boots'],belt:['belts','Belts'],head:['ui_sub_necro_shields','Necro Shields'],
-        ring:['Rings','Rings'],amul:['amule','Amulets'],
-      };
-      const uSubCatEntry = TYPE_NAMES_U[typeCode];
-      const uSubCat = uSubCatEntry ? L(uSubCatEntry[0], uSubCatEntry[1]) : baseName;
-      UNIQUE_CATALOG.push({ code, uniqueName, baseName, qual:7, uniqueId: idx, category: uCat, subCategory: uSubCat,
-        searchKey: (uniqueName + ' ' + baseName + ' ' + code + ' ' + uSubCat).toLowerCase() });
-    });
-  }
+  if (!uData) return;
+  uData.rows.forEach((row, idx) => {
+    const uniqueName = (row['index'] || '').trim();
+    const code       = (row['code']  || '').trim();
+    if (!uniqueName || !code) return;
+    if (hideCodes.has(code)) return;
+    if (QUEST_ITEM_CODES.has(code)) return; // quest uniques excluded from catalog
 
-  // ── Set items (store row index as setId for binary encoding) ──
+    const baseName = itemNameByCode[code] || code;
+    const typeCode = ITEM_TYPE_BY_CODE[code] || '';
+    const isJewelryCode = /^(ring|amul)$/.test(typeCode) || /^(rin|amu|jew)$/.test(code);
+    // Category: classify via bodyloc from itemtypes.txt (more reliable than ARMOR_SET
+    // timing, which can race if called before type sets are built).
+    const bodyLocs = ITEM_BODYLOC[typeCode];
+    const isArmor  = bodyLocs && (bodyLocs.has('head') || bodyLocs.has('tors') || bodyLocs.has('feet') || bodyLocs.has('glov') || bodyLocs.has('belt'));
+    const isWeapon = bodyLocs && (bodyLocs.has('rarm') || bodyLocs.has('larm')) && !isArmor;
+
+    const category = isJewelryCode ? 'Unique Jewelry'
+                   : isArmor       ? 'Unique Armor'
+                   : isWeapon      ? 'Unique Weapons'
+                   :                 'Unique Other';
+
+    const subEntry = _UNIQUE_SUBCATEGORY_KEYS[typeCode];
+    const subCategory = subEntry ? L(subEntry[0], subEntry[1]) : baseName;
+
+    UNIQUE_CATALOG.push({
+      code, uniqueName, baseName, qual: 7, uniqueId: idx, category, subCategory,
+      searchKey: (uniqueName + ' ' + baseName + ' ' + code + ' ' + subCategory).toLowerCase(),
+    });
+  });
+}
+
+// Populate SET_CATALOG from setitems.txt. Row index is the setId for binary encoding.
+function _buildSetItemCatalog() {
   const sData = baseData['setitems'];
-  if (sData) {
-    sData.rows.forEach((row, idx) => {
-      const setName = (row['index']||'').trim();
-      const setGroup = (row['set']||'').trim();
-      const code    = (row['item']||row['code']||'').trim();
-      if (!setName || !code) return;
-      const baseName = itemNameByCode[code] || code;
-      SET_CATALOG.push({ code, setName, baseName, qual:5, setId: idx, setGroup,
-        searchKey: (setName + ' ' + setGroup + ' ' + baseName + ' ' + code).toLowerCase() });
+  if (!sData) return;
+  sData.rows.forEach((row, idx) => {
+    const setName  = (row['index'] || '').trim();
+    const setGroup = (row['set']   || '').trim();
+    const code     = (row['item']  || row['code'] || '').trim();
+    if (!setName || !code) return;
+    const baseName = itemNameByCode[code] || code;
+    SET_CATALOG.push({
+      code, setName, baseName, qual: 5, setId: idx, setGroup,
+      searchKey: (setName + ' ' + setGroup + ' ' + baseName + ' ' + code).toLowerCase(),
+    });
+  });
+}
+
+// Populate RUNEWORD_CATALOG from runes.txt. Only includes runewords flagged complete=1,
+// sorted by localized display name for stable modal ordering.
+function _buildRunewordCatalog() {
+  const rData = baseData['runes'];
+  if (!rData) return;
+  for (const row of rData.rows) {
+    const rawName = (row['*Rune Name'] || row['Name'] || '').trim();
+    if (!rawName) continue;
+    if ((row['complete'] || '').trim() !== '1') continue;
+
+    const runes = [];
+    for (let i = 1; i <= 6; i++) {
+      const r = (row['Rune' + i] || '').trim();
+      if (r) runes.push(r);
+    }
+    if (runes.length < 2) continue;
+
+    const displayName = stringTable[rawName] || rawName;
+    const runeNames = runes.map(rc => itemNameByCode[rc] || rc).join(' + ');
+    RUNEWORD_CATALOG.push({
+      name: displayName, rawName, runes, runeNames,
+      searchKey: (displayName + ' ' + rawName + ' ' + runes.join(' ') + ' ' + runeNames).toLowerCase(),
     });
   }
+  RUNEWORD_CATALOG.sort((a, b) => a.name.localeCompare(b.name));
+}
 
-  // ── Runewords ──
-  const rData = baseData['runes'];
-  if (rData) {
-    for (const row of rData.rows) {
-      const rawName = (row['*Rune Name'] || row['Name'] || '').trim();
-      if (!rawName) continue;
-      const complete = (row['complete'] || '').trim();
-      if (complete !== '1') continue; // only complete/active runewords
-      const runes = [];
-      for (let i = 1; i <= 6; i++) {
-        const r = (row['Rune' + i] || '').trim();
-        if (r) runes.push(r);
-      }
-      if (runes.length < 2) continue;
-      const displayName = stringTable[rawName] || rawName;
-      const runeNames = runes.map(rc => itemNameByCode[rc] || rc).join(' + ');
-      RUNEWORD_CATALOG.push({
-        name: displayName, rawName, runes, runeNames,
-        searchKey: (displayName + ' ' + rawName + ' ' + runes.join(' ') + ' ' + runeNames).toLowerCase(),
-      });
-    }
-    RUNEWORD_CATALOG.sort((a, b) => a.name.localeCompare(b.name));
-  }
+// Build all four catalogs. Called from loadBaseData() after TSVs are loaded,
+// and from rebuildStringsForLang() after a language switch so localized subcategory
+// labels and runeword display names refresh.
+function buildItemCatalog() {
+  ITEM_CATALOG     = [];
+  UNIQUE_CATALOG   = [];
+  SET_CATALOG      = [];
+  RUNEWORD_CATALOG = [];
+
+  const hideCodes = _deriveHideCodes();
+  _buildBaseItemCatalog(hideCodes);
+  _buildUniqueItemCatalog(hideCodes);
+  _buildSetItemCatalog();
+  _buildRunewordCatalog();
 
   console.log(`buildItemCatalog: ${ITEM_CATALOG.length} base, ${UNIQUE_CATALOG.length} unique, ${SET_CATALOG.length} set items, ${RUNEWORD_CATALOG.length} runewords`);
 }
@@ -9323,10 +9510,13 @@ function renderSharedStash(c) {
 
 window.loadSharedStash = function(file) {
   if (!file) return;
+  const sizeErr = validateSaveFileSize(file);
+  if (sizeErr) { showPopup(sizeErr); return; }
   const reader = new FileReader();
   reader.onload = function(e) {
     const buf = new Uint8Array(e.target.result);
-    if (buf.length < 0x44 || buf[0] !== 0x55 || buf[1] !== 0xAA || buf[2] !== 0x55 || buf[3] !== 0xAA) {
+    // .d2i shares the same 0x55AA55AA magic as .d2s; the 0x44 minimum covers the fixed header.
+    if (buf.length < 0x44 || !hasValidSaveMagic(buf)) {
       showPopup(L('ui_invalid_d2i','Invalid .d2i file — expected 0x55AA55AA signature.'));
       return;
     }
@@ -9418,7 +9608,10 @@ function parseSharedStash() {
             isSharedStash: true,
             _propsDecoded: false,
           });
-        } catch (e) {}
+        } catch (e) {
+          // Binary scan: most matching byte patterns are false positives, so huffman
+          // decode / field reads throw constantly. Logging would flood the console.
+        }
       }
     }
 
@@ -9636,7 +9829,7 @@ function scanGrailFound() {
         if (item.quality === 5 && (item.setItemId !== undefined || item.setId !== undefined))
           key = 's_' + (item.setItemId ?? item.setId);
         if (key) { grailFound.add(key); grailFoundItems.set(key, item); }
-      } catch (e) {}
+      } catch (e) { _logCaught('grail-scan.' + (item.typeCode || '?'), e); }
     }
   }
 }
@@ -9686,7 +9879,9 @@ function parseGrailD2i() {
           typeCode, location: rb(off, 35, 3), numSockets: 0, itemLevel: 0, quality: 0,
           isGrail: true, _propsDecoded: false,
         });
-      } catch (e) {}
+      } catch (e) {
+        // Same as sharedStash scan: false-positive byte patterns throw constantly.
+      }
     }
     tabs.push({ jmOff, count, items });
   }
@@ -9838,10 +10033,12 @@ function addItemsToGrail(itemEntries) {
 
 window.loadGrailFile = function(file) {
   if (!file) return;
+  const sizeErr = validateSaveFileSize(file);
+  if (sizeErr) { showPopup(sizeErr); return; }
   const reader = new FileReader();
   reader.onload = function(e) {
     const buf = new Uint8Array(e.target.result);
-    if (buf.length < 0x44 || buf[0] !== 0x55 || buf[1] !== 0xAA || buf[2] !== 0x55 || buf[3] !== 0xAA) {
+    if (buf.length < 0x44 || !hasValidSaveMagic(buf)) {
       showPopup(L('ui_invalid_d2i','Invalid .d2i file — expected 0x55AA55AA signature.'));
       return;
     }
@@ -10148,17 +10345,13 @@ window.showGrailItemDetail = function(byteOffsets, triggerEl) {
   if (!tt || !content) return;
   const item = findGrailItem(byteOffsets[0]);
   if (!item) return;
-  let html = buildItemTooltipHtml(item);
-  // Add action buttons
-  html += `<hr class="tt-divider"><div style="text-align:center;padding:4px;display:flex;gap:6px;justify-content:center">`;
+  // Grail-specific action row: Copy-to-Inv (only when a character is loaded) + Remove-from-Grail.
+  let actionButtons = '';
   if (parsedChar && parsedChar.items) {
-    html += `<button class="btn" style="font-size:11px;padding:4px 12px;background:#0e2a0e;border-color:var(--d2-green);color:#fff"
-      onclick="event.stopPropagation();startGrailCopyToInventory(${byteOffsets[0]})">${esc(L('ui_btn_copy_to_inv','Copy to Inv'))}</button>`;
+    actionButtons += `<button type="button" class="btn" style="font-size:11px;padding:4px 12px;background:#0e2a0e;border-color:var(--d2-green);color:#fff" onclick="event.stopPropagation();startGrailCopyToInventory(${byteOffsets[0]})">${esc(L('ui_btn_copy_to_inv','Copy to Inv'))}</button>`;
   }
-  html += `<button class="btn" style="font-size:11px;padding:4px 12px;background:#8b2020;color:#fff"
-    onclick="event.stopPropagation();removeGrailItem(${byteOffsets[0]})">${esc(L('ui_btn_remove_from_grail','Remove from Grail'))}</button>`;
-  html += `</div>`;
-  content.innerHTML = html;
+  actionButtons += `<button type="button" class="btn" style="font-size:11px;padding:4px 12px;background:#8b2020;color:#fff" onclick="event.stopPropagation();removeGrailItem(${byteOffsets[0]})">${esc(L('ui_btn_remove_from_grail','Remove from Grail'))}</button>`;
+  content.innerHTML = buildItemTooltipHtml(item, { actionButtons });
   positionTooltip(tt, triggerEl || null);
   _tooltipOpenFrom = byteOffsets[0];
 };
@@ -10383,10 +10576,10 @@ function renderGrailSection(catName, items, found, accentColor, prefix) {
     html += `<div style="padding:8px 14px;border-top:1px solid var(--d2-border)">`;
     if (grid.totalPages > 1) {
       html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <button onclick="grailGridPageNav('${sectionId}', -1)" ${grid.currentPage <= 0 ? 'disabled' : ''}
+        <button type="button" aria-label="${esc(L('ui_btn_prev_page','Previous page'))}" onclick="grailGridPageNav('${sectionId}', -1)" ${grid.currentPage <= 0 ? 'disabled' : ''}
           style="background:var(--d2-surface);border:1px solid var(--d2-border);border-radius:3px;padding:2px 8px;cursor:pointer;color:var(--d2-text);font-size:14px">\u25C0</button>
         <span style="color:var(--d2-text-dim);font-size:11px">${esc(L('ui_grail_page_label','Page'))} ${grid.currentPage + 1} / ${grid.totalPages}</span>
-        <button onclick="grailGridPageNav('${sectionId}', 1)" ${grid.currentPage >= grid.totalPages - 1 ? 'disabled' : ''}
+        <button type="button" aria-label="${esc(L('ui_btn_next_page','Next page'))}" onclick="grailGridPageNav('${sectionId}', 1)" ${grid.currentPage >= grid.totalPages - 1 ? 'disabled' : ''}
           style="background:var(--d2-surface);border:1px solid var(--d2-border);border-radius:3px;padding:2px 8px;cursor:pointer;color:var(--d2-text);font-size:14px">\u25B6</button>
       </div>`;
     }
@@ -10942,7 +11135,7 @@ window.addEventListener('DOMContentLoaded', startBaseFileLoad);
 
 <!-- Floating item tooltip -->
 <div id="itemTooltip">
-  <span class="tt-close" onclick="closeTooltip(true)">✕</span>
+  <button type="button" class="tt-close" onclick="closeTooltip(true)" aria-label="Close tooltip">✕</button>
   <div id="itemTooltipContent"></div>
 </div>
 

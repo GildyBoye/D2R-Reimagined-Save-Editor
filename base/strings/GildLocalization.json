@@ -1373,6 +1373,18 @@
         "enUS": "Clear"
     },
     {
+        "Key": "ui_btn_ok",
+        "enUS": "OK"
+    },
+    {
+        "Key": "ui_btn_prev_page",
+        "enUS": "Previous page"
+    },
+    {
+        "Key": "ui_btn_next_page",
+        "enUS": "Next page"
+    },
+    {
         "Key": "ui_btn_close",
         "enUS": "Close"
     },
@@ -1523,6 +1535,14 @@
     {
         "Key": "ui_invalid_d2i",
         "enUS": "Invalid .d2i file — expected 0x55AA55AA signature."
+    },
+    {
+        "Key": "ui_err_invalid_d2s",
+        "enUS": "Invalid .d2s file — expected 0x55AA55AA signature."
+    },
+    {
+        "Key": "ui_err_file_too_large",
+        "enUS": "File is too large ({size} MB). Maximum supported size is {max} MB."
     },
     {
         "Key": "ui_grail_heading",
