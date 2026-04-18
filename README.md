@@ -1,6 +1,8 @@
 # D2R Hero Editor — Reimagined
 
 Browser-based editor for Diablo II: Resurrected `.d2s` save files using Reimagined mod data.
+Reimagined Mod Links: https://www.nexusmods.com/diablo2resurrected/mods/503 or https://github.com/D2R-Reimagined/d2r-reimagined-mod
+
 
 ---
 
