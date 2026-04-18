@@ -1901,9 +1901,11 @@ function propCodeToStatEntries(code, min, max, par, mode) {
     let statVal = rolled;
 
     // func 1/2/3/6/8: simple value → stat — uses the rolled value
-    // func 5: min damage — writes BOTH mindamage (21) AND secondary_mindamage (23)
+    // func 5: min damage — writes BOTH mindamage (21) AND secondary_mindamage (23).
+    // Both sides must use the same rolled value across min/max/random modes, so the
+    // pair stays internally consistent (matching func 6 below).
     if (func === 5) {
-      statVal = _rollValue(min, min, mode);
+      statVal = _rollValue(min, max, mode);
       _addStatEntry(entries, 'secondary_mindamage', statVal, 0);
     }
 
