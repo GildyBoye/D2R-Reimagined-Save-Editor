@@ -2160,26 +2160,27 @@ function propToDisplay(code, min, max, par) {
     return lines;
   }
   if (code === 'oskill' || code === 'skill') {
-    const skillName = skillNameById[parseInt(par,10)] || `Skill #${par}`;
+    const skillId = _resolveSkillId(par);
+    const skillName = skillNameById[skillId] || (par ? String(par) : `Skill #${skillId}`);
     lines.push(`+${val} to ${skillName}`);
     return lines;
   }
   if (code === 'hit-skill' || code === 'gethit-skill') {
-    const skillId = parseInt(par,10);
-    const skillName = skillNameById[skillId] || `Skill #${skillId}`;
+    const skillId = _resolveSkillId(par);
+    const skillName = skillNameById[skillId] || (par ? String(par) : `Skill #${skillId}`);
     const event = code === 'hit-skill' ? 'on Striking' : 'when Struck';
     lines.push(`${max}% Chance to Cast Level ${min} ${skillName} ${event}`);
     return lines;
   }
   if (code === 'charged') {
-    const skillId = parseInt(par,10);
-    const skillName = skillNameById[skillId] || `Skill #${skillId}`;
+    const skillId = _resolveSkillId(par);
+    const skillName = skillNameById[skillId] || (par ? String(par) : `Skill #${skillId}`);
     lines.push(`Level ${max} ${skillName} (${min}/${min} Charges)`);
     return lines;
   }
   if (code === 'aura') {
-    const skillId = parseInt(par,10);
-    const skillName = skillNameById[skillId] || `Skill #${skillId}`;
+    const skillId = _resolveSkillId(par);
+    const skillName = skillNameById[skillId] || (par ? String(par) : `Skill #${skillId}`);
     lines.push(`Level ${val} ${skillName} Aura When Equipped`);
     return lines;
   }
@@ -2358,8 +2359,8 @@ function propToDisplay(code, min, max, par) {
     }
     // func 11: skill on hit
     if (func === 11) {
-      const skillId = parseInt(par, 10);
-      const skillName = skillNameById[skillId] || `Skill #${skillId}`;
+      const skillId = _resolveSkillId(par);
+      const skillName = skillNameById[skillId] || (par ? String(par) : `Skill #${skillId}`);
       lines.push(`${max}% Chance to Cast Level ${min} ${skillName} on Striking`);
       return lines;
     }
@@ -2385,8 +2386,8 @@ function propToDisplay(code, min, max, par) {
     }
     // func 22: oskill
     if (func === 22) {
-      const skillId = parseInt(par, 10);
-      const skillName = skillNameById[skillId] || `Skill #${skillId}`;
+      const skillId = _resolveSkillId(par);
+      const skillName = skillNameById[skillId] || (par ? String(par) : `Skill #${skillId}`);
       lines.push(`+${val} to ${skillName}`);
       return lines;
     }
@@ -3209,7 +3210,6 @@ function buildItemNameMap() {
     console.log(`buildItemNameMap: loaded ${setItemNames.filter(Boolean).length} set item names`);
   }
 
-  buildItemCatalog();
   buildSkillNameMap();
   buildMagicAffixMaps();
   buildSetNameMap();
@@ -3226,6 +3226,12 @@ function buildItemNameMap() {
   buildStatDescriptors();
   buildSocketAndTypeMap();
   buildEquipRestrictions();
+  // buildItemCatalog() depends on ITEM_TYPE_BY_CODE + ITEM_BODYLOC for unique-item
+  // armor/weapon classification, so it must run AFTER buildSocketAndTypeMap and
+  // buildEquipRestrictions. Running it earlier left bodyLocs undefined for every
+  // item and dumped all uniques into the "Unique Weapons" bucket via the 'Unique
+  // Other' fallthrough.
+  buildItemCatalog();
   buildWeaponAndBeltMeta();
   buildRunewordTable();
   buildExpectedStatCounts();
@@ -4178,14 +4184,19 @@ const HUFF_ENC = {' ':'10','0':'11111011','1':'1111100','2':'001100','3':'110110
 
 // Encode a compact (simple) item — only for truly simple items like potions, scrolls, gems
 function encodeCompactItem(code, col, row, storage, parent, equipSlot) {
-  const buf = new Uint8Array(20);
+  const buf = new Uint8Array(24);
   const wb = (pos, v) => { if (v) buf[pos>>3] |= (1 << (pos & 7)); };
-  // Gems use b13=1, b17=0; everything else (potions/scrolls/misc) uses b13=0, b17=1
+  const wbN = (pos, val, n) => { for (let i=0;i<n;i++) wb(pos+i, (val>>i)&1); };
+  // Gems use b13=1, b17=0; rejuv potions (rvs/rvl) use b10=1, b17=0 (D2RR variant);
+  // everything else (healing/mana potions, scrolls, misc) uses b13=0, b17=1.
   const isGem = /^gm[a-z]$/.test(code) || /^gf[a-z]$/.test(code) || /^gs[a-z]$/.test(code)
              || /^gl[a-z]$/.test(code) || /^gp[a-z]$/.test(code) || /^gc[a-z]$/.test(code)
              || /^gz[a-z]$/.test(code) || /^sk[a-z]$/.test(code);
+  const isRejuv = code === 'rvs' || code === 'rvl';
   wb(4,  1);  // identified
-  if (isGem) wb(13, 1);  else wb(17, 1);  // gems get b13; potions/scrolls/misc get b17
+  if (isGem)        wb(13, 1);
+  else if (isRejuv) wb(10, 1);   // D2RR-specific rejuv-potion marker
+  else              wb(17, 1);   // standard potion/scroll/misc marker
   wb(21, 1);  // simple/compact
   wb(23, 1);  // always-1 marker
   wb(32, 1);  // D2R padding bits
@@ -4204,6 +4215,13 @@ function encodeCompactItem(code, col, row, storage, parent, equipSlot) {
     wb(pos, 1); pos++;          // 1 bit (gem tail marker)
     while (pos & 7) pos++;      // align to byte
     pos += 8;                   // extra zero byte (game requires it)
+  } else if (isRejuv) {
+    // D2RR rejuv potions carry a 9-bit "doses" field right after the Huffman code.
+    // Observed value in real saves = 2 for Full Rejuv (rvl). Using 2 for both rvs/rvl
+    // matches the game-written format; without it, the game's parser drifts and the
+    // character fails to load ("failed to join game").
+    wbN(pos, 2, 9); pos += 9;
+    while (pos & 7) pos++;      // align to byte
   } else {
     while (pos & 7) pos++;      // align to byte
   }
@@ -6639,7 +6657,7 @@ function buildInvGrid(items, gridW, gridH, cellPx=29, insertContext={}) {
           style="grid-column:${col+1}/span ${w};grid-row:${row+1}/span ${h};position:relative"
           ${dragAttr}
           onclick="showItemDetailStack([${clickList}],this);pinTooltip()"
-          onmouseenter="showItemDetailStack([${clickList}],this)"
+          onmouseenter="showItemDetailStack([${clickList}],this,true)"
           onmouseleave="closeTooltip(false)"
           title="${esc(name)}">
           ${countBadge}
@@ -6727,10 +6745,11 @@ function _hideDragIndicator() {
 }
 
 document.addEventListener('dragover', function(e) {
-  // Allow drag within inventory grid
+  // Allow drag within inventory grid, or from belt → inventory
   if (_dragItem) {
     const grid = e.target.closest('.inv-grid-wrap');
-    if (grid && grid === _dragSourceGrid) {
+    const fromBelt = _dragItem.parent === 2 && _dragSourceGrid === null;
+    if (grid && (grid === _dragSourceGrid || fromBelt)) {
       e.preventDefault(); e.dataTransfer.dropEffect = 'move';
       _showDragIndicator(grid, e);
     } else { _hideDragIndicator(); }
@@ -6749,7 +6768,8 @@ document.addEventListener('dragover', function(e) {
 document.addEventListener('drop', function(e) {
   if (!_dragItem) return;
   const grid = e.target.closest('.inv-grid-wrap');
-  if (!grid || grid !== _dragSourceGrid) { _dragItem = null; return; }
+  const fromBelt = _dragItem.parent === 2 && _dragSourceGrid === null;
+  if (!grid || (grid !== _dragSourceGrid && !fromBelt)) { _dragItem = null; return; }
   e.preventDefault();
 
   const cellPx = parseInt(grid.dataset.cellPx, 10) || 50;
@@ -6771,10 +6791,10 @@ document.addEventListener('drop', function(e) {
   const item = _dragItem;
   const oldX = item.x, oldY = item.y;
 
-  // Check if position actually changed
-  if (dropX === oldX && dropY === oldY) {
+  // Check if position actually changed (only meaningful for same-grid moves)
+  if (!fromBelt && dropX === oldX && dropY === oldY) {
     _dragItem = null;
-    renderTab(); // re-render to restore opacity
+    renderTab();
     return;
   }
 
@@ -6803,23 +6823,39 @@ document.addEventListener('drop', function(e) {
 
   if (blocked) {
     _dragItem = null;
-    renderTab(); // snap back
+    renderTab();
     return;
   }
 
-  // Valid drop — update item position
-  item.x = dropX;
-  item.y = dropY;
-
-  // Write new x/y into the binary (bit 42 = x/4bits, bit 46 = y/3bits)
-  if (workBytes && item.byteOffset >= 0) {
-    _writeBitsAt(workBytes, item.byteOffset, 42, 4, dropX);
-    _writeBitsAt(workBytes, item.byteOffset, 46, 3, dropY);
+  if (fromBelt) {
+    // Belt → inventory: flip parent/storage and rewrite the header bits.
+    item.parent = 0;
+    item.location = 0;
+    item.equipSlot = 0;
+    item.storage = storage;
+    item.x = dropX;
+    item.y = dropY;
+    if (workBytes && item.byteOffset >= 0 && !item.isVirtual) {
+      _writeBitsAt(workBytes, item.byteOffset, 35, 3, 0);
+      _writeBitsAt(workBytes, item.byteOffset, 38, 4, 0);
+      _writeBitsAt(workBytes, item.byteOffset, 42, 4, dropX);
+      _writeBitsAt(workBytes, item.byteOffset, 46, 3, dropY);
+      _writeBitsAt(workBytes, item.byteOffset, 50, 3, storage);
+    }
     markDirty();
+  } else {
+    // Same-grid reposition
+    item.x = dropX;
+    item.y = dropY;
+    if (workBytes && item.byteOffset >= 0) {
+      _writeBitsAt(workBytes, item.byteOffset, 42, 4, dropX);
+      _writeBitsAt(workBytes, item.byteOffset, 46, 3, dropY);
+      markDirty();
+    }
   }
 
   _dragItem = null;
-  renderTab(); // re-render with new position
+  renderTab();
 });
 
 document.addEventListener('dragend', function(e) {
@@ -6948,9 +6984,41 @@ window.equipSlotDrop = function(e, targetSlotId) {
   }
 
   if (eqItem) {
-    // Dragging from one equip slot to another — only if same slot type
+    // Dragging from one equip slot to another — no-op if same slot
     if (_dragEquipSlot === targetSlotId) { _dragEquipItem = null; renderTab(); return; }
-    // For now, just snap back — slot-to-slot swap is complex
+
+    // Validate source can live in target slot
+    if (!canEquipInSlot(eqItem.typeCode, targetSlotId)) {
+      showPopup(L('ui_err_cannot_equip_slot','This item cannot be equipped in that slot.'));
+      _dragEquipItem = null; renderTab(); return;
+    }
+
+    const existing = (parsedChar.items||[]).find(it => it.parent===1 && it.equipSlot===targetSlotId && it !== eqItem);
+
+    if (existing) {
+      // Swap: existing must fit in source slot
+      if (IS_2HANDED.has(eqItem.typeCode) || IS_2HANDED.has(existing.typeCode)) {
+        showPopup(L('ui_err_swap_2h','Cannot swap with a two-handed weapon this way. Move to inventory first.'));
+        _dragEquipItem = null; renderTab(); return;
+      }
+      if (!canEquipInSlot(existing.typeCode, _dragEquipSlot)) {
+        showPopup(L('ui_err_swap_invalid','Cannot swap — the target item does not fit in the source slot.'));
+        _dragEquipItem = null; renderTab(); return;
+      }
+      existing.equipSlot = _dragEquipSlot;
+      if (workBytes && existing.byteOffset >= 0 && !existing.isVirtual) {
+        _writeBitsAt(workBytes, existing.byteOffset, 38, 4, _dragEquipSlot);
+      }
+    } else if (IS_2HANDED.has(eqItem.typeCode)) {
+      // Moving a 2H weapon between hand slots — update equipSlot only.
+      // (Target is empty; the 2H implicitly occupies both hands.)
+    }
+
+    eqItem.equipSlot = targetSlotId;
+    if (workBytes && eqItem.byteOffset >= 0 && !eqItem.isVirtual) {
+      _writeBitsAt(workBytes, eqItem.byteOffset, 38, 4, targetSlotId);
+    }
+    markDirty();
     _dragEquipItem = null;
     renderTab();
     return;
@@ -7041,7 +7109,7 @@ function renderInventory(c) {
         draggable="true" ondragstart="equipSlotDragStart(event,${item.byteOffset},${id})"
         ${dropAttrs}
         onclick="showItemDetail(${item.byteOffset},this);pinTooltip()"
-        onmouseenter="showItemDetail(${item.byteOffset},this)"
+        onmouseenter="showItemDetail(${item.byteOffset},this,true)"
         onmouseleave="closeTooltip(false)">
         <div class="pd-label">${label}</div>
         <div class="pd-name ${cls}">${esc(name)}</div>
@@ -7196,13 +7264,16 @@ function renderInventory(c) {
         const {name,cls}=itemDisplayName(item);
         const beltBorderCls = itemQualityCls(item);
         beltHtml+=`<div class="pd-slot has-item ${beltBorderCls}" style="width:${BELT_CELL}px;height:${BELT_CELL}px;${dimStyle}"
+          draggable="true" ondragstart="beltItemDragStart(event,${item.byteOffset})"
+          ondragover="beltSlotDragOver(event)" ondragleave="beltSlotDragLeave(event)" ondrop="beltSlotDrop(event,${slotIdx})"
           onclick="showItemDetail(${item.byteOffset},this);pinTooltip()"
-          onmouseenter="showItemDetail(${item.byteOffset},this)"
+          onmouseenter="showItemDetail(${item.byteOffset},this,true)"
           onmouseleave="closeTooltip(false)">
           <div class="pd-name ${cls}" style="font-size:8px">${esc(name.slice(0,5))}</div>
         </div>`;
       } else if (isActive) {
         beltHtml+=`<div class="pd-slot empty" style="width:${BELT_CELL}px;height:${BELT_CELL}px;cursor:pointer"
+          ondragover="beltSlotDragOver(event)" ondragleave="beltSlotDragLeave(event)" ondrop="beltSlotDrop(event,${slotIdx})"
           onclick="showBeltPotionPicker(${slotIdx},this)"
           title="Insert potion">
           <div style="font-size:10px;color:var(--d2-text-dim);opacity:0.4">+</div>
@@ -7247,6 +7318,16 @@ const BELT_POTIONS = [
   {code:'vps',name:'Stamina'},
 ];
 
+// Items accepted into belt slots (potions + TP/ID scrolls, D2RR + vanilla codes)
+const BELT_DROPPABLE = new Set([
+  'hpo','hpf','mpo','mpf',
+  'hp1','hp2','hp3','hp4','hp5',
+  'mp1','mp2','mp3','mp4','mp5',
+  'rvs','rvl',
+  'yps','wms','vps',
+  'tsc','isc',
+]);
+
 window.showBeltPotionPicker = function(slotIdx, el) {
   // Close any existing picker
   const old = document.getElementById('beltPotionPicker');
@@ -7268,16 +7349,125 @@ window.showBeltPotionPicker = function(slotIdx, el) {
 
   document.body.appendChild(picker);
 
-  // Position near the clicked slot
+  // Position near the clicked slot — prefer below, flip above when it would clip.
   const rect = el.getBoundingClientRect();
-  picker.style.left = Math.min(rect.left, window.innerWidth - picker.offsetWidth - 8) + 'px';
-  picker.style.top = Math.max(0, rect.bottom + 4) + 'px';
+  const pw = picker.offsetWidth;
+  const ph = picker.offsetHeight;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const gap = 4;
+  const margin = 8;
+
+  let left = Math.min(Math.max(margin, rect.left), vw - pw - margin);
+  let top;
+  if (rect.bottom + gap + ph <= vh - margin) {
+    top = rect.bottom + gap;                  // fits below
+  } else if (rect.top - gap - ph >= margin) {
+    top = rect.top - gap - ph;                // flip above
+  } else {
+    top = Math.max(margin, vh - ph - margin); // last resort — clamp to viewport
+  }
+  picker.style.left = left + 'px';
+  picker.style.top  = top + 'px';
 
   // Close on outside click
   setTimeout(() => {
     const close = (e) => { if (!picker.contains(e.target)) { picker.remove(); document.removeEventListener('mousedown', close); } };
     document.addEventListener('mousedown', close);
   }, 0);
+};
+
+// ── Belt drag-and-drop ──
+window.beltItemDragStart = function(e, byteOffset) {
+  const item = (parsedChar.items||[]).find(it => it.byteOffset === byteOffset);
+  if (!item) return;
+  _dragItem = item;
+  const {w, h} = getItemSize(item.typeCode);
+  _dragItemW = w;
+  _dragItemH = h;
+  _dragSourceGrid = null; // belt is not an inv-grid-wrap
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', String(byteOffset));
+  requestAnimationFrame(() => { e.target.style.opacity = '0.4'; });
+};
+
+window.beltSlotDragOver = function(e) {
+  if (!_dragItem) return;
+  if (!BELT_DROPPABLE.has(_dragItem.typeCode)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.currentTarget.style.outline = '2px solid #4a9a4a';
+};
+
+window.beltSlotDragLeave = function(e) {
+  e.currentTarget.style.outline = '';
+};
+
+window.beltSlotDrop = function(e, slotIdx) {
+  e.preventDefault();
+  e.currentTarget.style.outline = '';
+  const src = _dragItem;
+  _dragItem = null;
+  if (!src) return;
+  if (!BELT_DROPPABLE.has(src.typeCode)) {
+    showPopup(L('ui_err_belt_invalid','That item cannot go in a belt slot.'));
+    renderTab();
+    return;
+  }
+
+  // No-op if dropping on source's own slot
+  const fromBelt = src.parent === 2;
+  if (fromBelt && (src.x|0) === slotIdx) { renderTab(); return; }
+
+  const existing = (parsedChar.items||[]).find(it =>
+    it !== src && it.parent === 2 && (it.x|0) === slotIdx && !it.isMerc
+  );
+
+  if (existing) {
+    if (fromBelt) {
+      // Belt → belt with occupied target: swap slot indices
+      const srcSlot = src.x|0;
+      existing.x = srcSlot;
+      if (workBytes && existing.byteOffset >= 0 && !existing.isVirtual) {
+        _writeBitsAt(workBytes, existing.byteOffset, 42, 4, srcSlot & 0xF);
+      }
+    } else {
+      // Inventory → belt with occupied target: bump existing to inventory
+      const {w:ew,h:eh} = getItemSize(existing.typeCode);
+      const freePos = _findFreeInventorySlot(ew, eh, src);
+      if (!freePos) {
+        showPopup(L('ui_err_unequip_no_space','Not enough inventory space to unequip the existing item.'));
+        renderTab();
+        return;
+      }
+      existing.parent = 0; existing.location = 0; existing.equipSlot = 0;
+      existing.storage = 1; existing.x = freePos.x; existing.y = freePos.y;
+      if (workBytes && existing.byteOffset >= 0 && !existing.isVirtual) {
+        _writeBitsAt(workBytes, existing.byteOffset, 35, 3, 0);
+        _writeBitsAt(workBytes, existing.byteOffset, 38, 4, 0);
+        _writeBitsAt(workBytes, existing.byteOffset, 42, 4, freePos.x);
+        _writeBitsAt(workBytes, existing.byteOffset, 46, 3, freePos.y);
+        _writeBitsAt(workBytes, existing.byteOffset, 50, 3, 1);
+      }
+    }
+  }
+
+  // Move source into the target belt slot
+  src.parent = 2;
+  src.location = 2;
+  src.equipSlot = 0;
+  src.storage = 0;
+  src.x = slotIdx;
+  src.y = 0;
+  if (workBytes && src.byteOffset >= 0 && !src.isVirtual) {
+    _writeBitsAt(workBytes, src.byteOffset, 35, 3, 2);
+    _writeBitsAt(workBytes, src.byteOffset, 38, 4, 0);
+    _writeBitsAt(workBytes, src.byteOffset, 42, 4, slotIdx & 0xF);
+    _writeBitsAt(workBytes, src.byteOffset, 46, 3, 0);
+    _writeBitsAt(workBytes, src.byteOffset, 50, 3, 0);
+  }
+  markDirty();
+  renderTab();
 };
 
 function insertBeltPotion(slotIdx, code) {
@@ -8551,8 +8741,12 @@ function findSharedStashItem(byteOffset) {
   return null;
 }
 
-window.showSharedStashItemDetail = function(byteOffsets, triggerEl) {
+window.showSharedStashItemDetail = function(byteOffsets, triggerEl, fromHover) {
   if (!byteOffsets || !byteOffsets.length) return;
+  // If the tooltip is already pinned (user clicked an item), hover events over adjacent
+  // cells must not overwrite the content — otherwise moving the mouse toward an action
+  // button rebinds the button to the hovered item instead of the pinned one.
+  if (fromHover && _tooltipPinned) return;
   const tt = document.getElementById('itemTooltip');
   const content = document.getElementById('itemTooltipContent');
   if (!tt || !content) return;
@@ -8576,7 +8770,12 @@ window.showSharedStashItemDetail = function(byteOffsets, triggerEl) {
   _tooltipOpenFrom = byteOffsets[0];
 };
 
-window.showItemDetail = function(byteOffset, triggerEl) {
+window.showItemDetail = function(byteOffset, triggerEl, fromHover) {
+  // If the tooltip is already pinned (user clicked an item), hover events over adjacent
+  // cells must not overwrite the content — otherwise moving the mouse toward the Remove
+  // or Copy Item button rebinds those buttons to the hovered item. This was the
+  // "deleting potions re-targets a different potion" bug on belts and tight inventories.
+  if (fromHover && _tooltipPinned) return;
   const item = (parsedChar.items||[]).find(it => it.byteOffset === byteOffset);
   if (!item) return;
   const tt = document.getElementById('itemTooltip');
@@ -8631,9 +8830,12 @@ window.startCopyItem = function(byteOffset) {
   setTimeout(() => showGrailPlacementMode(), 50);
 };
 
-window.showItemDetailStack = function(byteOffsets, triggerEl) {
+window.showItemDetailStack = function(byteOffsets, triggerEl, fromHover) {
   if (!byteOffsets || !byteOffsets.length) return;
-  if (byteOffsets.length === 1) { showItemDetail(byteOffsets[0], triggerEl); return; }
+  // Same pinned-state guard as showItemDetail — don't let hover over an adjacent cell
+  // overwrite an item the user has pinned.
+  if (fromHover && _tooltipPinned) return;
+  if (byteOffsets.length === 1) { showItemDetail(byteOffsets[0], triggerEl, fromHover); return; }
   const tt = document.getElementById('itemTooltip');
   const content = document.getElementById('itemTooltipContent');
   if (!tt || !content) return;
@@ -8803,7 +9005,13 @@ const _FORCE_SHOW_BASE_CODES = new Set([
   'pk1','pk2','pk3',
   'box','bks',
   'hst','qf2',
+  // D2RR-specific potions (spawnable=0 in misc.txt — monster drops / vendor items only;
+  // force-showing so the user can insert them for testing and belt fills)
+  'hpo','hpf','mpo','mpf','rvs','rvl','vps',
 ]);
+
+// Misc-type codes → "Potions" subcategory
+const _POTION_TYPES = new Set(['hpot','mpot','rpot','spot','apot','wpot']);
 
 // Unique-item type-code → [string-table key, English fallback] for subcategory labels.
 // Pulls from Blizzard item-names.json where possible so translators get subcategory
@@ -8862,7 +9070,10 @@ function _buildBaseItemCatalog(hideCodes) {
         const normName = (tier === 'N') ? name : (itemNameByCode[norm] || norm || name);
         ITEM_CATALOG.push({
           code, name, tier, normCode: norm || code, normName, qual: 2, category, typeName, typeCode,
-          searchKey: (name + ' ' + normName + ' ' + code + ' ' + typeName).toLowerCase(),
+          // Include rawName (the English misc/weapons/armor.txt 'name') so searches on
+          // the canonical term still hit items that D2RR renamed in the string table
+          // (e.g. 'Rejuv' finding rvs/rvl even though they display as '35%' / 'Full').
+          searchKey: (name + ' ' + normName + ' ' + rawName + ' ' + code + ' ' + typeName).toLowerCase(),
         });
       } else {
         // Misc items get a richer subcategory breakdown for the insert modal.
@@ -8883,12 +9094,18 @@ function _buildBaseItemCatalog(hideCodes) {
         else if (isGem)     miscCat = 'Gems';
         else if (isCharm)   miscCat = 'Charms';
         else if (isOrb)     miscCat = 'Orbs';
+        else if (_POTION_TYPES.has(typeCode)) miscCat = 'Potions';
+        else if (typeCode === 'scro') miscCat = 'Scrolls';
         else if (isSpecial) miscCat = 'Special Items';
 
         ITEM_CATALOG.push({
           code, name, tier: 'misc', normCode: code, normName: name, qual: 2,
           category: 'misc', typeName: miscCat, typeCode: '',
-          searchKey: (name + ' ' + code + ' ' + miscCat).toLowerCase(),
+          // rawName is the English misc.txt 'name' (e.g. 'Rejuvenation Potion'). The
+          // displayed `name` comes from the localized string table which D2RR often
+          // shortens or renames (rvs→'35%', rvl→'Full') — including rawName keeps the
+          // canonical English term searchable regardless of locale or mod renaming.
+          searchKey: (name + ' ' + rawName + ' ' + code + ' ' + miscCat).toLowerCase(),
         });
       }
     }
@@ -8913,8 +9130,11 @@ function _buildUniqueItemCatalog(hideCodes) {
     const isJewelryCode = /^(ring|amul)$/.test(typeCode) || /^(rin|amu|jew)$/.test(code);
     // Category: classify via bodyloc from itemtypes.txt (more reliable than ARMOR_SET
     // timing, which can race if called before type sets are built).
+    // Shields (shie/ashd/head/grim) live in the larm slot but are armor, not weapons —
+    // without this the unique catalog buckets every shield under "Unique Weapons".
     const bodyLocs = ITEM_BODYLOC[typeCode];
-    const isArmor  = bodyLocs && (bodyLocs.has('head') || bodyLocs.has('tors') || bodyLocs.has('feet') || bodyLocs.has('glov') || bodyLocs.has('belt'));
+    const isShieldType = typeCode === 'shie' || typeCode === 'ashd' || typeCode === 'head' || typeCode === 'grim';
+    const isArmor  = isShieldType || (bodyLocs && (bodyLocs.has('head') || bodyLocs.has('tors') || bodyLocs.has('feet') || bodyLocs.has('glov') || bodyLocs.has('belt')));
     const isWeapon = bodyLocs && (bodyLocs.has('rarm') || bodyLocs.has('larm')) && !isArmor;
 
     const category = isJewelryCode ? 'Unique Jewelry'
@@ -9043,7 +9263,9 @@ window.filterModalItems = function() {
     else { if (!miscGroups[tn]) miscGroups[tn]=[]; miscGroups[tn].push(fmtBase(item)); }
   }
 
-  // Group uniques by category → subcategory
+  // Group uniques by category → subcategory. Only 'Unique Weapons' go in the weapon
+  // bucket — anything not explicitly classified as a weapon defaults to Armor (user
+  // rule: only hand-held items belong under Unique Weapons).
   const uniqueWeaponGroups = {}, uniqueArmorGroups = {}, uniqueJewelry = [];
   for (const item of UNIQUE_CATALOG) {
     if (q && !item.searchKey.includes(q)) continue;
@@ -9051,8 +9273,8 @@ window.filterModalItems = function() {
     const sub = item.subCategory || 'Other';
     const fmt = fmtUnique(item);
     if (item.category === 'Unique Jewelry') { uniqueJewelry.push(fmt); }
-    else if (item.category === 'Unique Armor') { if (!uniqueArmorGroups[sub]) uniqueArmorGroups[sub]=[]; uniqueArmorGroups[sub].push(fmt); }
-    else { if (!uniqueWeaponGroups[sub]) uniqueWeaponGroups[sub]=[]; uniqueWeaponGroups[sub].push(fmt); }
+    else if (item.category === 'Unique Weapons') { if (!uniqueWeaponGroups[sub]) uniqueWeaponGroups[sub]=[]; uniqueWeaponGroups[sub].push(fmt); }
+    else { if (!uniqueArmorGroups[sub]) uniqueArmorGroups[sub]=[]; uniqueArmorGroups[sub].push(fmt); }
   }
 
   // Group sets by set name
@@ -9753,7 +9975,7 @@ function buildSharedStashGrid(items, gridW, gridH, cellPx) {
         html += `<div class="inv-item ${borderCls}"
           style="grid-column:${col+1}/span ${w};grid-row:${row+1}/span ${h};position:relative"
           onclick="showSharedStashItemDetail([${clickList}],this);pinTooltip()"
-          onmouseenter="showSharedStashItemDetail([${clickList}],this)"
+          onmouseenter="showSharedStashItemDetail([${clickList}],this,true)"
           onmouseleave="closeTooltip(false)"
           title="${esc(name)}">
           ${countBadge}
@@ -10390,8 +10612,11 @@ window.grailGridPageNav = function(sectionId, delta) {
   renderGrail(document.getElementById('tabContent'));
 };
 
-window.showGrailItemDetail = function(byteOffsets, triggerEl) {
+window.showGrailItemDetail = function(byteOffsets, triggerEl, fromHover) {
   if (!byteOffsets || !byteOffsets.length) return;
+  // Same pinned-state guard as showItemDetail — don't let hover over adjacent grail
+  // cells overwrite an item the user has pinned (Copy to Inv / Remove from Grail buttons).
+  if (fromHover && _tooltipPinned) return;
   const tt = document.getElementById('itemTooltip');
   const content = document.getElementById('itemTooltipContent');
   if (!tt || !content) return;
@@ -10704,7 +10929,7 @@ function buildGrailCategoryGrid(items, gridW, gridH, cellPx, pageIndex) {
           html += `<div class="inv-item ${borderCls}"
             style="grid-column:${col + 1}/span ${p.w};grid-row:${row + 1}/span ${p.h};position:relative"
             onclick="showGrailItemDetail([${p.grailItem.byteOffset}],this);pinTooltip()"
-            onmouseenter="showGrailItemDetail([${p.grailItem.byteOffset}],this)"
+            onmouseenter="showGrailItemDetail([${p.grailItem.byteOffset}],this,true)"
             onmouseleave="closeTooltip(false)"
             title="${esc(name)}">
             <div class="inv-item-name ${cls}">${esc(displayName)}</div>
