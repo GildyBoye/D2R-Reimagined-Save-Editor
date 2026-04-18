@@ -8793,7 +8793,17 @@ const _BASE_TYPE_CATEGORY_NAMES = {
 };
 
 // Items normally hidden (spawnable=0) that should still appear in the catalog.
-const _FORCE_SHOW_BASE_CODES = new Set(['ua1','ua2','ua3','ua4','ua5','pk1','pk2','pk3']);
+// Uber drops + quest items users need to insert for testing/completion:
+//   ua1-ua5 / pk1-pk3 — Uber statues + Uber keys (Torch/Anni quest line)
+//   box / bks         — Horadric Cube / Scroll of Inifuss (misc with spawnable=0)
+//   hst / qf2         — Horadric Staff / Khalim's Will (weapons; also routed to the
+//                       Quest Items subcategory below even though they live in weapons.txt)
+const _FORCE_SHOW_BASE_CODES = new Set([
+  'ua1','ua2','ua3','ua4','ua5',
+  'pk1','pk2','pk3',
+  'box','bks',
+  'hst','qf2',
+]);
 
 // Unique-item type-code → [string-table key, English fallback] for subcategory labels.
 // Pulls from Blizzard item-names.json where possible so translators get subcategory
@@ -8836,7 +8846,12 @@ function _buildBaseItemCatalog(hideCodes) {
       const typeName = _BASE_TYPE_CATEGORY_NAMES[typeCode]
         || (src === 'weapons' ? 'Other Weapons' : src === 'armor' ? 'Other Armor' : '');
 
-      if (hasTiers) {
+      // Quest items always go to the "Quest Items" subcategory of Misc / Consumables,
+      // regardless of whether they live in weapons.txt (Horadric Staff, Khalim's Will)
+      // or misc.txt (Horadric Cube, Scroll of Inifuss). Users look for them there first.
+      const isQuest = QUEST_ITEM_CODES.has(code);
+
+      if (hasTiers && !isQuest) {
         // Weapons and armor carry normal/exceptional/elite tier triples.
         const norm  = (row['normcode']  || '').trim();
         const uber  = (row['ubercode']  || '').trim();
