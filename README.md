@@ -2,6 +2,8 @@
 
 Browser-based editor for Diablo II: Resurrected `.d2s` save files using Reimagined mod data.
 
+Maintained by Gildyboye, not the Reimagined team. Unofficial.
+
 Reimagined Mod Links: https://www.nexusmods.com/diablo2resurrected/mods/503 or https://github.com/D2R-Reimagined/d2r-reimagined-mod
 
 
