@@ -4290,6 +4290,20 @@ function encodeExtendedItem(item) {
   // cs (1 bit) — 0 (no class specific)
   wbN(pos, 0, 1); pos += 1;
 
+  // D2RR extra-bit rule (verified against GildBarb.d2s / Mayb.d2s known-good items):
+  //   - Jewelry / charms / jewels / misc (non-armor, non-weapon): 1 extra bit after
+  //     the quality-specific field for q=5 (set) and q=7 (unique).
+  //   - Armor / weapons: NO extra bit. Their binary goes directly from set_id/unique_id
+  //     to the timestamp bit.
+  // Confirmed by decoding:
+  //   • Spring Facet (jew q=7): WITH_EXTRA → clean lightmindam(50) first stat.
+  //   • Demonic Chuckle / Evil Humor / Temptation's Death (rin/amu q=5): WITH_EXTRA → clean maxhp/maxmana.
+  //   • hbl(131) / fhl(16) set helmets, 7m7(75) / 7gs(238) set weapons: NO_EXTRA → valid def/durability and stat list; WITH_EXTRA gives impossible durability and garbage stats.
+  // Decoder comment at _readPropList agrees: gap is for "unique/set non-armor items like charms and rings".
+  const isArmor = ARMOR_SET.has(code);
+  const isWeapon = WEAPON_SET.has(code);
+  const wantsNonArmorExtraBit = !isArmor && !isWeapon;
+
   // Quality-specific fields
   if (quality === 1) {
     wbN(pos, 0, 3); pos += 3;
@@ -4300,17 +4314,14 @@ function encodeExtendedItem(item) {
     wbN(pos, item._suffixId || 0, 11); pos += 11;
   } else if (quality === 5) {
     wbN(pos, item.setId ?? item.setItemId ?? 0, 12); pos += 12;
-    pos += 1;  // D2RR extra bit after set id — matches magic/rare/crafted pattern
+    if (wantsNonArmorExtraBit) pos += 1;
   } else if (quality === 6 || quality === 8) {
     wbN(pos, 0, 8); pos += 8;
     wbN(pos, 0, 8); pos += 8;
     for (let i = 0; i < 6; i++) { wbN(pos, 0, 1); pos += 1; }
   } else if (quality === 7) {
     wbN(pos, item.uniqueId ?? 0, 12); pos += 12;
-    pos += 1;  // D2RR extra bit after unique id — verified from Mayb.d2s Spring Facet (id 392).
-    // Without this the stat list starts 1 bit early and the game reads stat id 100 instead of
-    // 50 (lightmindam) on facets → crash on load. Decoder compensates via _readPropList retry
-    // but the encoder must write the bit for the game itself to parse the item correctly.
+    if (wantsNonArmorExtraBit) pos += 1;
   }
   // D2RR: runes (quality=2) need an extra bit (verified against real game Cham encoding)
   if (isRuneCode) pos += 1;
@@ -4318,10 +4329,7 @@ function encodeExtendedItem(item) {
   // timestamp (1 bit) — 0
   wbN(pos, 0, 1); pos += 1;
 
-  // Type-specific fields
-  const isArmor = ARMOR_SET.has(code);
-  const isWeapon = WEAPON_SET.has(code);
-
+  // Type-specific fields (isArmor / isWeapon already declared above for the extra-bit gate)
   if (isArmor) {
     // base_defense (11 bits) — get from armor.txt
     let baseDef = 0;
@@ -4365,9 +4373,31 @@ function encodeExtendedItem(item) {
     wbN(pos, item.numSockets & 0xF, 4); pos += 4;
   }
 
+  // Set items: write sbf + partial bonus stat list per defined slot from setitems.txt.
+  //
+  // The game crashes on join whenever a character wears multiple pieces of the same
+  // set and one of those pieces has sbf=0 with no partial cache (verified: Corruption
+  // Coils jewelry without cache → crash, Isenhart's helmet+sword without cache → crash).
+  //
+  // Previously we thought armor/weapon needed a different cache format because GildBarb's
+  // Isenhart's Horns partial 2 has extra stats (res-all/6, upgrade_medium/3) beyond the
+  // setitems.txt aprops. Those extra stats are likely from Reimagined's item upgrade
+  // system and are only present on already-upgraded items. For fresh editor inserts
+  // with base aprops, the aprop-only cache should be sufficient.
+  let setBonusesBySlot = null;
   if (quality === 5) {
-    // set_bonus_flags (5 bits) — 0 (no partial bonuses active)
-    wbN(pos, 0, 5); pos += 5;
+    const sid = item.setId ?? item.setItemId;
+    const setEntry = SET_ITEM_MODS[sid];
+    setBonusesBySlot = [[], [], [], [], []];
+    if (setEntry && setEntry.partialBonuses) {
+      for (const pb of setEntry.partialBonuses) {
+        const slot = (pb.pieces | 0) - 2;
+        if (slot >= 0 && slot < 5) setBonusesBySlot[slot].push(pb);
+      }
+    }
+    let sbf = 0;
+    for (let s = 0; s < 5; s++) if (setBonusesBySlot[s].length) sbf |= (1 << s);
+    wbN(pos, sbf, 5); pos += 5;
   }
 
   // ── Encode actual stats from txt tables into the prop list ──
@@ -4386,59 +4416,66 @@ function encodeExtendedItem(item) {
     if (sfx) mods = mods.concat(sfx.mods);
   }
 
+  // Helper: write a stat list (including follow stats) followed by the 511 terminator.
+  // Shared between the main prop list and set-item partial bonus stat lists.
+  const writeStatList = (statList) => {
+    const statById = new Map();
+    for (const s of statList) statById.set(s.id, s);
+    const written = new Set();
+    for (const stat of statList) {
+      const writeKey = stat.id + '_' + (stat.param || 0);
+      if (written.has(writeKey)) continue;
+      if (stat.id < 0 || stat.id >= 511) continue;
+      if (!stat.saveBits || stat.saveBits <= 0) continue;
+      if (pos + 9 + stat.saveParamBits + stat.saveBits + 100 > buf.length * 8) break;
+
+      const maxStatVal = (1 << stat.saveBits) - 1;
+      const safeVal = Math.max(0, Math.min(stat.encodedValue || 0, maxStatVal));
+      const maxParam = stat.saveParamBits > 0 ? (1 << stat.saveParamBits) - 1 : 0;
+      const safeParam = Math.max(0, Math.min(stat.param || 0, maxParam));
+
+      wbN(pos, stat.id, 9); pos += 9;
+      if (stat.saveParamBits > 0) { wbN(pos, safeParam, stat.saveParamBits); pos += stat.saveParamBits; }
+      wbN(pos, safeVal, stat.saveBits); pos += stat.saveBits;
+      written.add(writeKey);
+
+      const followCount = (stat.id < FOLLOW_STATS.length) ? FOLLOW_STATS[stat.id] : 0;
+      for (let f = 1; f <= followCount; f++) {
+        const fId = stat.id + f;
+        written.add(fId + '_0');
+        const fSaveBits = (fId < SAVE_BITS.length) ? SAVE_BITS[fId] : 0;
+        const fParamBits = (fId < SAVE_PARAM_BITS.length) ? SAVE_PARAM_BITS[fId] : 0;
+        if (!fSaveBits) continue;
+        const fEntry = statById.get(fId);
+        const fInfo = STAT_BY_NAME[Object.keys(STAT_BY_NAME).find(k => STAT_BY_NAME[k].id === fId)];
+        const fBias = fInfo ? fInfo.saveAdd : 0;
+        const fMaxVal = (1 << fSaveBits) - 1;
+        const fVal = fEntry ? Math.max(0, Math.min(fEntry.encodedValue || 0, fMaxVal)) : Math.max(0, Math.min(fBias, fMaxVal));
+        const fMaxParam = fParamBits > 0 ? (1 << fParamBits) - 1 : 0;
+        const fParam = fEntry ? Math.max(0, Math.min(fEntry.param || 0, fMaxParam)) : 0;
+        if (fParamBits > 0) { wbN(pos, fParam, fParamBits); pos += fParamBits; }
+        wbN(pos, fVal, fSaveBits); pos += fSaveBits;
+      }
+    }
+    // Property list terminator: stat id 511 (9 bits, all 1s)
+    wbN(pos, 0x1FF, 9); pos += 9;
+  };
+
+  // Main stat list from the item's primary mods.
   let statList = [];
   try { statList = buildStatListFromMods(mods, item.useMaxValues || false); } catch(e) { console.error('buildStatListFromMods failed:', e); }
+  writeStatList(statList);
 
-  // Build a map of stat id → entry for quick lookup of follow stat values
-  const statById = new Map();
-  for (const s of statList) statById.set(s.id, s);
-
-  // Track which stat IDs we've already written (as follow stats of a previous entry)
-  const written = new Set();
-
-  for (const stat of statList) {
-    const writeKey = stat.id + '_' + (stat.param || 0);
-    if (written.has(writeKey)) continue;
-    if (stat.id < 0 || stat.id >= 511) continue;
-    if (!stat.saveBits || stat.saveBits <= 0) continue;
-    if (pos + 9 + stat.saveParamBits + stat.saveBits + 100 > buf.length * 8) break;
-
-    const maxStatVal = (1 << stat.saveBits) - 1;
-    const safeVal = Math.max(0, Math.min(stat.encodedValue || 0, maxStatVal));
-    const maxParam = stat.saveParamBits > 0 ? (1 << stat.saveParamBits) - 1 : 0;
-    const safeParam = Math.max(0, Math.min(stat.param || 0, maxParam));
-
-    // Write the primary stat: 9-bit ID + param + value
-    wbN(pos, stat.id, 9); pos += 9;
-    if (stat.saveParamBits > 0) {
-      wbN(pos, safeParam, stat.saveParamBits); pos += stat.saveParamBits;
-    }
-    wbN(pos, safeVal, stat.saveBits); pos += stat.saveBits;
-    written.add(writeKey);
-
-    // Write follow stats (NO 9-bit ID — just param + value for consecutive stat IDs)
-    const followCount = (stat.id < FOLLOW_STATS.length) ? FOLLOW_STATS[stat.id] : 0;
-    for (let f = 1; f <= followCount; f++) {
-      const fId = stat.id + f;
-      written.add(fId + '_0');
-      const fSaveBits = (fId < SAVE_BITS.length) ? SAVE_BITS[fId] : 0;
-      const fParamBits = (fId < SAVE_PARAM_BITS.length) ? SAVE_PARAM_BITS[fId] : 0;
-      if (!fSaveBits) continue;
-      // Use the follow stat's value from our list if available, else zero + bias
-      const fEntry = statById.get(fId);
-      const fInfo = STAT_BY_NAME[Object.keys(STAT_BY_NAME).find(k => STAT_BY_NAME[k].id === fId)];
-      const fBias = fInfo ? fInfo.saveAdd : 0;
-      const fMaxVal = (1 << fSaveBits) - 1;
-      const fVal = fEntry ? Math.max(0, Math.min(fEntry.encodedValue || 0, fMaxVal)) : Math.max(0, Math.min(fBias, fMaxVal));
-      const fMaxParam = fParamBits > 0 ? (1 << fParamBits) - 1 : 0;
-      const fParam = fEntry ? Math.max(0, Math.min(fEntry.param || 0, fMaxParam)) : 0;
-      if (fParamBits > 0) { wbN(pos, fParam, fParamBits); pos += fParamBits; }
-      wbN(pos, fVal, fSaveBits); pos += fSaveBits;
+  // Partial bonus stat lists for all set items (written per active sbf bit in ascending order).
+  if (quality === 5 && setBonusesBySlot) {
+    for (let s = 0; s < 5; s++) {
+      const slotMods = setBonusesBySlot[s];
+      if (!slotMods.length) continue;
+      let slotStats = [];
+      try { slotStats = buildStatListFromMods(slotMods, item.useMaxValues || false); } catch(e) { console.error('partial bonus buildStatList failed:', e); }
+      writeStatList(slotStats);
     }
   }
-
-  // Property list terminator: stat id 511 (9 bits, all 1s)
-  wbN(pos, 0x1FF, 9); pos += 9;
 
   // Byte-align
   while (pos & 7) pos++;
