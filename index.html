@@ -4373,17 +4373,15 @@ function encodeExtendedItem(item) {
     wbN(pos, item.numSockets & 0xF, 4); pos += 4;
   }
 
-  // Set items: write sbf + partial bonus stat list per defined slot from setitems.txt.
+  // Set items: write sbf + a partial-bonus stat list per active slot, derived from
+  // setitems.txt aprop*a/b columns. Required — the game crashes on join whenever the
+  // character wears multiple pieces of the same set and one of those pieces has sbf=0
+  // with no partial cache (verified with jewelry AND armor/weapon set items).
   //
-  // The game crashes on join whenever a character wears multiple pieces of the same
-  // set and one of those pieces has sbf=0 with no partial cache (verified: Corruption
-  // Coils jewelry without cache → crash, Isenhart's helmet+sword without cache → crash).
-  //
-  // Previously we thought armor/weapon needed a different cache format because GildBarb's
-  // Isenhart's Horns partial 2 has extra stats (res-all/6, upgrade_medium/3) beyond the
-  // setitems.txt aprops. Those extra stats are likely from Reimagined's item upgrade
-  // system and are only present on already-upgraded items. For fresh editor inserts
-  // with base aprops, the aprop-only cache should be sufficient.
+  // Note: game-dropped upgraded items can have *additional* stats in their partial
+  // lists (e.g. res-all/upgrade_medium) from Reimagined's item-upgrade system. Those
+  // extras aren't required for fresh editor inserts — the aprop-only cache loads fine.
+  // See doc/PROPERTY-ENCODING.md.
   let setBonusesBySlot = null;
   if (quality === 5) {
     const sid = item.setId ?? item.setItemId;
@@ -8082,15 +8080,19 @@ function decodeItemProperties(buf, byteOff, item) {
     const q=rbL(bit,4);bit+=4;r.quality=q;
     if(rbL(bit,1))bit+=4;else bit+=1;
     if(rbL(bit,1))bit+=12;else bit+=1;
-    // D2R Reimagined adds 1 extra bit after quality-specific data for all extended quality types
+    // D2RR V105 quality-specific block. The format has an extra 1-bit gap after the
+    // quality-specific field for SOME quality/slot combinations; we handle it inline here
+    // where it's deterministic (q=1/2/3/4/6/8), and rely on _readPropList's +1 retry path
+    // for q=5/q=7 jewelry (where the gap depends on the item type being non-armor/non-weapon
+    // at the time of writing — the encoder's wantsNonArmorExtraBit gate). See doc/PROPERTY-ENCODING.md.
     const isRuneItem = /^[rs]\d{2}$/.test((item.typeCode||''));
     if(q===1)bit+=3;else if(q===2 && isRuneItem)bit+=1;else if(q===3)bit+=3;else if(q===4){
       r._prefixId=rbL(bit,11);bit+=11;
       r._suffixId=rbL(bit,11);bit+=11;
       bit+=1;
     }
-    else if(q===5){r.setId=rbL(bit,12);bit+=12;}
-    else if(q===7){r.uniqueId=rbL(bit,12);bit+=12;}
+    else if(q===5){r.setId=rbL(bit,12);bit+=12;}         // extra bit (if present) absorbed by _readPropList retry
+    else if(q===7){r.uniqueId=rbL(bit,12);bit+=12;}      // extra bit (if present) absorbed by _readPropList retry
     else if(q===6||q===8){
       r.rareNameId1=rbL(bit,8);bit+=8;
       r.rareNameId2=rbL(bit,8);bit+=8;
