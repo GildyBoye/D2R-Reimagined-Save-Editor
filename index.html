@@ -2219,13 +2219,15 @@ function propToDisplay(code, min, max, par) {
     return lines;
   }
 
-  // Simple stat properties — use func to determine display format
+  // Simple stat properties — use func to determine display format.
+  // Iterates all 7 func/stat slots so composite properties whose display isn't
+  // in the hardcoded switch above still render every component (the encoder
+  // writes all slots; display used to only read slot 1).
   if (eng) {
-    const func = eng.func1 || 0;
-    const stat = eng.stat1 || '';
+    const primaryFunc = eng.func1 || 0;
 
     // Per-level / per-time properties: show the base value
-    if (func === 17 || func === 18) {
+    if (primaryFunc === 17 || primaryFunc === 18) {
       // Per-level/per-time: value is stored as units per level
       // Display format depends on the stat it modifies
       const baseProp = code.replace(/\/(lvl|time|str|dex|vit|enr)$/, '');
@@ -2334,85 +2336,83 @@ function propToDisplay(code, min, max, par) {
       'item_slowtarget': '% Slows Target',
     };
 
-    // func 1: +value stat
-    if (func === 1 || func === 6) {
-      const label = STAT_DISPLAY[stat] || stat;
-      if (label.startsWith('%') || label.startsWith('to Max')) {
-        lines.push(`${sign}${val}${label}`);
-      } else if (stat === 'normal_damage_reduction' || stat === 'magic_damage_reduction' || stat === 'item_attackertakesdamage' || stat === 'item_damagetargetac') {
-        lines.push(`${label} ${val}`);
-      } else if (stat === 'item_restinpeace' || stat === 'item_ignoretargetac' || stat === 'item_preventheal' ||
-                 stat === 'item_cannotbefrozen' || stat === 'item_indesctructible' || stat === 'item_knockback' ||
-                 stat === 'item_freezetarget' || stat === 'item_magicarrow' || stat === 'item_throwable' ||
-                 stat === 'item_siegebeast' || stat === 'item_stupidity') {
-        lines.push(label);
-      } else {
-        lines.push(`${sign}${val} ${label}`);
+    // Format one (func, stat) slot into display lines. Returns:
+    //   null  — unrecognized func (caller treats slot as unhandled)
+    //   []    — recognized but intentionally silent (func 16 consumed by 15, func 24 hidden)
+    //   [...] — one or more display lines
+    const formatSlot = (func, stat) => {
+      // func 1/6: +value stat
+      if (func === 1 || func === 6) {
+        const label = STAT_DISPLAY[stat] || stat;
+        if (label.startsWith('%') || label.startsWith('to Max')) {
+          return [`${sign}${val}${label}`];
+        } else if (stat === 'normal_damage_reduction' || stat === 'magic_damage_reduction' || stat === 'item_attackertakesdamage' || stat === 'item_damagetargetac') {
+          return [`${label} ${val}`];
+        } else if (stat === 'item_restinpeace' || stat === 'item_ignoretargetac' || stat === 'item_preventheal' ||
+                   stat === 'item_cannotbefrozen' || stat === 'item_indesctructible' || stat === 'item_knockback' ||
+                   stat === 'item_freezetarget' || stat === 'item_magicarrow' || stat === 'item_throwable' ||
+                   stat === 'item_siegebeast' || stat === 'item_stupidity') {
+          return [label];
+        }
+        return [`${sign}${val} ${label}`];
       }
-      return lines;
+      // func 2: +value% stat
+      if (func === 2) {
+        const label = STAT_DISPLAY[stat] || stat;
+        return [`${sign}${val}% ${label}`];
+      }
+      // func 7: +value% Enhanced Damage (same as func 2 really)
+      if (func === 7) return [`${sign}${val}% Enhanced Damage`];
+      // func 8: same value, different display (IAS, FHR, FCR, etc)
+      if (func === 8) {
+        const label = STAT_DISPLAY[stat] || stat;
+        return [`${sign}${val}${label}`];
+      }
+      // func 10: skilltab
+      if (func === 10) {
+        const tabIdx = parseInt(par, 10);
+        const tabName = getSkillTabName(tabIdx);
+        return [`+${val} to ${tabName} Skills`];
+      }
+      // func 11: skill on hit
+      if (func === 11) {
+        const skillId = _resolveSkillId(par);
+        const skillName = skillNameById[skillId] || (par ? String(par) : `Skill #${skillId}`);
+        return [`${max}% Chance to Cast Level ${min} ${skillName} on Striking`];
+      }
+      // func 12: random skill bonus
+      if (func === 12) return [`+${val} to Random Skill`];
+      // func 14: +sockets
+      if (func === 14) return [`Socketed (${val})`];
+      // func 15: elemental min damage
+      if (func === 15) {
+        const label = STAT_DISPLAY[stat] || 'Damage';
+        return [`Adds ${val} ${label}`];
+      }
+      // func 16: elemental max damage — consumed by func 15
+      if (func === 16) return [];
+      // func 22: oskill
+      if (func === 22) {
+        const skillId = _resolveSkillId(par);
+        const skillName = skillNameById[skillId] || (par ? String(par) : `Skill #${skillId}`);
+        return [`+${val} to ${skillName}`];
+      }
+      // func 24: non-class skill companion — hidden, no display
+      if (func === 24) return [];
+      return null;
+    };
+
+    let anyRecognized = false;
+    for (let f = 1; f <= 7; f++) {
+      const func = eng[`func${f}`] || 0;
+      const stat = eng[`stat${f}`] || '';
+      if (!func && !stat) continue;
+      const slotLines = formatSlot(func, stat);
+      if (slotLines === null) continue;
+      anyRecognized = true;
+      lines.push(...slotLines);
     }
-    // func 2: +value% stat
-    if (func === 2) {
-      const label = STAT_DISPLAY[stat] || stat;
-      lines.push(`${sign}${val}% ${label}`);
-      return lines;
-    }
-    // func 7: +value% Enhanced Damage (same as func 2 really)
-    if (func === 7) {
-      lines.push(`${sign}${val}% Enhanced Damage`);
-      return lines;
-    }
-    // func 8: same value, different display (IAS, FHR, FCR, etc)
-    if (func === 8) {
-      const label = STAT_DISPLAY[stat] || stat;
-      lines.push(`${sign}${val}${label}`);
-      return lines;
-    }
-    // func 10: skilltab
-    if (func === 10) {
-      const tabIdx = parseInt(par, 10);
-      const tabName = getSkillTabName(tabIdx);
-      lines.push(`+${val} to ${tabName} Skills`);
-      return lines;
-    }
-    // func 11: skill on hit
-    if (func === 11) {
-      const skillId = _resolveSkillId(par);
-      const skillName = skillNameById[skillId] || (par ? String(par) : `Skill #${skillId}`);
-      lines.push(`${max}% Chance to Cast Level ${min} ${skillName} on Striking`);
-      return lines;
-    }
-    // func 12: random skill bonus
-    if (func === 12) {
-      lines.push(`+${val} to Random Skill`);
-      return lines;
-    }
-    // func 14: +sockets
-    if (func === 14) {
-      lines.push(`Socketed (${val})`);
-      return lines;
-    }
-    // func 15: elemental min damage
-    if (func === 15) {
-      const label = STAT_DISPLAY[stat] || 'Damage';
-      lines.push(`Adds ${val} ${label}`);
-      return lines;
-    }
-    // func 16: elemental max damage (paired with 15)
-    if (func === 16) {
-      return lines; // consumed by func 15
-    }
-    // func 22: oskill
-    if (func === 22) {
-      const skillId = _resolveSkillId(par);
-      const skillName = skillNameById[skillId] || (par ? String(par) : `Skill #${skillId}`);
-      lines.push(`+${val} to ${skillName}`);
-      return lines;
-    }
-    // func 24: non-class skill (hidden, no display)
-    if (func === 24) {
-      return lines;
-    }
+    if (anyRecognized) return lines;
   }
 
   // Fallback for unrecognized codes — try stat name heuristic
@@ -4491,7 +4491,16 @@ function encodeExtendedItem(item) {
     }
   }
 
-  // Byte-align
+  // D2RR requires at least one zero bit of padding after the property-list 511
+  // terminator before byte-aligning. If the stat list happens to end exactly on
+  // a byte boundary (e.g. Ogre's Embrace's 9 stats total 176 bits = multiple of 8),
+  // plain `while (pos & 7) pos++` adds zero padding bits and the game rejects the
+  // save on load. Game-dropped items always include the extra bit — verified by
+  // diffing a working Ogre's Embrace against an editor-produced one, and by
+  // checking the rule across 13 unique/set/magic items across 3 real saves: the
+  // actual padding is always `(8 - endBit%8) || 8`, i.e. one bit + byte-align.
+  // encodeCompactItem already does the equivalent `pos += 8` for gems.
+  pos++;
   while (pos & 7) pos++;
   return buf.slice(0, pos >> 3);
 }
