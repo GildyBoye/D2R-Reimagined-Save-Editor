@@ -1599,6 +1599,9 @@ function buildMagicAffixModTables() {
 }
 
 function buildUniqueItemModTable() {
+  // Indexed by row position (matching parseTSV's filtered row list). This matches the
+  // GAME's internal uniqueitems.txt table ordering — the game reads the file with the
+  // same Expansion-skip rule and looks up binary uniqueId by row position, not by *ID.
   UNIQUE_ITEM_MODS = [];
   const data = baseData['uniqueitems'];
   if (!data) return;
@@ -1612,6 +1615,7 @@ function buildUniqueItemModTable() {
 }
 
 function buildSetItemModTable() {
+  // Indexed by row position (see buildUniqueItemModTable above).
   SET_ITEM_MODS = [];
   const data = baseData['setitems'];
   if (!data) return;
@@ -1979,6 +1983,18 @@ function propCodeToStatEntries(code, min, max, par, mode) {
 
     // func 24: non-class skill (hidden companion)
     if (func === 24) paramVal = _resolveSkillId(par);
+
+    // func 14: sockets. Do NOT write stat 194 (item_numsockets) to the binary stat
+    // list — the game treats that stat as ADDITIVE on top of the binary num_sockets
+    // field (4 bits after set_bonus_flags, only present when socketed=1). For inherently-
+    // socketed uniques (e.g. Overlord's Helm with `sock 4 4`), writing both stat 194=4
+    // AND num_sockets=4 makes the game display 8 sockets. Natively-dropped uniques
+    // with sockets encode via the num_sockets field only and omit stat 194 — verified
+    // against GildBarb.d2s's Onyx's Super Nova which has `sock` in setitems.txt but
+    // no stat 194 in its binary stat list. We auto-populate `numSockets` from the
+    // sock prop during insert (see confirmInsertItem) and rely entirely on the
+    // binary field + socketed flag for socket rendering.
+    if (func === 14) continue;
 
     _addStatEntry(entries, statName, statVal, paramVal);
   }
@@ -4509,19 +4525,33 @@ function flushDeletedItems() {
   const endBound = jm2Off > 0 ? jm2Off : workBytes.length;
   const itemStart = jmOff + 4;
 
-  // Build keep/delete ranges from the sorted offsets
+  // Build keep/delete ranges from the sorted offsets. The JM count field tallies
+  // TOP-LEVEL items only — socketed children (parent=6) are present in the stream
+  // but aren't counted by the header. Confirmed against a Reimagined save where an
+  // Overlord's Helm with a socketed Perfect Diamond had count=5 for 6 stream items
+  // (4 potions + helm + diamond). So deletedCount only increments for non-child
+  // entries; byte ranges still get excluded for both parent and children.
   const kept = [];
   let deletedCount = 0;
+  let deletedBytes = 0; // total offsets removed (for logging only)
   for (let i = 0; i < sorted.length; i++) {
     const start = sorted[i];
     const end = (i + 1 < sorted.length) ? sorted[i + 1] : endBound;
     if (_deletedItemOffsets.has(start)) {
-      deletedCount++;
+      deletedBytes++;
+      // Read parent field (3 bits at bit 35 of the item) to check if it's a socketed child
+      const bitBase = start * 8;
+      let parent = 0;
+      for (let b = 0; b < 3; b++) {
+        const p = bitBase + 35 + b;
+        if ((p >> 3) < workBytes.length) parent |= ((workBytes[p >> 3] >> (p & 7)) & 1) << b;
+      }
+      if (parent !== 6) deletedCount++;
     } else {
       kept.push({ start, end });
     }
   }
-  if (!deletedCount) { _deletedItemOffsets.clear(); return; }
+  if (!deletedBytes) { _deletedItemOffsets.clear(); return; }
 
   // Rebuild binary: pre-items | kept item bytes | post-items
   const before = workBytes.slice(0, itemStart);
@@ -4547,7 +4577,7 @@ function flushDeletedItems() {
   // Update file size
   writeU32LE(workBytes, 8, workBytes.length);
 
-  console.log(`flushDeletedItems: removed ${deletedCount} item(s), count ${oldCount}→${newCount}`);
+  console.log(`flushDeletedItems: removed ${deletedBytes} byte-range(s) (${deletedCount} top-level), count ${oldCount}→${newCount}`);
   _deletedItemOffsets.clear();
 }
 
@@ -8119,6 +8149,11 @@ function decodeItemProperties(buf, byteOff, item) {
     if(q===5){r.setBonusMods=[];for(let fi=0;fi<5;fi++){if(sbf&(1<<fi)){const {mods:bm,endBit:eb}=_readPropList(buf,byteOff,bit);r.setBonusMods.push({pieces:fi+2,mods:bm});bit=eb;}}}
     if(item.runeword){const {mods:rm,endBit:re}=_readPropList(buf,byteOff,bit);r._rwModCount=rm.length;r.mods=r.mods.concat(rm);bit=re;}
   }catch(e){r.decodeError=e.message;}
+  // Expose the final bit position — useful for cascade-delete to know where the parent's
+  // binary actually ends, so socketed-child filtering can reject scanner false-positives
+  // whose byteOffset lands inside the parent's stat bits (real children live AFTER the
+  // parent in the stream, phantoms live inside it).
+  r.endBit = bit;
   return r;
 }
 
@@ -8930,10 +8965,30 @@ window.removeItemByOffset = function(byteOffset) {
   if (idx < 0) return;
   showConfirm(L('ui_confirm_remove_item','Remove this item from the save? This cannot be undone until you reload.'), () => {
     const item = parsedChar.items[idx];
+
+    // Collect socketed children FIRST (before splicing the parent out of the list so
+    // findSocketedChildren can see its byte neighbours). Removing a socketed parent
+    // without also removing its children leaves the children orphaned with parent=6
+    // pointing at a non-existent item — the game parses the orphan on load, finds no
+    // valid parent, and crashes. Verified against Mayb.d2s after an Overlord's Helm
+    // was removed and its socketed jewel at 0x5a8 was left behind.
+    const children = (byteOffset >= 0 && !item.isVirtual)
+      ? findSocketedChildren(workBytes, parsedChar.items, item)
+      : [];
+
     if (byteOffset >= 0 && !item.isVirtual) {
       _deletedItemOffsets.add(byteOffset);
     }
-    parsedChar.items.splice(idx, 1);
+    for (const child of children) {
+      if (child.byteOffset >= 0 && !child.isVirtual) {
+        _deletedItemOffsets.add(child.byteOffset);
+      }
+    }
+
+    // Remove parent + any children from the in-memory items array.
+    const childOffsets = new Set(children.map(c => c.byteOffset));
+    parsedChar.items = parsedChar.items.filter(it => it.byteOffset !== byteOffset && !childOffsets.has(it.byteOffset));
+
     closeTooltip(true);
     renderTab();
     markDirty();
@@ -9134,9 +9189,10 @@ function _buildBaseItemCatalog(hideCodes) {
   }
 }
 
-// Populate UNIQUE_CATALOG with entries from uniqueitems.txt. Row index is the uniqueId
-// used by the binary encoder; must match the order the editor's propCodeToStatEntries
-// expects for legit save-file compatibility.
+// Populate UNIQUE_CATALOG with entries from uniqueitems.txt. Row position (idx) is the
+// uniqueId written to the binary — this matches how the game reads its own table after
+// applying the same Expansion-skip rule. Using *ID column instead would mismatch the
+// game's internal lookup and make the editor insert the wrong unique.
 function _buildUniqueItemCatalog(hideCodes) {
   const uData = baseData['uniqueitems'];
   if (!uData) return;
@@ -9174,7 +9230,8 @@ function _buildUniqueItemCatalog(hideCodes) {
   });
 }
 
-// Populate SET_CATALOG from setitems.txt. Row index is the setId for binary encoding.
+// Populate SET_CATALOG from setitems.txt. Row position (idx) is the setId for binary
+// encoding, matching how the game reads its own table.
 function _buildSetItemCatalog() {
   const sData = baseData['setitems'];
   if (!sData) return;
@@ -9426,20 +9483,40 @@ window.selectModalEntry = function(idx) {
   for (let r=0;r<h;r++) { for (let c=0;c<w;c++) cells += `<div class="modal-size-cell"></div>`; cells += '<br style="display:block;height:2px">'; }
   document.getElementById('modalSizePreview').innerHTML = cells;
 
-  // Socket selector — show for socketable items
+  // Socket selector — show for socketable items.
+  // Inherent-socket uniques/sets (those with a `sock` prop in uniqueitems/setitems,
+  // e.g. Overlord's Helm `sock 4 4`) have a FIXED socket count that the user can't
+  // override — the socket input is pre-filled and disabled, and the label notes it.
+  // Other socketable items get an editable 0..maxSock input.
   const maxSock = MAX_SOCKETS_BY_CODE[entry.code] || 0;
   const sockRow = document.getElementById('modalSocketRow');
   const sockInput = document.getElementById('modalSockets');
   if (sockRow && sockInput) {
     const sockMaxLabel = document.getElementById('modalSocketMax');
-    if (maxSock > 0) {
+    let inherentSockets = 0;
+    const sourceMods = (entry.qual === 7 && entry.uniqueId !== undefined) ? (UNIQUE_ITEM_MODS[entry.uniqueId]?.props || [])
+                     : (entry.qual === 5 && entry.setId    !== undefined) ? (SET_ITEM_MODS[entry.setId]?.props    || [])
+                     : [];
+    for (const m of sourceMods) {
+      if (m.code === 'sock') inherentSockets = Math.max(inherentSockets, m.max || m.min || 0);
+    }
+    if (inherentSockets > 0) {
+      // Fixed at the item's native count — lock the input.
+      sockRow.style.display = '';
+      sockInput.max = inherentSockets;
+      sockInput.value = inherentSockets;
+      sockInput.disabled = true;
+      if (sockMaxLabel) sockMaxLabel.textContent = `(${L('ui_label_inherent','inherent')})`;
+    } else if (maxSock > 0) {
       sockRow.style.display = '';
       sockInput.max = maxSock;
       sockInput.value = 0;
+      sockInput.disabled = false;
       if (sockMaxLabel) sockMaxLabel.textContent = `(max ${maxSock})`;
     } else {
       sockRow.style.display = 'none';
       sockInput.value = 0;
+      sockInput.disabled = false;
       if (sockMaxLabel) sockMaxLabel.textContent = '';
     }
   }
@@ -9577,12 +9654,15 @@ window.confirmInsertItem = function() {
     newItem.setItemId = entry.setId;
   }
 
-  // Sockets from modal input
+  // Sockets — the modal socket input already carries the correct value:
+  //   - Inherent-socket uniques/sets (e.g. Overlord's Helm `sock 4 4`): selectModalItem
+  //     pre-fills and disables the input with the item's inherent count.
+  //   - Regular socketable items: user picks 0..maxSock via the input.
+  // Encoder deliberately doesn't write stat 194 for func 14 (see propCodeToStatEntries)
+  // so the ONLY socket count in the binary is this num_sockets field.
   const sockInput = document.getElementById('modalSockets');
-  if (sockInput) {
-    const socks = parseInt(sockInput.value, 10) || 0;
-    if (socks > 0) { newItem.numSockets = socks; newItem.socketed = true; }
-  }
+  const socks = sockInput ? (parseInt(sockInput.value, 10) || 0) : 0;
+  if (socks > 0) { newItem.numSockets = socks; newItem.socketed = true; }
 
   // Max values checkbox from modal
   const maxChk = document.getElementById('modalMaxValues');
@@ -10471,27 +10551,92 @@ window.moveItemsToGrail = function() {
   window._grailTransferList = eligible;
 };
 
+// Valid socketable item codes — things that can actually be gems/runes/jewels inside a
+// socket. Used to reject scanner false-positives inside item stat bits that coincidentally
+// match the item-start pattern AND have parent=6: without this filter, a cascade delete
+// of a socketed item would over-count the children and drop the JM count too low → game
+// reads N items then hits the next item's bytes where it expects the corpse JM marker,
+// and crashes on load. Verified against Mayba.d2s where deleting a gem-socketed Overlord's
+// Helm decremented count by 3 instead of 2.
+const _SOCKETABLE_CHILD_RE = /^(gc[a-z]|gf[a-z]|gs[a-z]|gl[a-z]|gp[a-z]|gm[a-z]|gz[a-z]|sk[a-z]|r[0-9]{2}|jew|cjw)$/;
+
+// Read the parent item's `socketCount` field (3 bits at the start of its extended data)
+// directly from the binary. This is the number of gems CURRENTLY socketed into the item
+// at save time. We cap cascade-delete children by this count so even if a scanner false-
+// positive slips past the typeCode filter, we can't include more "children" than the item
+// actually has gems in it.
+function _readParentSocketCount(sourceBuf, parentItem) {
+  if (!sourceBuf || parentItem.byteOffset < 0 || parentItem.isVirtual || parentItem.simple) return 0;
+  // Extended data starts after the huffman type code (4 chars). Walk the huffman tree
+  // manually to find the end bit, then read the next 3 bits.
+  const H = D2R_HUFFMAN;
+  const byteOff = parentItem.byteOffset;
+  let bit = 53;
+  try {
+    for (let c = 0; c < 4; c++) {
+      let node = H;
+      while (Array.isArray(node)) {
+        const p = byteOff * 8 + bit;
+        if ((p >> 3) >= sourceBuf.length) return 0;
+        node = node[(sourceBuf[p >> 3] >> (p & 7)) & 1];
+        bit++;
+      }
+    }
+    let v = 0;
+    for (let i = 0; i < 3; i++) {
+      const p = byteOff * 8 + bit + i;
+      if ((p >> 3) >= sourceBuf.length) return 0;
+      v |= ((sourceBuf[p >> 3] >> (p & 7)) & 1) << i;
+    }
+    return v;
+  } catch (e) {
+    return 0;
+  }
+}
+
 // Find socketed child items (parent=6) that belong to a given parent item
 function findSocketedChildren(sourceBuf, sourceItems, parentItem) {
   if (!parentItem.socketed && !parentItem.numSockets) return [];
-  // Child items have parent=6 (in_item). In the binary they appear after the parent.
-  // Match children by finding items with parent=6 that come after this item in byte order
-  // and before the next non-child item, within the SAME section — a character item's
-  // children live in the character section; a merc item's children live in the merc
-  // section. Crossing the boundary would attach merc runes to character gear.
+  // Child items have parent=6 (in_item). In the binary they appear IMMEDIATELY AFTER
+  // the parent's full byte range — they're separate item entries in the JM stream.
+  // A scanner false-positive inside the parent's stat bits can match the item-start
+  // byte pattern AND have `parent=6` by coincidence, producing a ghost item with a
+  // byteOffset INSIDE the parent's own bytes. Three layers of defense:
+  //   1. byteOffset must be >= parent's end (not inside the parent's stat bits).
+  //   2. typeCode must match a real socketable type (gem/rune/jewel/skull).
+  //   3. Children array is capped at the parent's 3-bit `socketCount` field from its
+  //      binary — the game's own authoritative count of how many gems are in this item.
+  //
+  // Also: children must live in the same section (character vs merc) as the parent —
+  // crossing the boundary would attach merc runes to character gear.
   const children = [];
   const parentOff = parentItem.byteOffset;
   const parentSection = !!parentItem.isMerc;
+
+  // Parent's byte end (exclusive). Decode the parent's full binary to find where its
+  // bits end, round up to a byte. Real children have byteOffset >= this value.
+  let parentEndByte = parentOff + 1; // safe default if decode fails
+  try {
+    const ext = decodeItemProperties(sourceBuf, parentOff, parentItem);
+    if (ext && ext.endBit) parentEndByte = parentOff + Math.ceil(ext.endBit / 8);
+  } catch (e) { /* leave default; subsequent checks still catch most phantoms */ }
+
+  const socketCap = _readParentSocketCount(sourceBuf, parentItem);
   const sorted = [...sourceItems]
     .filter(it => it.byteOffset > parentOff && !!it.isMerc === parentSection)
     .sort((a, b) => a.byteOffset - b.byteOffset);
+  console.log(`[cascade] parent 0x${parentOff.toString(16)} ${parentItem.typeCode} socketed=${parentItem.socketed} endByte=0x${parentEndByte.toString(16)} socketCap=${socketCap} candidates=${sorted.length}`);
   for (const child of sorted) {
-    if (child.parent === 6) {
-      children.push(child);
-    } else {
-      break; // first non-child item = end of children
-    }
+    const tc = (child.typeCode || '').toLowerCase();
+    console.log(`  candidate 0x${child.byteOffset.toString(16)} tc=${tc} parent=${child.parent}`);
+    if (child.parent !== 6) { console.log(`    → break (parent !== 6)`); break; }
+    if (child.byteOffset < parentEndByte) { console.log(`    → skip (inside parent bytes)`); continue; }
+    if (!_SOCKETABLE_CHILD_RE.test(tc)) { console.log(`    → skip (typeCode mismatch)`); continue; }
+    children.push(child);
+    console.log(`    → accept (child ${children.length} of ${socketCap})`);
+    if (children.length >= socketCap) { console.log(`    → break (cap reached)`); break; }
   }
+  console.log(`[cascade] returning ${children.length} children`);
   return children;
 }
 
