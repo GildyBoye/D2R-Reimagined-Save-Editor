@@ -390,6 +390,80 @@
     border-radius: 1px;
   }
 
+  /* ── Advanced Options (inside new character modal) ── */
+  .adv-opts-toggle {
+    background: none; border: none; color: var(--d2-gold-dim);
+    font-family: 'Cinzel', serif; font-size: 11px; letter-spacing: 1px;
+    cursor: pointer; padding: 4px 0; display: flex; align-items: center; gap: 6px;
+    transition: color 0.12s;
+  }
+  .adv-opts-toggle:hover { color: var(--d2-gold); }
+  .adv-opts-toggle .adv-opts-arrow {
+    display: inline-block; font-size: 9px; transition: transform 0.15s;
+  }
+  .adv-opts-toggle.open .adv-opts-arrow { transform: rotate(90deg); }
+  .adv-opts-panel {
+    border: 1px solid var(--d2-border);
+    border-radius: 2px;
+    background: var(--d2-surface2);
+    padding: 12px 14px;
+    margin-top: 6px;
+  }
+  .wheel-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .wheel-info { flex: 1; min-width: 0; }
+  .wheel-title { font-family: 'Cinzel', serif; font-size: 12px; color: var(--d2-gold); letter-spacing: 0.5px; }
+  .wheel-desc { font-size: 11px; color: var(--d2-text-dim); margin-top: 2px; }
+  .wheel-count-row {
+    display: flex; align-items: center; gap: 10px; margin-top: 10px;
+    padding-top: 8px; border-top: 1px dashed var(--d2-border);
+  }
+  .wheel-count-label {
+    font-family: 'Cinzel', serif; font-size: 11px; letter-spacing: 0.5px;
+    color: var(--d2-text-dim);
+  }
+  .wheel-count-select {
+    flex: 1;
+    background: var(--d2-bg); border: 1px solid var(--d2-border-bright);
+    color: var(--d2-text); font-family: 'Crimson Text', serif;
+    font-size: 12px; padding: 4px 6px; border-radius: 2px;
+  }
+  .wheel-result {
+    margin-top: 12px;
+    padding: 10px 14px;
+    border-top: 1px solid var(--d2-border);
+    text-align: center;
+  }
+  .wheel-class {
+    font-family: 'Cinzel', serif; font-size: 16px; letter-spacing: 2px;
+    color: var(--d2-gold-bright); margin-bottom: 2px;
+  }
+  .wheel-skill {
+    font-family: 'Crimson Text', serif; font-size: 14px; font-style: italic;
+    color: var(--d2-text); margin-bottom: 10px;
+  }
+  .wheel-challenges {
+    font-family: 'Crimson Text', serif; font-size: 12px;
+    color: var(--d2-text); margin-bottom: 10px; text-align: left;
+    display: inline-block; max-width: 100%;
+  }
+  .wheel-challenges-header {
+    font-family: 'Cinzel', serif; font-size: 10px; letter-spacing: 1px;
+    color: var(--d2-red-bright); text-align: center; margin-bottom: 4px;
+  }
+  .wheel-challenge-item {
+    padding: 2px 0; color: var(--d2-text);
+  }
+  .wheel-challenge-item b { color: var(--d2-gold); font-weight: 600; }
+  .wheel-challenge-item small { color: var(--d2-text-dim); font-size: 12px; font-style: italic; }
+  .wheel-actions { display: flex; gap: 8px; justify-content: center; }
+  .wheel-actions .btn[disabled] { opacity: 0.4; pointer-events: none; }
+  .wheel-challenge {
+    font-family: 'Crimson Text', serif; font-size: 11px; font-style: italic;
+    color: var(--d2-text-dim); margin-top: 4px; line-height: 1.4;
+  }
+  .wheel-challenge b { color: var(--d2-gold); font-style: normal; font-weight: 600; }
+  .wheel-challenge .wheel-mods { color: var(--d2-red-bright); font-style: normal; }
+
   /* ── Campfire character select ── */
   .campfire-scene {
     position: relative;
@@ -721,16 +795,53 @@
       </div>
       <div style="text-align:center;margin-bottom:10px">
         <span style="font-family:'Cinzel',serif;font-size:14px;letter-spacing:1px;color:var(--d2-gold)" id="selectedClassName">Amazon</span>
+        <div class="wheel-challenge" id="wheelChallengeLabel" style="display:none">
+          Challenge: <b id="wheelChallengeText">—</b>
+        </div>
       </div>
       <div class="modal-row">
         <div class="modal-label">Character Name</div>
         <input class="modal-input" id="newCharName" placeholder="Enter name…" maxlength="15" autocomplete="off">
       </div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:4px 0">
           <input type="checkbox" id="newCharHC" style="accent-color:var(--d2-red-bright);cursor:pointer;width:16px;height:16px">
           <span style="font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;color:#d46060">Hardcore</span>
         </label>
+      </div>
+      <div style="margin-bottom:12px">
+        <button type="button" class="adv-opts-toggle" id="advOptsToggle" onclick="toggleAdvancedOptions()">
+          <span class="adv-opts-arrow">▸</span> ADVANCED OPTIONS
+        </button>
+        <div class="adv-opts-panel" id="advOptsPanel" style="display:none">
+          <div class="wheel-row">
+            <div class="wheel-info">
+              <div class="wheel-title">🎲 Spin The Wheel</div>
+              <div class="wheel-desc">Random class + signature skill + modifiers</div>
+            </div>
+            <button type="button" class="btn btn-primary" id="wheelSpinBtn" onclick="spinTheWheel()">Spin</button>
+          </div>
+          <div class="wheel-count-row">
+            <span class="wheel-count-label">Modifiers:</span>
+            <select class="wheel-count-select" id="wheelChallengeCount">
+              <option value="0">0 (Coward)</option>
+              <option value="1" selected>1 (Cautious)</option>
+              <option value="2">2 (Brave)</option>
+              <option value="3">3 (Reckless)</option>
+              <option value="4">4 (Insane)</option>
+              <option value="5">5 (Death Wish)</option>
+            </select>
+          </div>
+          <div class="wheel-result" id="wheelResult" style="display:none">
+            <div class="wheel-class" id="wheelClass">—</div>
+            <div class="wheel-skill" id="wheelSkill">—</div>
+            <div class="wheel-challenges" id="wheelChallenges" style="display:none"></div>
+            <div class="wheel-actions">
+              <button type="button" class="btn btn-primary" id="wheelRerollBtn" onclick="rerollWheel()">Reroll</button>
+              <button type="button" class="btn btn-primary" id="wheelAcceptBtn" onclick="acceptWheelResult()">Accept</button>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-primary" onclick="createNewCharacter()">Create</button>
@@ -3929,6 +4040,7 @@ window.openNewCharModal = function() {
   _newCharClass = 0;
   document.getElementById('newCharName').value = '';
   document.getElementById('selectedClassName').textContent = CLASS_NAMES[0];
+  _resetAdvancedOptions();
   document.getElementById('newCharModal').style.display = 'flex';
 
   const scene = document.getElementById('campfireScene');
@@ -3986,6 +4098,8 @@ window.openNewCharModal = function() {
 
 window.closeNewCharModal = function() {
   _cfStop();
+  _stopWheelAnim();
+  _resetAdvancedOptions();
   document.getElementById('newCharModal').style.display = 'none';
 };
 
@@ -3995,6 +4109,378 @@ window.selectNewCharClass = function(idx) {
   document.querySelectorAll('.campfire-char').forEach(el => {
     el.classList.toggle('selected', parseInt(el.dataset.classIdx) === idx);
   });
+};
+
+// ═══════════════════════════════════════════════════════════
+//  ADVANCED OPTIONS: Spin The Wheel
+//  Rolls a random class + a random active skill from that class +
+//  N random challenge modifiers (0..5) as a self-imposed build challenge.
+//  Shown next to the selected class name on Accept; no mechanical
+//  enforcement — purely flavor. Challenge pool adapted from
+//  gheedsgamble.com, minus duplicates/contradictions.
+// ═══════════════════════════════════════════════════════════
+let _wheelAnimTimer = null;
+let _wheelChallenge = null; // { classIdx, skill, challenges:[{name,desc}] } after Accept
+let _wheelSettledResult = null; // most recent settled roll (before Accept) — survives between reroll+accept
+
+const _WHEEL_CHALLENGES = [
+  // ── Original 32 (adapted from gheedsgamble.com) ──────────────────────
+  { name: 'No Runewords',            desc: 'Cannot create or use runewords' },
+  { name: 'No Teleport',             desc: 'Teleport skill and Enigma are forbidden' },
+  { name: 'SSF',                     desc: 'Solo self-found — no trading, no outside help' },
+  { name: 'No Mercenary',            desc: 'Adventure alone, no hireling' },
+  { name: 'Walking Only',            desc: 'Toggle run off, walk everywhere' },
+  { name: 'Rare Items Only',         desc: 'Can only equip rare (yellow) items' },
+  { name: 'Magic Items Only',        desc: 'Can only equip magic (blue) items' },
+  { name: 'No Potions',              desc: 'Wells only — no healing/mana potions' },
+  { name: 'Pacifist',                desc: 'No direct attacks — thorns, auras, reflect only' },
+  { name: 'No Rare Items',           desc: 'Cannot equip rare (yellow) items' },
+  { name: 'No Unique Items',         desc: 'Cannot equip unique (gold) items' },
+  { name: 'No Set Items',            desc: 'Cannot equip set (green) items' },
+  { name: 'Cosplay Run',             desc: 'Must use items matching a specific theme of your choice' },
+  { name: 'Glass Cannon',            desc: 'No defensive stat investment (vit, block, etc.)' },
+  { name: 'No Synergies',            desc: 'Cannot invest in skills that synergize with your signature' },
+  { name: 'No Waypoints',            desc: 'Must travel on foot; town portals allowed' },
+  { name: 'No Town Portal',          desc: 'Only waypoints for travel — no scrolls, no Enigma TP' },
+  { name: 'No Charms',               desc: 'Inventory must stay charm-free' },
+  { name: 'No Crafting',             desc: 'No Horadric Cube crafting recipes' },
+  { name: 'First Skill Tree Banned', desc: 'Cannot invest in any skill from the first tree' },
+  { name: 'Second Skill Tree Banned',desc: 'Cannot invest in any skill from the second tree' },
+  { name: 'Third Skill Tree Banned', desc: 'Cannot invest in any skill from the third tree' },
+  { name: 'Drop on Level',           desc: 'Drop one equipped item every level up' },
+  { name: 'No Repairs',              desc: 'Cannot repair gear — replace when broken' },
+  { name: 'No Vendor Trading',       desc: 'Cannot buy or sell items to NPCs' },
+  { name: 'No Rejuvenation Potions', desc: 'Cannot use rejuv potions of either size' },
+  { name: 'No Mana Potions',         desc: 'Mana recovery from regen/leech only' },
+  { name: 'Same Song on Repeat',     desc: 'Pick one song, loop it the whole run' },
+  { name: 'Ethereals Only',          desc: 'Only ethereal items may be equipped' },
+  { name: 'No Shields',              desc: 'No shields or off-hand items' },
+  { name: 'Bow Only',                desc: 'Bows are the only permitted weapon' },
+  { name: 'Shirtless Wonder',        desc: 'No chest armor may be equipped' },
+  // ── Slot denials ─────────────────────────────────────────────────────
+  { name: 'Fisticuffs',              desc: 'No main-hand weapon equipped' },
+  { name: 'Wash Yo Feet',            desc: 'No boots equipped' },
+  { name: 'Thick Head',              desc: 'No helmet equipped' },
+  { name: 'Butterfingers',           desc: 'No rings equipped' },
+  { name: 'Bare Knuckle',            desc: 'No gloves equipped' },
+  { name: 'Unbelted',                desc: 'No belt equipped' },
+  { name: 'Neck Exposed',            desc: 'No amulet equipped' },
+  // ── Weapon-type mono ────────────────────────────────────────────────
+  { name: 'Sword Dance',             desc: 'Swords only' },
+  { name: 'Axe Murderer',            desc: 'Axes only' },
+  { name: 'Mace Face',               desc: 'Maces, clubs, and hammers only' },
+  { name: 'Spear Phisher',           desc: 'Spears and polearms only' },
+  { name: 'Staff Infection',         desc: 'Staves only' },
+  { name: 'Dagger Daddy',            desc: 'Daggers only' },
+  { name: 'Wand Aficionado',         desc: 'Wands only' },
+  { name: 'Claw Machine',            desc: 'Claws only' },
+  { name: 'Throwing Fit',            desc: 'Throwing weapons only' },
+  // ── Gear quality ────────────────────────────────────────────────────
+  { name: 'Plain Jane',              desc: 'White/gray (normal-tier) items only' },
+  { name: 'Perfectionist',           desc: 'Only uniques/sets with ≥80% perfection rolls' },
+  // ── Skill / stat meta ───────────────────────────────────────────────
+  { name: 'One-Trick Pony',          desc: 'Only the rolled signature skill — no other skill investment' },
+  { name: 'No Masteries',            desc: 'No weapon/armor/element mastery skills' },
+  { name: 'Pre-req Shuffle',         desc: 'Every skill capped at exactly 1 point' },
+  { name: 'No Respec',               desc: 'Cannot use any respec mechanic' },
+  { name: 'Stat Purist',             desc: 'All stat points into Vitality' },
+  { name: 'Stat Dumper',             desc: 'All stat points into Energy (yes, even on Barb)' },
+  // ── Movement / speed ────────────────────────────────────────────────
+  { name: 'Snail Pace',              desc: 'No +Faster Run/Walk gear' },
+  { name: 'Slow Hands',              desc: 'No +Increased Attack Speed gear' },
+  { name: 'Molasses',                desc: 'None of FRW / IAS / FCR / FHR' },
+  { name: 'Stand Your Ground',       desc: 'No movement skills (Teleport, Whirlwind, Vigor, Leap, etc.)' },
+  // ── Mercenary ───────────────────────────────────────────────────────
+  { name: 'Naked Merc',              desc: 'Mercenary wears no gear' },
+  { name: 'Merc Minimum',            desc: "Never upgrade mercenary's starting gear" },
+  { name: 'Lone Wolf',               desc: 'Mercenary cannot be revived once killed' },
+  // ── Economy / progression ───────────────────────────────────────────
+  { name: "Hoarder's Curse",         desc: 'Never sell anything to a vendor' },
+  { name: 'Spendthrift',             desc: 'Must buy one vendor item per level gained' },
+  { name: 'Pocket Lint',             desc: 'Max 10 items in stash at any time' },
+  { name: 'Poverty Pact',            desc: 'Gold must stay under 10,000 at all times' },
+  { name: 'No Gheed',                desc: 'Never visit Gheed — no gambling, no charm vendor' },
+  { name: 'No Cain',                 desc: 'No Deckard identifies — scrolls only or raw guesswork' },
+  { name: 'No Chests',               desc: 'Every chest / container / body stays closed' },
+  { name: 'Rag Tag',                 desc: 'Only use gear bought from vendors — no drops' },
+];
+
+// Challenges that are mutually exclusive within the same group — pick at most one
+// per spin. Everything not in a group is combinable freely (overlap like No Potions
+// ⊇ No Mana Potions is intentionally allowed to keep the chaotic flavor at high counts).
+const _WHEEL_EXCLUSION_GROUPS = [
+  new Set(['Rare Items Only', 'Magic Items Only', 'Ethereals Only', 'Plain Jane']),
+  new Set(['Stat Purist', 'Stat Dumper', 'Glass Cannon']),
+  new Set([
+    'Bow Only', 'Sword Dance', 'Axe Murderer', 'Mace Face', 'Spear Phisher',
+    'Staff Infection', 'Dagger Daddy', 'Wand Aficionado', 'Claw Machine',
+    'Throwing Fit', 'Fisticuffs',
+  ]),
+];
+
+// Direct pair conflicts (order-independent). Each entry is a 2-tuple of challenge names
+// that must not coexist in the same spin.
+const _WHEEL_PAIR_CONFLICTS = (() => {
+  const pairs = [
+    ['Rare Items Only', 'No Rare Items'],
+    ['No Vendor Trading', 'Spendthrift'],
+    ['No Vendor Trading', 'Rag Tag'],
+    ['No Mercenary', 'Naked Merc'],
+    ['No Mercenary', 'Merc Minimum'],
+    ['No Mercenary', 'Lone Wolf'],
+    ['One-Trick Pony', 'Pre-req Shuffle'],
+    // One-Trick Pony (only signature skill) already subsumes tree bans —
+    // rolling them together is either redundant or outright contradictory
+    // (if the signature lives in a banned tree).
+    ['One-Trick Pony', 'First Skill Tree Banned'],
+    ['One-Trick Pony', 'Second Skill Tree Banned'],
+    ['One-Trick Pony', 'Third Skill Tree Banned'],
+  ];
+  // Pacifist forbids direct attacks — clashes with every weapon-mono (but not
+  // Fisticuffs; no-weapon + no-attack is consistent).
+  const weaponMonos = [
+    'Bow Only', 'Sword Dance', 'Axe Murderer', 'Mace Face', 'Spear Phisher',
+    'Staff Infection', 'Dagger Daddy', 'Wand Aficionado', 'Claw Machine', 'Throwing Fit',
+  ];
+  for (const w of weaponMonos) pairs.push(['Pacifist', w]);
+  return pairs;
+})();
+
+// Skill-tree bans: cap at 2 of 3 (all three leaves the character with no skillable tree).
+const _WHEEL_TREE_BANS = new Set([
+  'First Skill Tree Banned', 'Second Skill Tree Banned', 'Third Skill Tree Banned',
+]);
+
+function _wheelCandidateConflicts(candidate, pickedNames) {
+  // Exclusion groups: reject if any already-picked name shares a group with candidate
+  for (const grp of _WHEEL_EXCLUSION_GROUPS) {
+    if (!grp.has(candidate.name)) continue;
+    for (const p of pickedNames) if (grp.has(p)) return true;
+  }
+  // Direct pair conflicts
+  for (const [a, b] of _WHEEL_PAIR_CONFLICTS) {
+    if ((candidate.name === a && pickedNames.has(b)) ||
+        (candidate.name === b && pickedNames.has(a))) return true;
+  }
+  // Skill-tree ban cap
+  if (_WHEEL_TREE_BANS.has(candidate.name)) {
+    let n = 0;
+    for (const p of pickedNames) if (_WHEEL_TREE_BANS.has(p)) n++;
+    if (n >= 2) return true;
+  }
+  return false;
+}
+
+// Return the list of active skill names for a class (by index 0..7).
+// Filter out pure passives. A skill is a pure passive when:
+//   - `passivestat1` is set (applies stats passively), AND
+//   - `mana` is 0 or blank (no cast cost), AND
+//   - `aurastate` is empty (not an aura — auras also fit the first two but are
+//      player-toggled and belong in the active pool).
+// Summons like Valkyrie set passivestat1 but cost mana, so they're active.
+// Paladin auras (Holy Fire, Sanctuary, Fanaticism, etc.) are active via aurastate.
+function _getActiveSkillsForClass(classIdx) {
+  const tag = CLASS_TAGS[classIdx];
+  const data = baseData && baseData['skills'];
+  if (!tag || !data) return [];
+  const out = [];
+  for (const row of data.rows) {
+    if ((row['charclass']||'').trim() !== tag) continue;
+    const passive   = (row['passivestat1']||'').trim();
+    const mana      = (row['mana']||'').trim();
+    const aurastate = (row['aurastate']||'').trim();
+    if (passive && (mana === '' || mana === '0') && !aurastate) continue;
+    const name = (row['skill']||'').trim();
+    if (name) out.push(name);
+  }
+  return out;
+}
+
+// Pick a class that has at least one active skill, plus N unique modifiers from
+// the challenge pool. `challengeCount` defaults to 0 (no modifiers).
+function _pickWheelResult(challengeCount) {
+  const n = Math.max(0, Math.min(_WHEEL_CHALLENGES.length, challengeCount | 0));
+  let pick = null;
+  for (let tries = 0; tries < 16; tries++) {
+    const classIdx = Math.floor(Math.random() * 8);
+    const skills = _getActiveSkillsForClass(classIdx);
+    if (skills.length) {
+      pick = { classIdx, skill: skills[Math.floor(Math.random() * skills.length)] };
+      break;
+    }
+  }
+  if (!pick) return null;
+  // Sample N compatible challenges: shuffle the pool, then walk it picking any
+  // candidate that doesn't conflict with what's already chosen (groups + pair
+  // conflicts + skill-tree cap). Returns fewer than N only if the pool truly
+  // runs out of compatible picks, which is extremely unlikely at n ≤ 5 given
+  // the 71-item pool.
+  const pool = _WHEEL_CHALLENGES.slice();
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  const chosen = [];
+  const chosenNames = new Set();
+  for (const candidate of pool) {
+    if (chosen.length >= n) break;
+    if (chosenNames.has(candidate.name)) continue;
+    if (_wheelCandidateConflicts(candidate, chosenNames)) continue;
+    chosen.push(candidate);
+    chosenNames.add(candidate.name);
+  }
+  pick.challenges = chosen;
+  return pick;
+}
+
+function _readWheelChallengeCount() {
+  const sel = document.getElementById('wheelChallengeCount');
+  return sel ? (parseInt(sel.value, 10) || 0) : 0;
+}
+
+function _renderWheelChallenges(challenges) {
+  const el = document.getElementById('wheelChallenges');
+  if (!el) return;
+  if (!challenges || !challenges.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const header = `<div class="wheel-challenges-header">— ${challenges.length} MODIFIER${challenges.length > 1 ? 'S' : ''} —</div>`;
+  const items = challenges.map(c =>
+    `<div class="wheel-challenge-item">• <b>${esc(c.name)}</b> <small>${esc(c.desc)}</small></div>`
+  ).join('');
+  el.innerHTML = header + items;
+  el.style.display = '';
+}
+
+function _stopWheelAnim() {
+  if (_wheelAnimTimer) { clearInterval(_wheelAnimTimer); _wheelAnimTimer = null; }
+}
+
+function _setWheelButtonsEnabled(enabled) {
+  const ids = ['wheelSpinBtn', 'wheelRerollBtn', 'wheelAcceptBtn'];
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !enabled;
+  }
+  // Also lock the challenge-count selector during the animation so the rolled
+  // N doesn't desync from the displayed list mid-spin.
+  const sel = document.getElementById('wheelChallengeCount');
+  if (sel) sel.disabled = !enabled;
+}
+
+function _animateWheel(finalResult) {
+  const classEl = document.getElementById('wheelClass');
+  const skillEl = document.getElementById('wheelSkill');
+  const resultEl = document.getElementById('wheelResult');
+  if (!classEl || !skillEl || !resultEl) return;
+
+  resultEl.style.display = '';
+  _stopWheelAnim();
+  _setWheelButtonsEnabled(false);
+
+  const TOTAL_MS = 1500;
+  const FRAME_MS = 60;
+  const startTime = performance.now();
+  const n = finalResult.challenges ? finalResult.challenges.length : 0;
+
+  _wheelAnimTimer = setInterval(() => {
+    const elapsed = performance.now() - startTime;
+    if (elapsed >= TOTAL_MS) {
+      classEl.textContent = CLASS_NAMES[finalResult.classIdx];
+      skillEl.textContent = '— ' + finalResult.skill + ' —';
+      _renderWheelChallenges(finalResult.challenges);
+      _wheelSettledResult = finalResult;
+      _stopWheelAnim();
+      _setWheelButtonsEnabled(true);
+      return;
+    }
+    // Flash a random filler for class + skill + (same count of) challenges
+    const filler = _pickWheelResult(n);
+    if (filler) {
+      classEl.textContent = CLASS_NAMES[filler.classIdx];
+      skillEl.textContent = '— ' + filler.skill + ' —';
+      _renderWheelChallenges(filler.challenges);
+    }
+  }, FRAME_MS);
+}
+
+function _resetAdvancedOptions() {
+  _stopWheelAnim();
+  _wheelChallenge = null;
+  _wheelSettledResult = null;
+  const toggle = document.getElementById('advOptsToggle');
+  const panel  = document.getElementById('advOptsPanel');
+  const result = document.getElementById('wheelResult');
+  const label  = document.getElementById('wheelChallengeLabel');
+  const chal   = document.getElementById('wheelChallenges');
+  const countSel = document.getElementById('wheelChallengeCount');
+  if (toggle) toggle.classList.remove('open');
+  if (panel)  panel.style.display = 'none';
+  if (result) result.style.display = 'none';
+  if (label)  label.style.display = 'none';
+  if (chal)   { chal.style.display = 'none'; chal.innerHTML = ''; }
+  if (countSel) { countSel.disabled = false; countSel.value = '1'; }
+  _setWheelButtonsEnabled(true);
+}
+
+window.toggleAdvancedOptions = function() {
+  const toggle = document.getElementById('advOptsToggle');
+  const panel  = document.getElementById('advOptsPanel');
+  if (!toggle || !panel) return;
+  const open = panel.style.display === 'none';
+  panel.style.display = open ? '' : 'none';
+  toggle.classList.toggle('open', open);
+};
+
+window.spinTheWheel = function() {
+  const n = _readWheelChallengeCount();
+  const result = _pickWheelResult(n);
+  if (!result) { showPopup(L('ui_err_wheel_no_skills','No skill data available for the wheel.')); return; }
+  _animateWheel(result);
+};
+
+window.rerollWheel = function() {
+  // Re-animate entirely, as requested.
+  window.spinTheWheel();
+};
+
+window.acceptWheelResult = function() {
+  // Use the last settled roll rather than re-reading the DOM. The animation writes
+  // _wheelSettledResult on its final frame; the Accept button is disabled until
+  // then, so by the time this fires the pointer is valid.
+  const r = _wheelSettledResult;
+  if (!r || r.classIdx == null) return;
+
+  _wheelChallenge = {
+    classIdx:   r.classIdx,
+    skill:      r.skill,
+    challenges: r.challenges ? r.challenges.slice() : [],
+  };
+  window.selectNewCharClass(r.classIdx);
+
+  // Persistent caption below the selected class name. Shows skill + comma-joined
+  // modifier names; descriptions live in the spin result panel until it's dismissed.
+  const label = document.getElementById('wheelChallengeLabel');
+  const text  = document.getElementById('wheelChallengeText');
+  if (label && text) {
+    let caption = esc(r.skill);
+    if (r.challenges && r.challenges.length) {
+      const mods = r.challenges.map(c => esc(c.name)).join(', ');
+      caption += ` <span class="wheel-mods">· ${r.challenges.length} modifier${r.challenges.length > 1 ? 's' : ''}: ${mods}</span>`;
+    }
+    text.innerHTML = caption;
+    label.style.display = '';
+  }
+
+  // Collapse the Advanced Options panel now that the roll is locked in — gets it
+  // out of the way and nudges the user toward naming + Create.
+  const toggle = document.getElementById('advOptsToggle');
+  const panel  = document.getElementById('advOptsPanel');
+  if (toggle) toggle.classList.remove('open');
+  if (panel)  panel.style.display = 'none';
+
+  // Focus the character name input if it's still empty. If the user has already
+  // typed a name, leave focus alone — don't clobber mid-edit.
+  const nameInput = document.getElementById('newCharName');
+  if (nameInput && !nameInput.value) nameInput.focus();
 };
 
 window.createNewCharacter = function() {
