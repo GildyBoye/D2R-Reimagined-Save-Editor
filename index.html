@@ -451,7 +451,7 @@
     color: var(--d2-red-bright); text-align: center; margin-bottom: 4px;
   }
   .wheel-challenge-item {
-    padding: 2px 0; color: var(--d2-text); font-size: 15px;
+    padding: 2px 0; color: var(--d2-text);
   }
   .wheel-challenge-item b { color: var(--d2-gold); font-weight: 600; }
   .wheel-challenge-item small { color: var(--d2-text-dim); font-size: 15px; font-style: italic; }
@@ -4177,14 +4177,11 @@ const _WHEEL_CHALLENGES = [
   { name: 'Throwing Fit',            desc: 'Throwing weapons only' },
   // ── Gear quality ────────────────────────────────────────────────────
   { name: 'Plain Jane',              desc: 'White/gray (normal-tier) items only' },
-  { name: 'Unique Items Only',       desc: 'Can only equip unique (gold) items' },
-  { name: 'Set Items Only',          desc: 'Can only equip set (green) items' },
-  { name: 'Runewords Only',          desc: 'Only runeword gear may be equipped' },
   { name: 'Perfectionist',           desc: 'Only uniques/sets with ≥80% perfection rolls' },
   // ── Skill / stat meta ───────────────────────────────────────────────
   { name: 'One-Trick Pony',          desc: 'Only the rolled signature skill — no other skill investment' },
-  { name: 'No Masteries',            desc: 'No weapon/armor/element mastery skills' },
-  { name: 'Pre-req Shuffle',         desc: 'Every skill capped at exactly 1 point' },
+  { name: 'No Passives',             desc: 'No weapon/armor/element passive skills' },
+  { name: 'Pre-req Shuffle',         desc: 'Every skill capped at exactly 5 points' },
   { name: 'No Respec',               desc: 'Cannot use any respec mechanic' },
   { name: 'Stat Purist',             desc: 'All stat points into Vitality' },
   { name: 'Stat Dumper',             desc: 'All stat points into Energy (yes, even on Barb)' },
@@ -4212,10 +4209,7 @@ const _WHEEL_CHALLENGES = [
 // per spin. Everything not in a group is combinable freely (overlap like No Potions
 // ⊇ No Mana Potions is intentionally allowed to keep the chaotic flavor at high counts).
 const _WHEEL_EXCLUSION_GROUPS = [
-  new Set([
-    'Rare Items Only', 'Magic Items Only', 'Ethereals Only', 'Plain Jane',
-    'Unique Items Only', 'Set Items Only', 'Runewords Only',
-  ]),
+  new Set(['Rare Items Only', 'Magic Items Only', 'Ethereals Only', 'Plain Jane']),
   new Set(['Stat Purist', 'Stat Dumper', 'Glass Cannon']),
   new Set([
     'Bow Only', 'Sword Dance', 'Axe Murderer', 'Mace Face', 'Spear Phisher',
@@ -4229,9 +4223,6 @@ const _WHEEL_EXCLUSION_GROUPS = [
 const _WHEEL_PAIR_CONFLICTS = (() => {
   const pairs = [
     ['Rare Items Only', 'No Rare Items'],
-    ['Unique Items Only', 'No Unique Items'],
-    ['Set Items Only', 'No Set Items'],
-    ['Runewords Only', 'No Runewords'],
     ['No Vendor Trading', 'Spendthrift'],
     ['No Vendor Trading', 'Rag Tag'],
     ['No Mercenary', 'Naked Merc'],
