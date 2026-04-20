@@ -4120,7 +4120,6 @@ window.selectNewCharClass = function(idx) {
 //  gheedsgamble.com, minus duplicates/contradictions.
 // ═══════════════════════════════════════════════════════════
 let _wheelAnimTimer = null;
-let _wheelChallenge = null; // { classIdx, skill, challenges:[{name,desc}] } after Accept
 let _wheelSettledResult = null; // most recent settled roll (before Accept) — survives between reroll+accept
 
 const _WHEEL_CHALLENGES = [
@@ -4404,7 +4403,6 @@ function _animateWheel(finalResult) {
 
 function _resetAdvancedOptions() {
   _stopWheelAnim();
-  _wheelChallenge = null;
   _wheelSettledResult = null;
   const toggle = document.getElementById('advOptsToggle');
   const panel  = document.getElementById('advOptsPanel');
@@ -4449,11 +4447,6 @@ window.acceptWheelResult = function() {
   const r = _wheelSettledResult;
   if (!r || r.classIdx == null) return;
 
-  _wheelChallenge = {
-    classIdx:   r.classIdx,
-    skill:      r.skill,
-    challenges: r.challenges ? r.challenges.slice() : [],
-  };
   window.selectNewCharClass(r.classIdx);
 
   // Persistent caption below the selected class name. Shows skill + comma-joined
@@ -4510,6 +4503,7 @@ window.createNewCharacter = function() {
   fileName = name + '.d2s';
   closeNewCharModal();
   parsedChar = parseD2S(workBytes);
+
   snapshotQuestState();
   snapshotSkillState();
   isDirty = true;
@@ -4523,6 +4517,7 @@ window.createNewCharacter = function() {
   renderTab();
   setStatus(Lfmt('ui_status_new_char','New character: {name} ({class}) — save to create .d2s file',{name,class:CLASS_NAMES[cls]}), 'modified');
 };
+
 
 function _doReset() {
   // Clear all file/parse state
