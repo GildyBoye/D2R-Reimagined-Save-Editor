@@ -1,0 +1,1392 @@
+{
+    "0": [
+        "+{v} to Strength",
+        32,
+        0
+    ],
+    "1": [
+        "+{v} to Energy",
+        32,
+        0
+    ],
+    "2": [
+        "+{v} to Dexterity",
+        32,
+        0
+    ],
+    "3": [
+        "+{v} to Vitality",
+        32,
+        0
+    ],
+    "7": [
+        "+{v} to Life",
+        32,
+        0
+    ],
+    "9": [
+        "+{v} to Mana",
+        32,
+        0
+    ],
+    "11": [
+        "+{v} Maximum Stamina",
+        32,
+        0
+    ],
+    "16": [
+        "+{v}% Enhanced Defense",
+        0,
+        0
+    ],
+    "17": [
+        "+{v}% Enhanced Damage",
+        0,
+        0
+    ],
+    "19": [
+        "+{v} to Attack Rating",
+        0,
+        0
+    ],
+    "20": [
+        "{v}% Increased Chance of Blocking",
+        0,
+        0
+    ],
+    "21": [
+        "+{v} to Minimum Damage",
+        0,
+        0
+    ],
+    "22": [
+        "+{v} to Maximum Damage",
+        0,
+        0
+    ],
+    "23": [
+        "+{v} to Secondary Min Damage",
+        0,
+        0
+    ],
+    "24": [
+        "+{v} to Secondary Max Damage",
+        0,
+        0
+    ],
+    "25": [
+        "+{v}% Enhanced Weapon Damage",
+        0,
+        0
+    ],
+    "27": [
+        "+{v}% Mana Regeneration",
+        0,
+        0
+    ],
+    "28": [
+        "Heal Stamina Plus {v}%",
+        0,
+        0
+    ],
+    "31": [
+        "+{v} Defense",
+        10,
+        0
+    ],
+    "32": [
+        "+{v} Defense vs. Missile",
+        0,
+        0
+    ],
+    "33": [
+        "+{v} Defense vs. Melee",
+        0,
+        0
+    ],
+    "34": [
+        "Physical Damage Reduced By {v}",
+        0,
+        0
+    ],
+    "35": [
+        "Magic Damage Reduced By {v}",
+        0,
+        0
+    ],
+    "36": [
+        "+{v}% Physical Damage Reduction",
+        200,
+        0
+    ],
+    "37": [
+        "+{v}% Magic Resistance",
+        200,
+        0
+    ],
+    "38": [
+        "+{v}% to Maximum Magic Resistance",
+        0,
+        0
+    ],
+    "39": [
+        "+{v}% Fire Resistance",
+        200,
+        0
+    ],
+    "40": [
+        "+{v}% to Maximum Fire Resistance",
+        0,
+        0
+    ],
+    "41": [
+        "+{v}% Lightning Resistance",
+        200,
+        0
+    ],
+    "42": [
+        "+{v}% to Maximum Lightning Resistance",
+        0,
+        0
+    ],
+    "43": [
+        "+{v}% Cold Resistance",
+        200,
+        0
+    ],
+    "44": [
+        "+{v}% to Maximum Cold Resistance",
+        0,
+        0
+    ],
+    "45": [
+        "+{v}% Poison Resistance",
+        200,
+        0
+    ],
+    "46": [
+        "+{v}% to Maximum Poison Resistance",
+        0,
+        0
+    ],
+    "48": [
+        "+{v} to Weapon Minimum Fire Damage",
+        0,
+        0
+    ],
+    "50": [
+        "+{v} to Weapon Minimum Lightning Damage",
+        0,
+        0
+    ],
+    "52": [
+        "+{v} Weapon Magic Damage",
+        0,
+        0
+    ],
+    "54": [
+        "+{v} to Weapon Minimum Cold Damage",
+        0,
+        0
+    ],
+    "62": [
+        "{v}% Faster Hit Recovery",
+        0,
+        0
+    ],
+    "74": [
+        "Replenish Life +{v}",
+        30,
+        0
+    ],
+    "75": [
+        "+{v}% Increased Maximum Durability",
+        20,
+        0
+    ],
+    "76": [
+        "+{v}% Increased Maximum Life",
+        10,
+        0
+    ],
+    "77": [
+        "+{v}% Increased Maximum Mana",
+        10,
+        0
+    ],
+    "78": [
+        "Attacker Takes Damage of {v}",
+        0,
+        0
+    ],
+    "79": [
+        "+{v}% Extra Gold from Monsters",
+        100,
+        0
+    ],
+    "80": [
+        "+{v}% Chance Items Roll Magic or Better",
+        100,
+        0
+    ],
+    "81": [
+        "Knockback",
+        0,
+        0
+    ],
+    "83": [
+        "+{v} to {p} Skill Levels",
+        0,
+        3
+    ],
+    "85": [
+        "+{v}% to Experience Gained",
+        50,
+        0
+    ],
+    "86": [
+        "+{v} Life after each Kill",
+        0,
+        0
+    ],
+    "87": [
+        "Vendor Prices Reduced By {v}%",
+        0,
+        0
+    ],
+    "89": [
+        "+{v} to Light Radius",
+        4,
+        0
+    ],
+    "91": [
+        "Requirements Increased By {v}%",
+        100,
+        0
+    ],
+    "92": [
+        "+{v} to Required Level",
+        6,
+        0
+    ],
+    "93": [
+        "+{v}% Increased Attack Speed",
+        20,
+        0
+    ],
+    "96": [
+        "+{v}% Faster Run/Walk Speed",
+        20,
+        0
+    ],
+    "99": [
+        "+{v}% Faster Hit Recovery",
+        20,
+        0
+    ],
+    "102": [
+        "+{v}% Faster Block Rate",
+        20,
+        0
+    ],
+    "105": [
+        "+{v}% Faster Cast Rate",
+        20,
+        0
+    ],
+    "107": [
+        "+{v} to {p}",
+        0,
+        9
+    ],
+    "108": [
+        "Slain Monsters Rest in Peace",
+        0,
+        0
+    ],
+    "110": [
+        "Poison Length Reduced by {v}%",
+        20,
+        0
+    ],
+    "111": [
+        "+{v} Damage",
+        20,
+        0
+    ],
+    "112": [
+        "+{v}% Hits Cause Monsters to Flee",
+        -1,
+        0
+    ],
+    "113": [
+        "Hit Blinds Target",
+        0,
+        0
+    ],
+    "114": [
+        "+{v}% Damage Taken Goes To Mana",
+        0,
+        0
+    ],
+    "115": [
+        "Ignore Target's Defense",
+        0,
+        0
+    ],
+    "116": [
+        "-{v}% Target Defense",
+        0,
+        0
+    ],
+    "117": [
+        "Prevent Monster Heal",
+        0,
+        0
+    ],
+    "119": [
+        "+{v}% Bonus to Attack Rating",
+        20,
+        0
+    ],
+    "120": [
+        "{v} to Monster Defense Per Hit",
+        128,
+        0
+    ],
+    "121": [
+        "+{v}% Damage to Demons",
+        20,
+        0
+    ],
+    "122": [
+        "+{v}% Damage to Undead",
+        20,
+        0
+    ],
+    "123": [
+        "+{v} to Attack Rating against Demons",
+        128,
+        0
+    ],
+    "124": [
+        "+{v} to Attack Rating against Undead",
+        128,
+        0
+    ],
+    "125": [
+        "Throwable",
+        0,
+        0
+    ],
+    "127": [
+        "+{v} to All Skills",
+        0,
+        0
+    ],
+    "128": [
+        "Attacker Takes Lightning Damage of {v}",
+        0,
+        0
+    ],
+    "134": [
+        "Freezes target",
+        0,
+        0
+    ],
+    "135": [
+        "+{v}% Chance of Open Wounds",
+        0,
+        0
+    ],
+    "136": [
+        "+{v}% Chance of Crushing Blow",
+        0,
+        0
+    ],
+    "137": [
+        "+{v} Kick Damage",
+        0,
+        0
+    ],
+    "138": [
+        "+{v} to Mana after each Kill",
+        0,
+        0
+    ],
+    "139": [
+        "+{v} Life after each Demon Kill",
+        0,
+        0
+    ],
+    "141": [
+        "+{v}% Deadly Strike",
+        0,
+        0
+    ],
+    "142": [
+        "+{v}% Fire Damage Absorbed",
+        0,
+        0
+    ],
+    "143": [
+        "+{v} Fire Damage Absorbed",
+        0,
+        0
+    ],
+    "144": [
+        "+{v}% Lightning Damage Absorbed",
+        0,
+        0
+    ],
+    "145": [
+        "+{v} Lightning Damage Absorbed",
+        0,
+        0
+    ],
+    "146": [
+        "+{v}% Magic Damage Absorbed",
+        0,
+        0
+    ],
+    "147": [
+        "+{v} Magic Damage Absorbed",
+        0,
+        0
+    ],
+    "148": [
+        "+{v}% Cold Damage Absorbed",
+        0,
+        0
+    ],
+    "149": [
+        "+{v} Cold Damage Absorbed",
+        0,
+        0
+    ],
+    "150": [
+        "Slows Target by {v}%",
+        0,
+        0
+    ],
+    "151": [
+        "Level {v} {p} Aura When Equipped",
+        0,
+        9
+    ],
+    "152": [
+        "Indestructible",
+        0,
+        0
+    ],
+    "153": [
+        "Cannot Be Frozen",
+        0,
+        0
+    ],
+    "154": [
+        "{v}% Slower Stamina Drain",
+        20,
+        0
+    ],
+    "155": [
+        "%0% Reanimate as: %1",
+        0,
+        10
+    ],
+    "156": [
+        "+{v}% Piercing Attack",
+        0,
+        0
+    ],
+    "157": [
+        "Fires Magic Arrows",
+        0,
+        0
+    ],
+    "158": [
+        "+{v}% to All Resistances",
+        0,
+        0
+    ],
+    "179": [
+        "{v}% to Attack Rating versus",
+        0,
+        10
+    ],
+    "180": [
+        "{v}% to Damage versus",
+        0,
+        10
+    ],
+    "181": [
+        "ÿcKYou feel incorporeal...ÿc3",
+        0,
+        0
+    ],
+    "187": [
+        "ÿc4Monster Cold Immunity is Sunderedÿc3",
+        0,
+        0
+    ],
+    "188": [
+        "+{v} to Javelin and Spear Skills",
+        0,
+        16
+    ],
+    "189": [
+        "ÿc4Monster Fire Immunity is Sunderedÿc3",
+        0,
+        0
+    ],
+    "190": [
+        "ÿc4Monster Lightning Immunity is Sunderedÿc3",
+        0,
+        0
+    ],
+    "191": [
+        "ÿc4Monster Poison Immunity is Sunderedÿc3",
+        0,
+        0
+    ],
+    "192": [
+        "ÿc4Monster Physical Immunity is Sunderedÿc3",
+        0,
+        0
+    ],
+    "193": [
+        "ÿc4Monster Magic Immunity is Sunderedÿc3",
+        0,
+        0
+    ],
+    "194": [
+        "Socketed ({v})",
+        0,
+        0
+    ],
+    "195": [
+        "{v}% Chance to Cast Level {L} {p} on attack",
+        0,
+        16
+    ],
+    "196": [
+        "{v}% Chance to Cast Level {L} {p} when you Kill an Enemy",
+        0,
+        16
+    ],
+    "197": [
+        "{v}% Chance to Cast Level {L} {p} when you Die",
+        0,
+        16
+    ],
+    "198": [
+        "{v}% Chance to Cast Level {L} {p} on Striking",
+        0,
+        16
+    ],
+    "199": [
+        "{v}% Chance to Cast Level {L} {p} when you Level-Up",
+        0,
+        16
+    ],
+    "200": [
+        "ÿc4+{v}% chance for finishing moves to not consume chargesÿc3",
+        0,
+        0
+    ],
+    "201": [
+        "{v}% Chance to Cast Level {L} {p} when struck",
+        0,
+        16
+    ],
+    "204": [
+        "Level {L} {p} ({v}/{v2} Charges)",
+        0,
+        16
+    ],
+    "205": [
+        "+{v}% Chance to not consume Quantity",
+        0,
+        0
+    ],
+    "214": [
+        "+{v} Defense",
+        0,
+        0
+    ],
+    "215": [
+        "+{v}% Enhanced Defense",
+        0,
+        0
+    ],
+    "216": [
+        "+{v} to Life",
+        0,
+        0
+    ],
+    "217": [
+        "+{v} to Mana",
+        0,
+        0
+    ],
+    "218": [
+        "+{v} to Maximum Weapon Damage",
+        0,
+        0
+    ],
+    "219": [
+        "+{v}% Enhanced Maximum Weapon Damage",
+        0,
+        0
+    ],
+    "220": [
+        "+{v} to Strength",
+        0,
+        0
+    ],
+    "221": [
+        "+{v} to Dexterity",
+        0,
+        0
+    ],
+    "222": [
+        "+{v} to Energy",
+        0,
+        0
+    ],
+    "223": [
+        "+{v} to Vitality",
+        0,
+        0
+    ],
+    "224": [
+        "+{v} to Attack Rating",
+        0,
+        0
+    ],
+    "225": [
+        "+{v}% Bonus to Attack Rating",
+        0,
+        0
+    ],
+    "226": [
+        "+{v} to Weapon Maximum Cold Damage",
+        0,
+        0
+    ],
+    "227": [
+        "+{v} to Weapon Maximum Fire Damage",
+        0,
+        0
+    ],
+    "228": [
+        "+{v} to Weapon Maximum Lightning Damage",
+        0,
+        0
+    ],
+    "229": [
+        "+{v} to Weapon Maximum Poison Damage",
+        0,
+        0
+    ],
+    "230": [
+        "+{v}% Cold Resistance",
+        0,
+        0
+    ],
+    "231": [
+        "+{v}% Fire Resistance",
+        0,
+        0
+    ],
+    "232": [
+        "+{v}% Lightning Resistance",
+        0,
+        0
+    ],
+    "233": [
+        "+{v}% Poison Resistance",
+        0,
+        0
+    ],
+    "234": [
+        "Absorbs {v} Cold Damage",
+        0,
+        0
+    ],
+    "235": [
+        "Absorbs {v} Fire Damage",
+        0,
+        0
+    ],
+    "236": [
+        "Absorbs {v} Lightning Damage",
+        0,
+        0
+    ],
+    "238": [
+        "Attacker Takes Damage of {v}",
+        0,
+        0
+    ],
+    "239": [
+        "+{v}% Extra Gold from Monsters",
+        0,
+        0
+    ],
+    "240": [
+        "+{v}% Chance Items Roll Magic or Better",
+        0,
+        0
+    ],
+    "241": [
+        "Heal Stamina Plus {v}%",
+        0,
+        0
+    ],
+    "242": [
+        "+{v} Maximum Stamina",
+        0,
+        0
+    ],
+    "243": [
+        "+{v}% Damage to Demons",
+        0,
+        0
+    ],
+    "244": [
+        "+{v}% Damage to Undead",
+        0,
+        0
+    ],
+    "245": [
+        "+{v} to Attack Rating against Demons",
+        0,
+        0
+    ],
+    "246": [
+        "+{v} to Attack Rating against Undead",
+        0,
+        0
+    ],
+    "247": [
+        "+{v}% Chance of Crushing Blow",
+        0,
+        0
+    ],
+    "248": [
+        "+{v}% Chance of Open Wounds",
+        0,
+        0
+    ],
+    "249": [
+        "+{v} Kick Damage",
+        0,
+        0
+    ],
+    "250": [
+        "+{v}% Deadly Strike",
+        0,
+        0
+    ],
+    "252": [
+        "Repairs {v} durability per second",
+        0,
+        0
+    ],
+    "253": [
+        "Replenishes quantity",
+        0,
+        0
+    ],
+    "254": [
+        "Increased Stack Size",
+        0,
+        0
+    ],
+    "268": [
+        "+{v} Defense",
+        0,
+        0
+    ],
+    "269": [
+        "+{v}% Enhanced Defense",
+        0,
+        0
+    ],
+    "270": [
+        "+{v} to Life",
+        0,
+        0
+    ],
+    "271": [
+        "+{v} to Mana",
+        0,
+        0
+    ],
+    "272": [
+        "+{v} to Maximum Weapon Damage",
+        0,
+        0
+    ],
+    "273": [
+        "+{v}% Enhanced Maximum Weapon Damage",
+        0,
+        0
+    ],
+    "274": [
+        "+{v} to Strength",
+        0,
+        0
+    ],
+    "275": [
+        "+{v} to Dexterity",
+        0,
+        0
+    ],
+    "276": [
+        "+{v} to Energy",
+        0,
+        0
+    ],
+    "277": [
+        "+{v} to Vitality",
+        0,
+        0
+    ],
+    "278": [
+        "+{v} to Attack Rating",
+        0,
+        0
+    ],
+    "279": [
+        "+{v}% Bonus to Attack Rating",
+        0,
+        0
+    ],
+    "280": [
+        "+{v} to Weapon Maximum Cold Damage",
+        0,
+        0
+    ],
+    "281": [
+        "+{v} to Weapon Maximum Fire Damage",
+        0,
+        0
+    ],
+    "282": [
+        "+{v} to Weapon Maximum Lightning Damage",
+        0,
+        0
+    ],
+    "283": [
+        "+{v} to Weapon Maximum Poison Damage",
+        0,
+        0
+    ],
+    "284": [
+        "+{v}% Cold Resistance",
+        0,
+        0
+    ],
+    "285": [
+        "+{v}% Fire Resistance",
+        0,
+        0
+    ],
+    "286": [
+        "+{v}% Lightning Resistance",
+        0,
+        0
+    ],
+    "287": [
+        "+{v}% Poison Resistance",
+        0,
+        0
+    ],
+    "288": [
+        "Absorbs {v} Cold Damage",
+        0,
+        0
+    ],
+    "289": [
+        "Absorbs {v} Fire Damage",
+        0,
+        0
+    ],
+    "290": [
+        "Absorbs {v} Lightning Damage",
+        0,
+        0
+    ],
+    "292": [
+        "+{v}% Extra Gold from Monsters",
+        0,
+        0
+    ],
+    "293": [
+        "+{v}% Chance Items Roll Magic or Better",
+        0,
+        0
+    ],
+    "294": [
+        "Heal Stamina Plus {v}%",
+        0,
+        0
+    ],
+    "295": [
+        "+{v} Maximum Stamina",
+        0,
+        0
+    ],
+    "296": [
+        "+{v}% Damage to Demons",
+        0,
+        0
+    ],
+    "297": [
+        "+{v}% Damage to Undead",
+        0,
+        0
+    ],
+    "298": [
+        "+{v} to Attack Rating against Demons",
+        0,
+        0
+    ],
+    "299": [
+        "+{v} to Attack Rating against Undead",
+        0,
+        0
+    ],
+    "300": [
+        "+{v}% Chance of Crushing Blow",
+        0,
+        0
+    ],
+    "301": [
+        "+{v}% Chance of Open Wounds",
+        0,
+        0
+    ],
+    "302": [
+        "+{v} Kick Damage",
+        0,
+        0
+    ],
+    "303": [
+        "+{v}% Deadly Strike",
+        0,
+        0
+    ],
+    "305": [
+        "-{v}% to Enemy Cold Resistance",
+        50,
+        0
+    ],
+    "306": [
+        "-{v}% to Enemy Fire Resistance",
+        50,
+        0
+    ],
+    "307": [
+        "-{v}% to Enemy Lightning Resistance",
+        50,
+        0
+    ],
+    "308": [
+        "-{v}% to Enemy Poison Resistance",
+        50,
+        0
+    ],
+    "329": [
+        "+{v}% to Fire Skill Damage",
+        50,
+        0
+    ],
+    "330": [
+        "+{v}% to Lightning Skill Damage",
+        50,
+        0
+    ],
+    "331": [
+        "+{v}% to Cold Skill Damage",
+        50,
+        0
+    ],
+    "332": [
+        "+{v}% to Poison Skill Damage",
+        50,
+        0
+    ],
+    "333": [
+        "-{v}% to Enemy Fire Resistance",
+        0,
+        0
+    ],
+    "334": [
+        "-{v}% to Enemy Lightning Resistance",
+        0,
+        0
+    ],
+    "335": [
+        "-{v}% to Enemy Cold Resistance",
+        0,
+        0
+    ],
+    "336": [
+        "-{v}% to Enemy Poison Resistance",
+        0,
+        0
+    ],
+    "357": [
+        "+{v}% to Magic Skill Damage",
+        50,
+        0
+    ],
+    "358": [
+        "-{v}% to Enemy Magic Resistance",
+        0,
+        0
+    ],
+    "361": [
+        "ÿc1Corruptedÿc3",
+        0,
+        0
+    ],
+    "363": [
+        "Splash 50% of Melee Damage",
+        0,
+        16
+    ],
+    "364": [
+        "+{v}% Extra Maximum Weapon Damage",
+        100,
+        0
+    ],
+    "365": [
+        "+{v}% Extra Minimum Weapon Damage",
+        100,
+        0
+    ],
+    "366": [
+        "Replenish Life +{v}",
+        30,
+        0
+    ],
+    "368": [
+        "ÿc8Hate Keys: ÿc1{v}",
+        0,
+        0
+    ],
+    "369": [
+        "ÿc8Destruction Keys: ÿc1{v}",
+        0,
+        0
+    ],
+    "370": [
+        "ÿc9Topaz Credits: ÿc1{v} / 65,535",
+        0,
+        0
+    ],
+    "371": [
+        "ÿc;Amethyst Credits: ÿc1{v} / 65,535",
+        0,
+        0
+    ],
+    "372": [
+        "ÿc3Sapphire Credits: ÿc1{v} / 65,535",
+        0,
+        0
+    ],
+    "373": [
+        "ÿc0Diamond Credits: ÿc1{v} / 65,535",
+        0,
+        0
+    ],
+    "374": [
+        "ÿc2Emerald Credits: ÿc1{v} / 65,535",
+        0,
+        0
+    ],
+    "375": [
+        "ÿc5Skull Credits: ÿc1{v} / 65,535",
+        0,
+        0
+    ],
+    "376": [
+        "ÿc1Ruby Credits: ÿc1{v} / 65,535",
+        0,
+        0
+    ],
+    "377": [
+        "Life Per Hit",
+        0,
+        0
+    ],
+    "378": [
+        "ÿc4+{v} Bone Spear Projectilesÿc3",
+        0,
+        0
+    ],
+    "379": [
+        "Splash 50% of Melee Damage",
+        0,
+        16
+    ],
+    "380": [
+        "Splash 75% of Melee Damage",
+        0,
+        16
+    ],
+    "381": [
+        "Splash 100% of Melee Damage",
+        0,
+        16
+    ],
+    "382": [
+        "ÿc4+{v} Holy Bolt Projectilesÿc3",
+        0,
+        0
+    ],
+    "383": [
+        "Splash 100% of Melee Damage",
+        0,
+        16
+    ],
+    "384": [
+        "ÿc=Charm Weight: {v}ÿc3",
+        6,
+        0
+    ],
+    "385": [
+        "ÿc1Mana set to 0 if you exceed 40 Charm Weight!",
+        0,
+        0
+    ],
+    "386": [
+        "ÿcUGems: {v}",
+        0,
+        0
+    ],
+    "387": [
+        "+{v} to {p} (oskill)",
+        0,
+        9
+    ],
+    "388": [
+        "+ Max Ravens, - Max Wolves",
+        0,
+        0
+    ],
+    "389": [
+        "ÿc4+{v} to Raven Hitsÿc3",
+        0,
+        0
+    ],
+    "390": [
+        "+50% to Raven Damage",
+        0,
+        0
+    ],
+    "391": [
+        "+{v} to Minimum Weapon Damage",
+        0,
+        0
+    ],
+    "392": [
+        "ÿc;Enchantments: ÿc0{v} / 2",
+        0,
+        0
+    ],
+    "393": [
+        "ÿc;Enchantments: ÿc0{v} / 3",
+        0,
+        0
+    ],
+    "394": [
+        "ÿc;Enchantments: ÿc0{v} / 5",
+        0,
+        0
+    ],
+    "395": [
+        "ÿc;Enchantments: ÿc0{v} / 10",
+        0,
+        0
+    ],
+    "396": [
+        "ÿc1Carrying more than one Torch or Soulstone sets your HP to 1!ÿc0",
+        0,
+        0
+    ],
+    "397": [
+        "ÿcKThe weight of evil...ÿc3",
+        6,
+        0
+    ],
+    "398": [
+        "ÿcKThe weight of evil...ÿc3",
+        6,
+        0
+    ],
+    "399": [
+        "+{v} to Fire Skills",
+        0,
+        3
+    ],
+    "400": [
+        "+{v} to Cold Skills",
+        0,
+        3
+    ],
+    "401": [
+        "+{v} to Lightning Skills",
+        0,
+        3
+    ],
+    "402": [
+        "+{v} to Poison Skills",
+        0,
+        3
+    ],
+    "403": [
+        "+{v} to Magic Skills",
+        0,
+        3
+    ],
+    "404": [
+        "ÿc4Color Dyed: ÿc0Divine White",
+        1,
+        0
+    ],
+    "405": [
+        "ÿc4Color Dyed: ÿc5Abyssal Black",
+        1,
+        0
+    ],
+    "406": [
+        "ÿc4Color Dyed: ÿc3Ancient Blue",
+        1,
+        0
+    ],
+    "407": [
+        "ÿc4Color Dyed: ÿcEInfernal Red",
+        1,
+        0
+    ],
+    "408": [
+        "ÿc4Color Dyed: ÿcANahantu Green",
+        1,
+        0
+    ],
+    "409": [
+        "ÿc4Color Dyed: ÿc9Caldeum Yellow",
+        1,
+        0
+    ],
+    "410": [
+        "ÿc4Color Dyed: ÿc;Royal Purple",
+        1,
+        0
+    ],
+    "411": [
+        "ÿc4Color Dyed: ÿc8Herald Orange",
+        1,
+        0
+    ],
+    "413": [
+        "+{v}% to Strength",
+        63,
+        0
+    ],
+    "414": [
+        "+{v}% to Dexterity",
+        63,
+        0
+    ],
+    "415": [
+        "+{v}% to Vitality",
+        63,
+        0
+    ],
+    "416": [
+        "+{v}% to Energy",
+        63,
+        0
+    ],
+    "417": [
+        "+{v}% Extra Minimum Throwing Weapon Damage",
+        100,
+        0
+    ],
+    "418": [
+        "+{v}% Extra Maximum Throwing Weapon Damage",
+        100,
+        0
+    ],
+    "419": [
+        "ÿc4Upgrades: ÿc0{v} / 6",
+        0,
+        0
+    ],
+    "420": [
+        "ÿc4Upgrades: ÿc0{v} / 10",
+        0,
+        0
+    ],
+    "421": [
+        "ÿc4+{v} to Max Trapsÿc3",
+        0,
+        0
+    ],
+    "422": [
+        "ÿc4+{v} to Max Shadow Mastersÿc3",
+        0,
+        0
+    ],
+    "423": [
+        "ÿc4+{v} to Max Ravensÿc3",
+        31,
+        0
+    ],
+    "424": [
+        "ÿc4+{v} to Max Spirit Wolvesÿc3",
+        31,
+        0
+    ],
+    "425": [
+        "ÿc4+{v} to Max Dire Wolvesÿc3",
+        31,
+        0
+    ],
+    "426": [
+        "ÿc4+{v} to Max Fire Golemsÿc3",
+        31,
+        0
+    ],
+    "431": [
+        "+{v} to Maximum Magic Damage",
+        0,
+        0
+    ],
+    "432": [
+        "-{v}% to Enemy Physical Damage Resistance",
+        0,
+        0
+    ],
+    "433": [
+        "ÿc8Terror Keys: ÿc1{v}",
+        0,
+        0
+    ],
+    "434": [
+        "ÿc4+{v} to Max Skeleton Warriorsÿc3",
+        10,
+        0
+    ],
+    "435": [
+        "ÿc4+{v} to Max Skeletal Magesÿc3",
+        10,
+        0
+    ]
+}

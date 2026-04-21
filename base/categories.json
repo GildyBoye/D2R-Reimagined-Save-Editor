@@ -1,0 +1,485 @@
+{
+    "grail": [
+        {
+            "name": "Unique Helms",
+            "key": "ui_grail_cat_unique_helms",
+            "types": [
+                "helm",
+                "circ"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Jewelry",
+            "key": "ui_grail_cat_unique_jewelry",
+            "types": [
+                "ring",
+                "amul",
+                "jewl"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Body Armor",
+            "key": "ui_grail_cat_unique_body_armor",
+            "types": [
+                "tors"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Gloves",
+            "key": "ui_grail_cat_unique_gloves",
+            "types": [
+                "glov"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Boots",
+            "key": "ui_grail_cat_unique_boots",
+            "types": [
+                "boot"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Belts",
+            "key": "ui_grail_cat_unique_belts",
+            "types": [
+                "belt"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Shields",
+            "key": "ui_grail_cat_unique_shields",
+            "types": [
+                "shie"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Axes",
+            "key": "ui_grail_cat_unique_axes",
+            "types": [
+                "axe"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Swords",
+            "key": "ui_grail_cat_unique_swords",
+            "types": [
+                "swor"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Daggers",
+            "key": "ui_grail_cat_unique_daggers",
+            "types": [
+                "knif"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Maces",
+            "key": "ui_grail_cat_unique_maces",
+            "types": [
+                "club",
+                "mace",
+                "hamm"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Scepters",
+            "key": "ui_grail_cat_unique_scepters",
+            "types": [
+                "scep"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Staves",
+            "key": "ui_grail_cat_unique_staves",
+            "types": [
+                "staf"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Wands",
+            "key": "ui_grail_cat_unique_wands",
+            "types": [
+                "wand"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Polearms",
+            "key": "ui_grail_cat_unique_polearms",
+            "types": [
+                "pole"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Spears",
+            "key": "ui_grail_cat_unique_spears",
+            "types": [
+                "spea"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Javelins",
+            "key": "ui_grail_cat_unique_javelins",
+            "types": [
+                "jave"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Bows",
+            "key": "ui_grail_cat_unique_bows",
+            "types": [
+                "bow"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Crossbows",
+            "key": "ui_grail_cat_unique_crossbows",
+            "types": [
+                "xbow"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Unique Throwing",
+            "key": "ui_grail_cat_unique_throwing",
+            "types": [
+                "tkni",
+                "taxe",
+                "tpot"
+            ],
+            "qual": 7
+        },
+        {
+            "name": "Barbarian Helms",
+            "key": "ui_grail_cat_barb_helms",
+            "types": [
+                "phlm"
+            ],
+            "qual": 7,
+            "group": "class"
+        },
+        {
+            "name": "Druid Pelts",
+            "key": "ui_grail_cat_druid_pelts",
+            "types": [
+                "pelt"
+            ],
+            "qual": 7,
+            "group": "class"
+        },
+        {
+            "name": "Assassin Claws",
+            "key": "ui_grail_cat_assassin_claws",
+            "types": [
+                "h2h",
+                "h2h2"
+            ],
+            "qual": 7,
+            "group": "class"
+        },
+        {
+            "name": "Sorceress Orbs",
+            "key": "ui_grail_cat_sorc_orbs",
+            "types": [
+                "orb"
+            ],
+            "qual": 7,
+            "group": "class"
+        },
+        {
+            "name": "Amazon Bows & Javelins",
+            "key": "ui_grail_cat_amazon_bows",
+            "types": [
+                "abow",
+                "ajav",
+                "aspe"
+            ],
+            "qual": 7,
+            "group": "class"
+        },
+        {
+            "name": "Paladin Shields",
+            "key": "ui_grail_cat_paladin_shields",
+            "types": [
+                "ashd"
+            ],
+            "qual": 7,
+            "group": "class"
+        },
+        {
+            "name": "Necromancer Shields",
+            "key": "ui_grail_cat_necro_shields",
+            "types": [
+                "head"
+            ],
+            "qual": 7,
+            "group": "class"
+        },
+        {
+            "name": "Warlock Shields",
+            "key": "ui_grail_cat_warlock_shields",
+            "types": [
+                "grim"
+            ],
+            "qual": 7,
+            "group": "class"
+        },
+        {
+            "name": "Unique Other",
+            "key": "ui_grail_cat_unique_other",
+            "types": [
+                "__other__"
+            ],
+            "qual": 7
+        }
+    ],
+    "aliases": {
+        "Stone of Jordan": "SoJ",
+        "Bul-Kathos' Wedding Band": "BKWB",
+        "Nagelring": "Nagel",
+        "Manald Heal": "Manald",
+        "Nature's Peace": "NPeace",
+        "Raven Frost": "Raven",
+        "The Cat's Eye": "Cat's Eye",
+        "Crescent Moon": "Crescent",
+        "Atma's Scarab": "Atma",
+        "Highlord's Wrath": "Highlord",
+        "Mara's Kaleidoscope": "Mara",
+        "Saracen's Chance": "Saracen",
+        "Rising Sun": "Rising Sun",
+        "The Rising Sun": "Rising Sun",
+        "Seraph's Hymn": "Seraph",
+        "Metalgrid": "Metalgrid",
+        "Herald of Zakarum": "HoZ",
+        "Breath of the Dying": "BotD",
+        "Crown of Ages": "CoA",
+        "Death's Web": "Death Web",
+        "Griffon's Eye": "Griffon",
+        "Arreat's Face": "Arreat",
+        "Vampire Gaze": "V-Gaze",
+        "Harlequin Crest": "Shako",
+        "Tal Rasha's Horadric Crest": "TR Helm",
+        "Andariel's Visage": "Andy",
+        "Giant Skull": "G Skull",
+        "Kira's Guardian": "Kira",
+        "Veil of Steel": "Veil",
+        "Demon Horn's Edge": "DHE",
+        "Wolfhowl": "Wolfhowl",
+        "Ravenlore": "Ravenlore",
+        "Spirit Keeper": "Spirit",
+        "Gorerider": "Gore",
+        "Steelrend": "Steelrend",
+        "Dracul's Grasp": "Dracul",
+        "Trang-Oul's Claws": "Trang Cl",
+        "Sandstorm Trek": "Sandstorm",
+        "War Traveler": "W Trav",
+        "Waterwalk": "W Walk",
+        "Arachnid Mesh": "Arachnid",
+        "Verdungo's Hearty Cord": "Verdungo",
+        "Nosferatu's Coil": "Nosferatu",
+        "Thundergod's Vigor": "TGod",
+        "String of Ears": "SoE",
+        "Tal Rasha's Fine-Spun Cloth": "TR Belt"
+    },
+    "uniqueSub": {
+        "axe": [
+            "axes",
+            "Axes"
+        ],
+        "swor": [
+            "sword",
+            "Swords"
+        ],
+        "mace": [
+            "maces",
+            "Maces"
+        ],
+        "club": [
+            "maces",
+            "Maces"
+        ],
+        "hamm": [
+            "ui_sub_hammers",
+            "Hammers"
+        ],
+        "scep": [
+            "scept",
+            "Scepters"
+        ],
+        "pole": [
+            "poles",
+            "Polearms"
+        ],
+        "spea": [
+            "spear",
+            "Spears"
+        ],
+        "jave": [
+            "javel",
+            "Javelins"
+        ],
+        "ajav": [
+            "ui_sub_amazon_javelins",
+            "Amazon Javelins"
+        ],
+        "aspe": [
+            "ui_sub_amazon_spears",
+            "Amazon Spears"
+        ],
+        "bow": [
+            "bows",
+            "Bows"
+        ],
+        "abow": [
+            "ui_sub_amazon_bows",
+            "Amazon Bows"
+        ],
+        "xbow": [
+            "xbows",
+            "Crossbows"
+        ],
+        "knif": [
+            "daggs",
+            "Daggers"
+        ],
+        "tkni": [
+            "ui_sub_throwing_knives",
+            "Throwing Knives"
+        ],
+        "taxe": [
+            "ui_sub_throwing_axes",
+            "Throwing Axes"
+        ],
+        "wand": [
+            "wands",
+            "Wands"
+        ],
+        "staf": [
+            "stave",
+            "Staves"
+        ],
+        "orb": [
+            "ui_sub_orbs",
+            "Orbs"
+        ],
+        "h2h": [
+            "ui_sub_claws",
+            "Claws"
+        ],
+        "h2h2": [
+            "ui_sub_claws",
+            "Claws"
+        ],
+        "helm": [
+            "helms",
+            "Helms"
+        ],
+        "phlm": [
+            "ui_grail_cat_barb_helms",
+            "Barbarian Helms"
+        ],
+        "pelt": [
+            "ui_grail_cat_druid_pelts",
+            "Druid Pelts"
+        ],
+        "circ": [
+            "circl",
+            "Circlets"
+        ],
+        "grim": [
+            "ui_grail_cat_warlock_shields",
+            "Warlock Shields"
+        ],
+        "tors": [
+            "r_arm",
+            "Body Armor"
+        ],
+        "shie": [
+            "shlds",
+            "Shields"
+        ],
+        "ashd": [
+            "ui_grail_cat_paladin_shields",
+            "Paladin Shields"
+        ],
+        "glov": [
+            "glove",
+            "Gloves"
+        ],
+        "boot": [
+            "boots",
+            "Boots"
+        ],
+        "belt": [
+            "belts",
+            "Belts"
+        ],
+        "head": [
+            "ui_sub_necro_shields",
+            "Necro Shields"
+        ],
+        "ring": [
+            "Rings",
+            "Rings"
+        ],
+        "amul": [
+            "amule",
+            "Amulets"
+        ]
+    },
+    "baseTypes": {
+        "axe": "Axes",
+        "swor": "Swords",
+        "mace": "Maces",
+        "club": "Maces",
+        "hamm": "Maces",
+        "scep": "Scepters",
+        "pole": "Polearms",
+        "spea": "Spears",
+        "jave": "Javelins",
+        "ajav": "Amazon Javelins",
+        "aspe": "Amazon Spears",
+        "bow": "Bows",
+        "abow": "Amazon Bows",
+        "xbow": "Crossbows",
+        "knif": "Daggers",
+        "tkni": "Throwing Knives",
+        "taxe": "Throwing Axes",
+        "tpot": "Throwing Potions",
+        "wand": "Wands",
+        "staf": "Staves",
+        "orb": "Orbs",
+        "h2h": "Claws",
+        "h2h2": "Claws",
+        "helm": "Helms",
+        "phlm": "Barbarian Helms",
+        "pelt": "Druid Pelts",
+        "circ": "Circlets",
+        "grim": "Warlock Shields",
+        "tors": "Body Armor",
+        "shie": "Shields",
+        "ashd": "Paladin Shields",
+        "glov": "Gloves",
+        "boot": "Boots",
+        "belt": "Belts",
+        "head": "Necro Shields"
+    }
+}
