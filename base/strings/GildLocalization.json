@@ -2031,5 +2031,209 @@
     {
         "Key": "ui_misc_misc",
         "enUS": "Miscellaneous"
+    },
+    {
+        "Key": "ui_undo_button",
+        "enUS": "Undo"
+    },
+    {
+        "Key": "ui_undo_tooltip",
+        "enUS": "Revert all unsaved changes to the last load/save"
+    },
+    {
+        "Key": "ui_undo_confirm_body",
+        "enUS": "Undo all unsaved changes? This will revert every loaded file to its last load or save. This cannot be undone."
+    },
+    {
+        "Key": "ui_adv_options_title",
+        "enUS": "Advanced Options"
+    },
+    {
+        "Key": "ui_adv_autosave_title",
+        "enUS": "Auto-save"
+    },
+    {
+        "Key": "ui_adv_autosave_desc",
+        "enUS": "Automatically write loaded files to disk a few seconds after each edit."
+    },
+    {
+        "Key": "ui_adv_autosave_unavailable",
+        "enUS": "Auto-save requires File System Access API (Chrome, Edge, or Brave)."
+    },
+    {
+        "Key": "ui_autosave_warn_header",
+        "enUS": "Enabling auto-save means:"
+    },
+    {
+        "Key": "ui_autosave_warn_write",
+        "enUS": "• Every edit writes to disk ~2.5 seconds later (no manual save needed)."
+    },
+    {
+        "Key": "ui_autosave_warn_lock",
+        "enUS": "• If D2R is running and has the save file locked, writes will silently fail — launch the editor with the game closed."
+    },
+    {
+        "Key": "ui_autosave_warn_backup",
+        "enUS": "• There is no \"unsaved changes\" safety net — back up your saves before heavy edits."
+    },
+    {
+        "Key": "ui_autosave_warn_chromium",
+        "enUS": "• Only works in Chromium-based browsers (Chrome, Edge, Brave)."
+    },
+    {
+        "Key": "ui_autosave_warn_missing",
+        "enUS": "Not loaded yet: {list}. You can set those targets later from Advanced Options or by loading the file."
+    },
+    {
+        "Key": "ui_autosave_confirm_yes",
+        "enUS": "Enable"
+    },
+    {
+        "Key": "ui_autosave_target_char",
+        "enUS": "Character (.d2s)"
+    },
+    {
+        "Key": "ui_autosave_target_vault",
+        "enUS": "Vault (.d2i)"
+    },
+    {
+        "Key": "ui_autosave_target_grail",
+        "enUS": "Grail (.d2i)"
+    },
+    {
+        "Key": "ui_autosave_target_sharedstash",
+        "enUS": "Shared Stash (.d2i)"
+    },
+    {
+        "Key": "ui_autosave_targets_header",
+        "enUS": "Auto-save destinations"
+    },
+    {
+        "Key": "ui_autosave_target_set",
+        "enUS": "target set"
+    },
+    {
+        "Key": "ui_autosave_target_not_set",
+        "enUS": "no target"
+    },
+    {
+        "Key": "ui_autosave_target_set_btn",
+        "enUS": "Set"
+    },
+    {
+        "Key": "ui_autosave_target_change",
+        "enUS": "Change"
+    },
+    {
+        "Key": "ui_autosave_target_missed",
+        "enUS": "Auto-save target not set for {kind}. Open Advanced Options to set it."
+    },
+    {
+        "Key": "ui_autosave_pick_char",
+        "enUS": "Auto-save needs a destination for the character save. Pick or name a .d2s file."
+    },
+    {
+        "Key": "ui_autosave_pick_vault",
+        "enUS": "Auto-save needs a destination for the vault. Pick or name a .d2i file."
+    },
+    {
+        "Key": "ui_autosave_pick_grail",
+        "enUS": "Auto-save needs a destination for the grail. Pick or name a .d2i file."
+    },
+    {
+        "Key": "ui_autosave_pick_sharedstash",
+        "enUS": "Auto-save needs a destination for the shared stash. Pick or name a .d2i file."
+    },
+    {
+        "Key": "ui_autosave_saved",
+        "enUS": "Auto-saved {file}"
+    },
+    {
+        "Key": "ui_autosave_failed",
+        "enUS": "Auto-save of {kind} failed: {err}"
+    },
+    {
+        "Key": "ui_autosave_no_target",
+        "enUS": "Auto-save paused — no target set. Reopen Advanced Options."
+    },
+    {
+        "Key": "ui_autosave_not_loaded",
+        "enUS": "not loaded"
+    },
+    {
+        "Key": "ui_autosave_target_load_btn",
+        "enUS": "Load…"
+    },
+    {
+        "Key": "ui_autosave_loaded_and_set",
+        "enUS": "Loaded {file} — auto-save target set."
+    },
+    {
+        "Key": "ui_autosave_load_failed",
+        "enUS": "Load failed: {err}"
+    },
+    {
+        "Key": "ui_autosave_perm_denied",
+        "enUS": "Auto-save permission denied. Reopen Advanced Options to set a new target."
+    },
+    {
+        "Key": "ui_autosave_need_char",
+        "enUS": "Load a character save first, then return here to enable auto-save."
+    },
+    {
+        "Key": "ui_save_autosave_on",
+        "enUS": "Auto-save is on — changes are written automatically."
+    },
+    {
+        "Key": "ui_external_reload_done",
+        "enUS": "Refreshed {file} from disk"
+    },
+    {
+        "Key": "ui_external_reload_invalid",
+        "enUS": "External file refresh failed — invalid save data."
+    },
+    {
+        "Key": "ui_external_conflict_title",
+        "enUS": "File changed on disk"
+    },
+    {
+        "Key": "ui_external_conflict_body",
+        "enUS": "{kind} was modified by another program (likely the game) while you have unsaved edits.\n\nReload from disk to pick up those changes (your local edits will be lost), or keep your edits (they will overwrite the disk version on the next save)."
+    },
+    {
+        "Key": "ui_external_conflict_reload",
+        "enUS": "Reload from disk"
+    },
+    {
+        "Key": "ui_external_conflict_keep",
+        "enUS": "Keep my edits"
+    },
+    {
+        "Key": "ui_autosave_target_gone",
+        "enUS": "Auto-save target for {kind} is no longer available. Open Advanced Options to set a new one."
+    },
+    {
+        "Key": "ui_autosave_enabling",
+        "enUS": "Requesting file permissions…"
+    },
+    {
+        "Key": "ui_autosave_enable_cancelled",
+        "enUS": "Auto-save not enabled — no targets configured."
+    },
+    {
+        "Key": "ui_autosave_partial_enable",
+        "enUS": "Auto-save on. Targets still missing: {list}. Use Advanced Options to set them."
+    },
+    {
+        "Key": "ui_autosave_enabled_ok",
+        "enUS": "Auto-save enabled."
+    },
+    {
+        "Key": "ui_autosave_paused_fail",
+        "enUS": "Auto-save for {kind} paused after repeated failures. Open Advanced Options to set a new target."
+    },
+    {
+        "Key": "ui_autosave_multi_tab",
+        "enUS": "Auto-save is already active in another browser tab. Disable it there first."
     }
 ]

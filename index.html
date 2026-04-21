@@ -681,14 +681,63 @@
     position: relative;
     z-index: 1;
   }
-  .footer-left  { display: flex; align-items: center; gap: 10px; flex: 1; }
-  .footer-right { display: flex; align-items: center; gap: 14px; }
+  .footer-left   { display: flex; align-items: center; gap: 10px; flex: 1 1 auto; }
+  .footer-center { display: flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+  .footer-right  { display: flex; align-items: center; gap: 14px; flex: 1 1 auto; justify-content: flex-end; }
+
+  /* ── Undo button (footer-center) ── */
+  .footer-undo-btn {
+    font-family: 'Cinzel', serif; font-size: 10px; letter-spacing: 1px;
+    padding: 6px 14px; border-radius: 2px;
+    border: 1px solid var(--d2-border);
+    background: var(--d2-surface2); color: var(--d2-text-dim);
+    display: inline-flex; align-items: center; gap: 6px;
+    cursor: not-allowed; opacity: 0.5;
+    transition: color 0.15s, border-color 0.15s, background 0.15s, box-shadow 0.15s, opacity 0.15s;
+  }
+  .footer-undo-btn:not(:disabled) {
+    cursor: pointer; opacity: 1;
+    color: #c8a030;
+    border-color: #c8a030;
+    background: rgba(200,160,48,0.08);
+    animation: undoPulse 2.4s ease-in-out infinite;
+  }
+  .footer-undo-btn:not(:disabled):hover {
+    background: rgba(200,160,48,0.16);
+    color: var(--d2-gold);
+    border-color: var(--d2-gold);
+  }
+  @keyframes undoPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(200,160,48,0); }
+    50%      { box-shadow: 0 0 8px 0 rgba(200,160,48,0.35); }
+  }
   .footer-credits { font-size: 11px; color: var(--d2-text-dim); font-family: 'Cinzel', serif; letter-spacing: 1px; white-space: nowrap; display: inline-flex; align-items: center; gap: 8px; }
   .footer-credits { color: rgba(255,255,255,0.5); }
   .footer-credits span { color: rgba(255,255,255,0.7); }
   .footer-github { display: inline-flex; align-items: center; color: rgba(255,255,255,0.5); transition: color 0.15s; }
   .footer-github:hover { color: var(--d2-gold); }
   .footer-github svg { display: block; }
+
+  /* ── Advanced Options gear ── */
+  .footer-gear-btn {
+    background: transparent;
+    border: 1px solid var(--d2-border);
+    color: rgba(255,255,255,0.5);
+    padding: 5px 7px;
+    border-radius: 2px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.15s, border-color 0.15s, background 0.15s, transform 0.3s;
+  }
+  .footer-gear-btn:hover {
+    color: var(--d2-gold);
+    border-color: var(--d2-gold-dim);
+    background: rgba(200,160,48,0.08);
+    transform: rotate(30deg);
+  }
+  .footer-gear-btn svg { display: block; }
 
   /* ── Status indicator (inside footer) ── */
   .status-bar { display: flex; align-items: center; gap: 8px; }
@@ -868,7 +917,7 @@
   <!-- Footer bar -->
   <div class="editor-footer">
     <div class="footer-left">
-      <button class="btn btn-primary disabled" id="openBtn" onclick="document.getElementById('fileInput').click()">Open .d2s</button>
+      <button class="btn btn-primary disabled" id="openBtn" onclick="openCharFileFromFooter()">Open .d2s</button>
       <button class="btn btn-primary" id="resetBtn" style="display:none" onclick="resetEditor()">Reset</button>
       <button class="btn btn-save disabled" id="saveBtn" onclick="saveFile()">Save .d2s</button>
       <div class="status-bar">
@@ -876,7 +925,23 @@
         <span id="statusText">Loading Reimagined data files...</span>
       </div>
     </div>
+    <div class="footer-center">
+      <button class="btn footer-undo-btn" id="undoBtn" onclick="onUndoClick()" disabled
+              title="Revert all unsaved changes to the last load/save">
+        <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+          <path fill="currentColor" d="M4.5 2.5a.5.5 0 0 1 0 1H2.707l2.147 2.146a.5.5 0 0 1-.708.708L1 3.707V6.5a.5.5 0 0 1-1 0v-4a.5.5 0 0 1 .5-.5h4zm3.5 3a6 6 0 1 0 0 12 6 6 0 0 0 0-12zm-.5 2a.5.5 0 0 1 .5.5v3.293l2.146 2.146a.5.5 0 0 1-.708.708l-2.292-2.293A.5.5 0 0 1 7 11.5V8a.5.5 0 0 1 .5-.5z"/>
+        </svg>
+        <span id="undoBtnLabel">Undo</span>
+      </button>
+    </div>
     <div class="footer-right">
+      <button type="button" class="footer-gear-btn" id="advancedOptionsBtn"
+              onclick="openAdvancedOptions()" title="Advanced options"
+              aria-label="Advanced options">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <path fill="currentColor" d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/>
+        </svg>
+      </button>
       <select id="langSelect" onchange="switchLanguage(this.value)"
         style="font-family:'Cinzel',serif;font-size:10px;letter-spacing:0.5px;padding:4px 8px;
                background:var(--d2-surface2);border:1px solid var(--d2-border);color:var(--d2-text);
@@ -1144,6 +1209,87 @@ let baseReady   = false;
 let parsedChar  = null; // result of parseD2S()
 let isDirty     = false;
 let _deletedItemOffsets = new Set(); // byte offsets of items removed via editor
+
+// Dirty flags for the three auxiliary file types so the undo/autosave system
+// can tell what has unsaved changes. sharedStashDirty is stubbed — no edit
+// paths touch sharedStashData today — but wired in so future edit features
+// just need to flip the flag via markSharedStashDirty().
+let grailDirty = false;
+let sharedStashDirty = false;
+let _undoSnapshot = null; // single-level undo baseline; see takeUndoSnapshot()
+
+// ── Auto-save state ──
+// Debounced per-kind writer writes the loaded file back to disk ~2.5s after
+// the last edit. Chromium-only (File System Access API). Handles captured
+// from user-gesture paths and persisted to IndexedDB so they survive reloads.
+const AUTOSAVE_DELAY_MS = 2500;
+const AUTOSAVE_HANDLE_DB = 'd2rr-editor';
+const AUTOSAVE_HANDLE_STORE = 'handles';
+let _autoSaveEnabled = false;
+// Order: char → sharedStash → grail → vault (how they render in Advanced Options)
+const _autoSaveTimers = { char: null, sharedStash: null, grail: null, vault: null };
+const _fileHandles    = { char: null, sharedStash: null, grail: null, vault: null };
+// Last known on-disk mtime per kind. Updated after every successful load /
+// write / reload. Compared against the current file's mtime on window focus
+// to detect external changes (e.g. D2R modifying the save while running).
+const _lastSeenMtime  = { char: 0,    sharedStash: 0,    grail: 0,    vault: 0    };
+// True while writeHandle is actively writing for this kind. Used by the
+// focus-change detector so it doesn't read mtime mid-write and falsely flag
+// our own save as an external modification.
+const _autoSaveWriting = { char: false, sharedStash: false, grail: false, vault: false };
+// Consecutive write-failure counter per kind. After AUTOSAVE_FAIL_LIMIT fails
+// in a row we pause auto-save for that kind (clear handle + surface a
+// persistent status) so the user isn't spammed with toasts if permission was
+// revoked, the target was deleted, etc.
+const _autoSaveFailures = { char: 0, sharedStash: 0, grail: 0, vault: 0 };
+const AUTOSAVE_FAIL_LIMIT = 3;
+// Monotonic edit generation per kind, incremented by mark*Dirty(). auto-save
+// samples this at the start of a write and only clears isDirty after the
+// write if the generation hasn't moved — i.e. no user edits landed during
+// the await. Closes a brief "isDirty=false despite pending edit" window.
+const _editGen = { char: 0, sharedStash: 0, grail: 0, vault: 0 };
+// Cross-tab mutual exclusion via navigator.locks (Chromium, Firefox, Safari
+// 15.4+). Only one browser tab may hold auto-save active at a time; the lock
+// auto-releases on tab close so a crashed tab doesn't block forever.
+let _autoSaveLockRelease = null;
+async function _tryAcquireAutoSaveLock() {
+  if (!('locks' in navigator)) return true; // no cross-tab arbiter — degrade to best-effort
+  try {
+    return await new Promise(resolve => {
+      navigator.locks.request('d2rr-editor-autosave',
+        { mode: 'exclusive', ifAvailable: true },
+        lock => {
+          if (!lock) { resolve(false); return; } // another tab holds it
+          resolve(true);
+          // Hold the lock by returning a promise that only settles on release
+          return new Promise(res => { _autoSaveLockRelease = res; });
+        });
+    });
+  } catch (e) {
+    _logCaught('tryAcquireAutoSaveLock', e);
+    return true; // fall back rather than blocking auto-save entirely
+  }
+}
+function _releaseAutoSaveLock() {
+  if (_autoSaveLockRelease) {
+    try { _autoSaveLockRelease(); } catch (e) { /* best-effort */ }
+    _autoSaveLockRelease = null;
+  }
+}
+// Safari ships showSaveFilePicker but its createWritable throws for
+// user-visible files — treat it as unsupported so we don't spam failures.
+function _isSafariUA() {
+  const ua = navigator.userAgent || '';
+  return /safari/i.test(ua) && !/chrome|android|crios|edg|opr\//i.test(ua);
+}
+function _hasAutoSaveSupport() {
+  return ('showSaveFilePicker' in window) && !_isSafariUA();
+}
+// Guard to suppress scheduleAutoSave while we're inside our own apply*/commit*
+// pass (both manual saveFile and autoSaveChar call applyCurrentTab + applyMerc,
+// which call commit* which call markDirty unconditionally → would schedule a
+// fresh timer on top of the write we're already doing → infinite 2.5s loop).
+let _autoSaveInApply = false;
 
 // Virtual items (not yet flushed to binary) use a negative placeholder offset so
 // `items.find(it => it.byteOffset === x)` lookups can distinguish them from real
@@ -1564,6 +1710,16 @@ function _updateStaticUIStrings() {
   const openBtn = el('openBtn');  if (openBtn) openBtn.textContent = L('ui_open', 'Open .d2s');
   const saveBtn = el('saveBtn');  if (saveBtn) saveBtn.textContent = L('ui_save', 'Save .d2s');
   const resetBtn = el('resetBtn'); if (resetBtn) resetBtn.textContent = L('ui_reset', 'Reset');
+  const undoLabel = el('undoBtnLabel'); if (undoLabel) undoLabel.textContent = L('ui_undo_button', 'Undo');
+  const undoBtn = el('undoBtn'); if (undoBtn) undoBtn.title = L('ui_undo_tooltip', 'Revert all unsaved changes to the last load/save');
+  const gearBtn = el('advancedOptionsBtn');
+  if (gearBtn) {
+    gearBtn.title = L('ui_adv_options_title', 'Advanced Options');
+    gearBtn.setAttribute('aria-label', L('ui_adv_options_title', 'Advanced Options'));
+  }
+  // Refresh undo + save button state so their localized tooltips follow the
+  // language switch (both helpers re-read L() on every invocation).
+  try { updateSaveButton(); updateUndoButton(); } catch (e) { /* called before helpers wired */ }
   // Upload page
   const dropStrong = document.querySelector('.upload-drop-text strong');
   if (dropStrong) dropStrong.textContent = L('ui_drop_file', 'Drop your .d2s file here');
@@ -3671,11 +3827,26 @@ function hasValidSaveMagic(buf) {
       && buf[2] === 0x55 && buf[3] === 0xAA;
 }
 
-function handleFile(input) { const f=input.files[0]; if(f) loadFile(f); input.value=''; }
+function handleFile(input) {
+  const f = input.files[0];
+  if (f) {
+    // File-input path gives us a File but no FileSystemFileHandle. If there's
+    // a rehydrated IDB handle with the same filename but from a different
+    // folder, auto-save would overwrite the wrong file. Clear the handle so
+    // the user is prompted for a fresh save-target if they enable auto-save.
+    _fileHandles.char = null;
+    loadFile(f);
+  }
+  input.value = '';
+}
 function handleDrop(e) {
   e.preventDefault();
   document.getElementById('dropZone').classList.remove('drag-over');
-  const f=e.dataTransfer.files[0]; if(f) loadFile(f);
+  const f = e.dataTransfer.files[0];
+  if (f) {
+    _fileHandles.char = null; // same rationale as handleFile — no handle = unverifiable source
+    loadFile(f);
+  }
 }
 function loadFile(file) {
   if (!baseReady) return;
@@ -3714,7 +3885,7 @@ function onFileLoaded() {
   isDirty    = false;
   inventoryUnlocked = false;  // reset — must re-confirm for each loaded file
   showOnly('editorView');
-  document.getElementById('saveBtn').classList.remove('disabled');
+  updateSaveButton();
   document.getElementById('resetBtn').style.display = '';
   document.querySelectorAll('.fire-side').forEach(el => el.classList.add('active'));
 
@@ -3728,6 +3899,11 @@ function onFileLoaded() {
   renderTab();
   // Track this file in recent files
   trackRecentFile(fileName, parsedChar);
+  // Loaded state becomes the new undo baseline
+  takeUndoSnapshot();
+  // If auto-save is on, capture a write target while still in the load
+  // user-gesture chain (opening showSaveFilePicker requires a gesture).
+  maybeCaptureAutoSaveHandle('char');
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3829,6 +4005,8 @@ async function openRecentFile(name) {
         if (req !== 'granted') { removeRecentFile(name); return; }
       }
       const file = await handle.getFile();
+      _fileHandles.char = handle; // auto-save reuse
+      _lastSeenMtime.char = file.lastModified || 0; // baseline for external-change detection
       loadFile(file);
       return;
     } catch (e) {
@@ -3845,7 +4023,9 @@ async function openRecentFile(name) {
         startIn,
       });
       await storeRecentFileHandle(fh.name, fh);
+      _fileHandles.char = fh; // auto-save reuse
       const file = await fh.getFile();
+      _lastSeenMtime.char = file.lastModified || 0;
       fileName = fh.name;
       loadFile(file);
     } catch (e) { /* best-effort: user cancelled the picker, or handle was revoked */ }
@@ -3853,6 +4033,37 @@ async function openRecentFile(name) {
     showPopup(Lfmt('ui_err_recent_reopen','To reopen "{name}", please drag the file onto the page.\n\nD2RR saves are usually at:\nC:\\Users\\<you>\\Saved Games\\Diablo II Resurrected\\mods\\ReimaginedThree\\\n\n(Direct re-opening requires Chrome or Edge.)',{name}));
   }
 }
+
+// Footer "Open .d2s" entry point. In Chromium we use showOpenFilePicker so
+// the FileSystemFileHandle is captured for auto-save reuse; elsewhere (or
+// on failure) we fall back to the hidden <input type="file"> path.
+window.openCharFileFromFooter = async function() {
+  if (window.showOpenFilePicker) {
+    try {
+      const startIn = await getStartInHint();
+      const [fh] = await window.showOpenFilePicker({
+        types: [{ description: 'D2R Save', accept: { 'application/octet-stream': ['.d2s'] } }],
+        startIn,
+      });
+      try { await storeRecentFileHandle(fh.name, fh); } catch (e) { _logCaught('openCharFooter.storeRecent', e); }
+      _fileHandles.char = fh;
+      const file = await fh.getFile();
+      _lastSeenMtime.char = file.lastModified || 0;
+      fileName = fh.name;
+      loadFile(file);
+      return;
+    } catch (e) {
+      if (e && e.name === 'AbortError') return; // user cancelled
+      _logCaught('openCharFooter.showOpenFilePicker', e);
+      // fall through to file-input fallback
+    }
+  }
+  // File-input fallback — can't capture a handle, so invalidate any stale
+  // rehydrated one to avoid writing to the wrong file.
+  _fileHandles.char = null;
+  const input = document.getElementById('fileInput');
+  if (input) input.click();
+};
 
 function removeRecentFile(name) {
   saveRecentFiles(getRecentFiles().filter(r => r.name !== name));
@@ -3917,6 +4128,13 @@ function renderRecentFiles() {
 // Hook into the drop zone to capture file handles when possible
 document.addEventListener('DOMContentLoaded', () => {
   renderRecentFiles();
+  // Auto-save is session-scoped: always starts OFF on page load. We still
+  // rehydrate handles from IndexedDB so re-enabling the toggle later only
+  // needs a permission re-grant rather than a fresh save-picker.
+  _autoSaveEnabled = false;
+  try { localStorage.removeItem('autoSaveEnabled'); }
+  catch (e) { /* best-effort: localStorage may be disabled */ }
+  rehydrateFileHandles().catch(err => _logCaught('rehydrateFileHandles', err));
   const dropZone = document.getElementById('dropZone');
   if (!dropZone) return;
 
@@ -3936,7 +4154,11 @@ document.addEventListener('DOMContentLoaded', () => {
           startIn,
         });
         await storeRecentFileHandle(handle.name, handle);
+        // Stash for auto-save reuse — upgrading read perm → readwrite avoids
+        // a redundant save-picker when the user enables auto-save later.
+        _fileHandles.char = handle;
         const file = await handle.getFile();
+        _lastSeenMtime.char = file.lastModified || 0; // baseline for external-change detection
         fileName = handle.name;
         loadFile(file);
       } catch (e) { /* best-effort: user cancelled the picker */ }
@@ -3954,12 +4176,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const handle = await item.getAsFileSystemHandle();
         if (handle && handle.kind === 'file') {
           await storeRecentFileHandle(handle.name, handle);
+          _fileHandles.char = handle; // auto-save reuse (see click handler)
           const file = await handle.getFile();
+          _lastSeenMtime.char = file.lastModified || 0; // baseline for external-change detection
           fileName = handle.name;
           loadFile(file);
         }
       } catch (err) {
-        // Fall back to regular drop handler
+        // Fall back to regular drop handler. No handle = can't verify the
+        // file's identity against a rehydrated IDB handle, so drop it.
+        _fileHandles.char = null;
         const f = e.dataTransfer.files[0];
         if (f) loadFile(f);
       }
@@ -4417,6 +4643,10 @@ window.createNewCharacter = function() {
   rawBytes = new Uint8Array(buf);
   workBytes = new Uint8Array(buf);
   fileName = name + '.d2s';
+  // New character has no file on disk yet, so any rehydrated handle from a
+  // previous session points at the wrong character. Drop it; if the user
+  // enables auto-save, captureAutoSaveHandle will prompt for a new target.
+  _fileHandles.char = null;
   closeNewCharModal();
   parsedChar = parseD2S(workBytes);
 
@@ -4425,7 +4655,7 @@ window.createNewCharacter = function() {
   isDirty = true;
   inventoryUnlocked = false;
   showOnly('editorView');
-  document.getElementById('saveBtn').classList.remove('disabled');
+  updateSaveButton();
   document.getElementById('resetBtn').style.display = '';
   document.querySelectorAll('.fire-side').forEach(el => el.classList.add('active'));
   updateCharStrip();
@@ -4443,6 +4673,21 @@ function _doReset() {
   fileName = '';
   isDirty = false;
   activeTab = 'char';
+
+  // Reset clears the character but doesn't touch vault/grail/shared-stash —
+  // so we also drop the undo snapshot (there's nothing coherent left to
+  // restore to) and refresh the button state.
+  _undoSnapshot = null;
+  updateUndoButton();
+
+  // Reset is a hard "start over" — turn auto-save off and drop the char
+  // handle so re-enabling later doesn't try to overwrite a file that no
+  // longer matches what's loaded. Vault/grail/shared-stash handles are
+  // left alone (those kinds aren't affected by the character reset).
+  setAutoSaveEnabled(false);
+  _fileHandles.char = null;
+  try { autoSaveIdbDelHandle('char').catch(err => _logCaught('_doReset.idbDelChar', err)); }
+  catch (e) { _logCaught('_doReset.autoSaveIdbDelHandle', e); }
 
   // Clear all tracked state from the session
   _deletedItemOffsets.clear();
@@ -4466,7 +4711,7 @@ function _doReset() {
   if (tabContent) tabContent.innerHTML = '';
 
   // Reset footer buttons
-  document.getElementById('saveBtn').classList.add('disabled');
+  updateSaveButton();
   document.getElementById('resetBtn').style.display = 'none';
   document.getElementById('openBtn').classList.remove('disabled');
 
@@ -4482,6 +4727,12 @@ function _doReset() {
 }
 
 window.resetEditor = function() {
+  // Cancel any pending auto-save timers immediately — if the user is about
+  // to discard their changes, we shouldn't let a debounced write land mid-
+  // confirmation. If they cancel the reset, the next edit will re-schedule.
+  for (const k of Object.keys(_autoSaveTimers)) {
+    if (_autoSaveTimers[k]) { clearTimeout(_autoSaveTimers[k]); _autoSaveTimers[k] = null; }
+  }
   if (!isDirty) { _doReset(); return; }
   showConfirm(L('ui_confirm_unsaved_reset','You have unsaved changes. Are you sure you want to reset?'), _doReset, L('ui_reset','Reset'));
 };
@@ -4515,6 +4766,8 @@ const _DIALOG_BTN_BASE = "font-family:'Cinzel',serif;font-size:11px;letter-spaci
 //   title:     optional headline string (escaped)
 //   titleTone: 'red' | 'gold' — colors the title line
 //   message:   main body text (escaped; preserves newlines via pre-line)
+//   bodyHtml:  raw HTML body (NOT escaped — caller is responsible for esc() on
+//              any untrusted content). Replaces `message` when supplied.
 //   note:      optional dimmed secondary line below the message
 //   buttons:   array of { label, tone, onClick? }. tone ∈ DIALOG_BTN_STYLES.
 //              Buttons render left-to-right in the order given. Clicking any
@@ -4539,9 +4792,11 @@ function showDialog(options) {
   const titleHtml = opts.title
     ? `<div class="dlg-title" style="font-family:'Cinzel',serif;font-size:16px;${titleColor?`color:${titleColor};`:''}margin-bottom:12px">${esc(opts.title)}</div>`
     : '';
-  const messageHtml = opts.message
-    ? `<div class="dlg-msg" style="font-family:'Crimson Text',serif;font-size:14px;color:var(--d2-text);line-height:1.6;margin-bottom:${opts.note ? '8' : '16'}px;white-space:pre-line">${esc(opts.message)}</div>`
-    : '';
+  const messageHtml = opts.bodyHtml
+    ? `<div class="dlg-body" style="font-family:'Crimson Text',serif;font-size:14px;color:var(--d2-text);line-height:1.6;margin-bottom:${opts.note ? '8' : '16'}px;text-align:left">${opts.bodyHtml}</div>`
+    : (opts.message
+      ? `<div class="dlg-msg" style="font-family:'Crimson Text',serif;font-size:14px;color:var(--d2-text);line-height:1.6;margin-bottom:${opts.note ? '8' : '16'}px;white-space:pre-line">${esc(opts.message)}</div>`
+      : '');
   const noteHtml = opts.note
     ? `<div class="dlg-note" style="color:var(--d2-text-dim);font-size:12px;line-height:1.5;margin-bottom:20px;white-space:pre-line">${esc(opts.note)}</div>`
     : '';
@@ -5138,11 +5393,19 @@ function applyCurrentTab() {
 
 function saveFile() {
   if (!workBytes) return;
-  // Apply edits from the currently visible tab + always apply merc
-  applyCurrentTab();
-  // applyMerc re-runs even if mercenary tab isn't active (the tab might hold pending edits).
-  // Wrapped so a merc-tab failure doesn't abort the whole save; logged for diagnosis.
-  try { applyMerc(); } catch (e) { _logCaught('saveFile.applyMerc', e); }
+  // Apply edits from the currently visible tab + always apply merc.
+  // Guard so the commit* calls inside don't schedule a spurious auto-save
+  // timer when auto-save is enabled — we're writing the file right now,
+  // nothing else needs to be queued.
+  _autoSaveInApply = true;
+  try {
+    applyCurrentTab();
+    // applyMerc re-runs even if mercenary tab isn't active (the tab might hold pending edits).
+    // Wrapped so a merc-tab failure doesn't abort the whole save; logged for diagnosis.
+    try { applyMerc(); } catch (e) { _logCaught('saveFile.applyMerc', e); }
+  } finally {
+    _autoSaveInApply = false;
+  }
   // Remove deleted items from binary
   flushDeletedItems();
   // Flush any editor-inserted virtual items into the binary
@@ -5155,13 +5418,1133 @@ function saveFile() {
   a.href=url; a.download=fileName; a.click();
   URL.revokeObjectURL(url);
   isDirty=false;
+  updateSaveButton();
   setStatus(Lfmt('ui_status_saved','Saved: {file}',{file:a.download}),'loaded');
+  // Saved state becomes the new undo baseline
+  takeUndoSnapshot();
 }
 
 function markDirty() {
   if (!isDirty) { isDirty=true; setStatus(Lfmt('ui_status_unsaved','{file} — unsaved changes',{file:fileName}),'modified'); }
-  const saveBtn = document.getElementById('saveBtn');
-  if (saveBtn) saveBtn.classList.remove('disabled');
+  _editGen.char++;
+  updateSaveButton();
+  updateUndoButton();
+  scheduleAutoSave('char');
+}
+
+// Helpers that mirror markDirty() for the auxiliary file kinds. Having a
+// single setter per kind means mutation sites don't have to remember to
+// update the undo button or schedule auto-save every time.
+function markVaultDirty()       { vaultDirty = true;       _editGen.vault++;       updateUndoButton(); scheduleAutoSave('vault'); }
+function markGrailDirty()       { grailDirty = true;       _editGen.grail++;       updateUndoButton(); scheduleAutoSave('grail'); }
+function markSharedStashDirty() { sharedStashDirty = true; _editGen.sharedStash++; updateUndoButton(); scheduleAutoSave('sharedStash'); }
+
+// ═══════════════════════════════════════════════════════════
+//  UNDO SYSTEM
+//  Single-level undo. Snapshots capture the last "baseline" state
+//  (a load or a successful save) for every loaded file type. Edits
+//  are undone by re-parsing the snapshot bytes — the decoder is
+//  deterministic so restore = bytes → parse → replace state.
+// ═══════════════════════════════════════════════════════════
+
+function isAnythingDirty() {
+  return isDirty || vaultDirty || grailDirty || sharedStashDirty;
+}
+
+// Capture the current state of every loaded file as the new undo baseline.
+// Called at load-success and save-success sites; callers shouldn't invoke
+// this from mutation paths (that would destroy the thing we want to undo).
+// Build the snapshot slice for a single kind from current in-memory state.
+function _snapshotSliceForKind(kind) {
+  switch (kind) {
+    case 'char':
+      return workBytes ? {
+        workBytes: new Uint8Array(workBytes),
+        fileName,
+        deletedOffsets: Array.from(_deletedItemOffsets),
+      } : null;
+    case 'vault':
+      return vaultD2i ? { bytes: new Uint8Array(vaultD2i), fileName: vaultFileName } : null;
+    case 'grail':
+      return grailD2i ? { bytes: new Uint8Array(grailD2i), fileName: grailFileName } : null;
+    case 'sharedStash':
+      return sharedStashData ? { bytes: new Uint8Array(sharedStashData), fileName: sharedStashName } : null;
+  }
+  return null;
+}
+
+function takeUndoSnapshot() {
+  _undoSnapshot = {
+    char:        _snapshotSliceForKind('char'),
+    vault:       _snapshotSliceForKind('vault'),
+    grail:       _snapshotSliceForKind('grail'),
+    sharedStash: _snapshotSliceForKind('sharedStash'),
+  };
+  updateUndoButton();
+}
+
+// Update only one kind's snapshot slice. Used by auto-save success paths so
+// a successful write for char doesn't stomp the (possibly out-of-date) vault
+// slice with whatever is in vault memory right now. Keeps per-kind baselines
+// independent — restore from snapshot still works for every kind individually.
+function _updateUndoSnapshotForKind(kind) {
+  if (!_undoSnapshot) {
+    // No baseline yet (e.g. first auto-save on a new character) — take a full
+    // snapshot so subsequent restore works.
+    takeUndoSnapshot();
+    return;
+  }
+  _undoSnapshot[kind] = _snapshotSliceForKind(kind);
+  updateUndoButton();
+}
+
+// Restore every file from the snapshot. Bytes → parse → replace state; also
+// clears dirty flags on each kind it restores. Re-renders the active tab so
+// the UI reflects the restored state immediately.
+function restoreUndoSnapshot() {
+  if (!_undoSnapshot) return;
+  const s = _undoSnapshot;
+  const tabContent = document.getElementById('tabContent');
+
+  if (s.char) {
+    workBytes = new Uint8Array(s.char.workBytes);
+    fileName = s.char.fileName;
+    parsedChar = parseD2S(workBytes);
+    _deletedItemOffsets = new Set(s.char.deletedOffsets);
+    isDirty = false;
+    // Re-render whatever char-scoped tab is currently active
+    if (activeTab && activeTab !== 'vault' && activeTab !== 'grail' && activeTab !== 'sharedStash') {
+      try { renderTab(); } catch (e) { _logCaught('undo.renderTab', e); }
+    }
+  }
+  if (s.vault) {
+    vaultD2i = new Uint8Array(s.vault.bytes);
+    vaultFileName = s.vault.fileName;
+    try {
+      const hdr = decodeVaultHeader(vaultD2i);
+      vaultPageNames = hdr.pageNames;
+      vaultItems = parseVaultItems(vaultD2i, hdr.jmOffset, hdr.itemPageIds);
+    } catch (e) { _logCaught('undo.vaultDecode', e); }
+    vaultDirty = false;
+    if (activeTab === 'vault' && tabContent) {
+      try { renderVault(tabContent); } catch (e) { _logCaught('undo.renderVault', e); }
+    }
+  }
+  if (s.grail) {
+    grailD2i = new Uint8Array(s.grail.bytes);
+    grailFileName = s.grail.fileName;
+    try { parseGrailD2i(); } catch (e) { _logCaught('undo.parseGrail', e); }
+    grailDirty = false;
+    if (activeTab === 'grail' && tabContent) {
+      try { renderGrail(tabContent); } catch (e) { _logCaught('undo.renderGrail', e); }
+    }
+  }
+  if (s.sharedStash) {
+    sharedStashData = new Uint8Array(s.sharedStash.bytes);
+    sharedStashName = s.sharedStash.fileName;
+    try { parseSharedStash(); } catch (e) { _logCaught('undo.parseSharedStash', e); }
+    sharedStashDirty = false;
+    if (activeTab === 'sharedStash' && tabContent) {
+      try { renderSharedStash(tabContent); } catch (e) { _logCaught('undo.renderSharedStash', e); }
+    }
+  }
+
+  // Restore clears isDirty on char — also refresh the save button + status
+  if (s.char) {
+    updateSaveButton();
+    if (fileName) setStatus(Lfmt('ui_status_loaded', 'Loaded: {file}', { file: fileName }), 'loaded');
+  }
+  updateUndoButton();
+}
+
+function updateUndoButton() {
+  const btn = document.getElementById('undoBtn');
+  if (!btn) return;
+  // When auto-save is on, edits get written through on the debounce timer —
+  // so the baseline advances every ~2.5s and the button would flicker on/off
+  // constantly. Just keep it disabled; auto-save replaces the "undo to last
+  // save" mental model with "the file is always in sync."
+  const canUndo = !_autoSaveEnabled && _undoSnapshot !== null && isAnythingDirty();
+  btn.disabled = !canUndo;
+}
+
+// Central save-button state. Rules:
+//   - no character loaded → disabled
+//   - auto-save is on → disabled (changes save automatically, manual Save is
+//     redundant and can look wrong/confusing next to the auto-save status)
+//   - no unsaved changes → disabled
+//   - otherwise → enabled
+// Also swaps the tooltip so hovering the greyed-out button explains why.
+function updateSaveButton() {
+  const btn = document.getElementById('saveBtn');
+  if (!btn) return;
+  const hasChar = !!workBytes;
+  let disabled, title;
+  if (!hasChar) {
+    disabled = true;
+    title = '';
+  } else if (_autoSaveEnabled) {
+    disabled = true;
+    title = L('ui_save_autosave_on', 'Auto-save is on — changes are written automatically.');
+  } else if (!isDirty) {
+    disabled = true;
+    title = '';
+  } else {
+    disabled = false;
+    title = L('ui_save', 'Save .d2s');
+  }
+  btn.classList.toggle('disabled', disabled);
+  btn.title = title;
+}
+
+window.onUndoClick = function() {
+  if (!_undoSnapshot || !isAnythingDirty()) return;
+  showConfirm(
+    L('ui_undo_confirm_body', 'Undo all unsaved changes? This will revert every loaded file to its last load or save. This cannot be undone.'),
+    function() {
+      restoreUndoSnapshot();
+      // The restored state is now the new baseline — re-snapshot so subsequent
+      // edits become undoable back to this point. Dirty flags were cleared by
+      // restore, so the button disables until the next edit, then re-lights.
+      takeUndoSnapshot();
+    },
+    L('ui_undo_button', 'Undo')
+  );
+};
+
+// ═══════════════════════════════════════════════════════════
+//  AUTO-SAVE SYSTEM (File System Access API, Chromium-only)
+//
+//  Flow:
+//    1. User opens Advanced Options, flips the auto-save toggle ON.
+//    2. Confirmation dialog lists currently-loaded files + warnings.
+//    3. After confirm, we call showSaveFilePicker for each loaded kind
+//       while still inside the user-gesture chain of the confirm click.
+//    4. Each captured FileSystemFileHandle is persisted to IndexedDB so
+//       the next page load can rehydrate without re-picking.
+//    5. Any mark*Dirty() call now schedules a debounced autosave. After
+//       AUTOSAVE_DELAY_MS, the write lands on the stored handle.
+//
+//  Gotcha: showSaveFilePicker requires a user gesture. The debounce
+//  timer is NOT a gesture, so we capture handles at toggle-ON and at
+//  file-load time (onchange → FileReader.onload is a gesture chain in
+//  Chromium today). If a write fires with no handle, we skip silently
+//  and surface a status message so the user can set a target.
+// ═══════════════════════════════════════════════════════════
+
+// Picker config per kind. suggestedName is a function so it re-reads the
+// current filename at call time (in case the user loaded something new).
+const AUTOSAVE_PICKER_OPTS = {
+  char: {
+    name:          () => fileName || 'character.d2s',
+    types:         [{ description: 'D2R Save', accept: { 'application/octet-stream': ['.d2s'] } }],
+    statusKey:     'ui_autosave_pick_char',
+    statusFallback:'Auto-save needs a destination for the character save. Pick or name a .d2s file.',
+  },
+  vault: {
+    name:          () => vaultFileName || 'Vault.d2i',
+    types:         [{ description: 'D2R Vault', accept: { 'application/octet-stream': ['.d2i'] } }],
+    statusKey:     'ui_autosave_pick_vault',
+    statusFallback:'Auto-save needs a destination for the vault. Pick or name a .d2i file.',
+  },
+  grail: {
+    name:          () => grailFileName || 'grail.d2i',
+    types:         [{ description: 'D2R Grail', accept: { 'application/octet-stream': ['.d2i'] } }],
+    statusKey:     'ui_autosave_pick_grail',
+    statusFallback:'Auto-save needs a destination for the grail. Pick or name a .d2i file.',
+  },
+  sharedStash: {
+    name:          () => sharedStashName || 'SharedStash.d2i',
+    types:         [{ description: 'D2R Shared Stash', accept: { 'application/octet-stream': ['.d2i'] } }],
+    statusKey:     'ui_autosave_pick_sharedstash',
+    statusFallback:'Auto-save needs a destination for the shared stash. Pick or name a .d2i file.',
+  },
+};
+
+// ── IndexedDB helpers for FileSystemFileHandle persistence ──
+function _autoSaveIdbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(AUTOSAVE_HANDLE_DB, 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore(AUTOSAVE_HANDLE_STORE); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+}
+async function autoSaveIdbPutHandle(kind, handle) {
+  try {
+    const db = await _autoSaveIdbOpen();
+    await new Promise((res, rej) => {
+      const tx = db.transaction(AUTOSAVE_HANDLE_STORE, 'readwrite');
+      tx.objectStore(AUTOSAVE_HANDLE_STORE).put(handle, kind);
+      tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+    });
+    db.close();
+  } catch (e) { _logCaught('autoSaveIdbPut.' + kind, e); }
+}
+async function autoSaveIdbGetHandle(kind) {
+  try {
+    const db = await _autoSaveIdbOpen();
+    const h = await new Promise((res, rej) => {
+      const tx = db.transaction(AUTOSAVE_HANDLE_STORE, 'readonly');
+      const r = tx.objectStore(AUTOSAVE_HANDLE_STORE).get(kind);
+      r.onsuccess = () => res(r.result || null);
+      r.onerror   = () => rej(r.error);
+    });
+    db.close();
+    return h;
+  } catch (e) { _logCaught('autoSaveIdbGet.' + kind, e); return null; }
+}
+async function autoSaveIdbDelHandle(kind) {
+  try {
+    const db = await _autoSaveIdbOpen();
+    await new Promise((res, rej) => {
+      const tx = db.transaction(AUTOSAVE_HANDLE_STORE, 'readwrite');
+      tx.objectStore(AUTOSAVE_HANDLE_STORE).delete(kind);
+      tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+    });
+    db.close();
+  } catch (e) { _logCaught('autoSaveIdbDel.' + kind, e); }
+}
+
+// Returns true if this kind has data loaded that could be auto-saved.
+function _autoSaveKindHasData(kind) {
+  switch (kind) {
+    case 'char':        return !!workBytes;
+    case 'vault':       return !!vaultD2i;
+    case 'grail':       return !!grailD2i;
+    case 'sharedStash': return !!sharedStashData;
+  }
+  return false;
+}
+
+// Capture or confirm a write handle for `kind`. Must be called from a
+// user-gesture event path. Three paths:
+//   1. Handle already in memory from a load-time capture (drop-zone click /
+//      drag-drop / showOpenFilePicker etc.) — just upgrade its permission
+//      from 'read' to 'readwrite' via requestPermission. No second picker.
+//   2. No handle yet — pop showSaveFilePicker for a write destination.
+//   3. User denies or aborts — drop the handle and return null.
+async function captureAutoSaveHandle(kind) {
+  if (!_hasAutoSaveSupport()) return null;
+
+  // Path 1: reuse an already-captured handle (e.g. from file load)
+  const existing = _fileHandles[kind];
+  if (existing) {
+    // Defense against same-filename-different-folder collision: if the
+    // rehydrated/captured handle's name doesn't match the file currently
+    // loaded for this kind, the handle is stale. Drop it and fall through
+    // to the save-picker so the user picks a matching target.
+    const loadedName = _autoSaveLoadedNameForKind(kind);
+    if (loadedName && existing.name && existing.name !== loadedName) {
+      _fileHandles[kind] = null;
+      try { await autoSaveIdbDelHandle(kind); } catch (e) { _logCaught('captureAutoSaveHandle.delMismatch.' + kind, e); }
+    } else {
+      try {
+        const perm = await existing.queryPermission({ mode: 'readwrite' });
+        if (perm !== 'granted') {
+          const req = await existing.requestPermission({ mode: 'readwrite' });
+          if (req !== 'granted') {
+            // User denied — drop the handle from both memory AND IDB so next
+            // session doesn't rehydrate a denied handle that'll fail the same way.
+            _fileHandles[kind] = null;
+            try { await autoSaveIdbDelHandle(kind); } catch (e) { _logCaught('captureAutoSaveHandle.delDenied.' + kind, e); }
+            return null;
+          }
+        }
+        await autoSaveIdbPutHandle(kind, existing);
+        return existing;
+      } catch (e) {
+        _logCaught('captureAutoSaveHandle.reuse.' + kind, e);
+        // Fall through to save-picker if upgrading permission fails
+      }
+    }
+  }
+
+  // Path 2: no handle — prompt with save-picker
+  const cfg = AUTOSAVE_PICKER_OPTS[kind];
+  if (!cfg) return null;
+  try {
+    const handle = await window.showSaveFilePicker({
+      suggestedName: cfg.name(),
+      types: cfg.types,
+    });
+    _fileHandles[kind] = handle;
+    await autoSaveIdbPutHandle(kind, handle);
+    return handle;
+  } catch (e) {
+    if (e && e.name === 'AbortError') return null;
+    _logCaught('captureAutoSaveHandle.' + kind, e);
+    return null;
+  }
+}
+
+// After a file load, if auto-save is enabled, decide whether the existing
+// handle for this kind is still usable:
+//   - no handle stored → prompt for one (user gesture chain from load input)
+//   - handle stored and its name matches the just-loaded filename → keep it
+//     silently (the same-session-continue case Gild called out)
+//   - handle stored but name differs → stale target, drop it and re-prompt
+//     (otherwise we'd silently overwrite the wrong file)
+async function maybeCaptureAutoSaveHandle(kind) {
+  if (!_autoSaveEnabled) return;
+  if (!_hasAutoSaveSupport()) return;
+
+  const loadedName = _autoSaveLoadedNameForKind(kind);
+  const existing = _fileHandles[kind];
+  if (existing) {
+    if (loadedName && existing.name && existing.name === loadedName) {
+      // Same file — reuse the handle. Upgrade permission from 'prompt' to
+      // 'granted' while still in the user-gesture chain of the file load,
+      // so the first auto-save write later doesn't need a gesture. The
+      // browser shows its own "allow edits to X" sheet (not our save-picker).
+      try {
+        const perm = await existing.queryPermission({ mode: 'readwrite' });
+        if (perm !== 'granted') {
+          const req = await existing.requestPermission({ mode: 'readwrite' });
+          if (req !== 'granted') {
+            // User denied — drop the stale handle so next time we prompt for a new target
+            _fileHandles[kind] = null;
+            try { await autoSaveIdbDelHandle(kind); } catch (e) { _logCaught('maybeCapture.delDenied.' + kind, e); }
+            setStatus(L('ui_autosave_perm_denied',
+              'Auto-save permission denied. Reopen Advanced Options to set a new target.'), 'modified');
+            return;
+          }
+        }
+        // Persist the freshly-captured handle. Drop-zone / footer load paths
+        // overwrite _fileHandles[kind] with a new handle on each load; without
+        // this, IDB would still reference the previous session's handle even
+        // though it points at the same filename today.
+        try { await autoSaveIdbPutHandle(kind, existing); } catch (e) { _logCaught('maybeCapture.idbPut.' + kind, e); }
+      } catch (e) { _logCaught('maybeCapture.permReq.' + kind, e); }
+      return;
+    }
+    // Name mismatch: user loaded a different file. The old target is stale.
+    _fileHandles[kind] = null;
+    try { await autoSaveIdbDelHandle(kind); } catch (e) { _logCaught('maybeCapture.delStale.' + kind, e); }
+  }
+
+  const cfg = AUTOSAVE_PICKER_OPTS[kind];
+  if (cfg) setStatus(L(cfg.statusKey, cfg.statusFallback), 'modified');
+  await captureAutoSaveHandle(kind);
+}
+
+// Filename currently loaded for each kind (used to detect handle mismatch).
+function _autoSaveLoadedNameForKind(kind) {
+  switch (kind) {
+    case 'char':        return fileName || '';
+    case 'vault':       return vaultFileName || '';
+    case 'grail':       return grailFileName || '';
+    case 'sharedStash': return sharedStashName || '';
+  }
+  return '';
+}
+
+// Tab-level load entry point for vault/grail/sharedStash. In Chromium we
+// use showOpenFilePicker so the FileSystemFileHandle is captured for
+// auto-save reuse — the user doesn't get a second save-picker when they
+// flip auto-save on later. Falls back to the existing hidden <input type=
+// "file"> element for browsers without FSA.
+window.openAuxFileForKind = async function(kind) {
+  if (kind !== 'vault' && kind !== 'grail' && kind !== 'sharedStash') return;
+  if (window.showOpenFilePicker) {
+    const cfg = AUTOSAVE_PICKER_OPTS[kind];
+    if (cfg) {
+      try {
+        const [handle] = await window.showOpenFilePicker({
+          types: cfg.types,
+          excludeAcceptAllOption: false,
+          multiple: false,
+        });
+        _fileHandles[kind] = handle;
+        const file = await handle.getFile();
+        _lastSeenMtime[kind] = file.lastModified || 0;
+        switch (kind) {
+          case 'vault':       window.loadVaultFile(file); break;
+          case 'grail':       window.loadGrailFile(file); break;
+          case 'sharedStash': window.loadSharedStash(file); break;
+        }
+        return;
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        _logCaught('openAuxFileForKind.' + kind, e);
+        // fall through to file-input fallback
+      }
+    }
+  }
+  // Fallback: click the hidden <input type="file">. Drop any rehydrated
+  // handle for this kind first — file-input can't give us a handle, so a
+  // same-named file from a different folder could silently overwrite.
+  _fileHandles[kind] = null;
+  const inputId = { vault: 'vaultFileInput', grail: 'grailFileInput', sharedStash: 'sharedStashFileInput' }[kind];
+  const input = inputId && document.getElementById(inputId);
+  if (input) input.click();
+};
+
+// Load flow that doubles as auto-save target capture: one picker gives us
+// both the read source and the write handle for the same file. Called from
+// the Advanced Options dialog Load buttons.
+window.loadFileForAutoSave = async function(kind) {
+  if (!('showOpenFilePicker' in window)) return;
+  const cfg = AUTOSAVE_PICKER_OPTS[kind];
+  if (!cfg) return;
+  try {
+    const [handle] = await window.showOpenFilePicker({
+      types: cfg.types,
+      excludeAcceptAllOption: false,
+      multiple: false,
+    });
+    const file = await handle.getFile();
+    // Store handle as auto-save target BEFORE dispatching the loader, so
+    // when the load's maybeCaptureAutoSaveHandle fires it sees a matching
+    // handle and stays silent.
+    _fileHandles[kind] = handle;
+    _lastSeenMtime[kind] = file.lastModified || 0;
+    await autoSaveIdbPutHandle(kind, handle);
+    // Close the Advanced Options dialog so the user sees the loaded tab
+    const ovl = document.getElementById('sharedDialogOverlay');
+    if (ovl) ovl.style.display = 'none';
+    // Dispatch to the existing loader for this kind
+    switch (kind) {
+      case 'char':        loadFile(file); break;
+      case 'vault':       window.loadVaultFile(file); break;
+      case 'grail':       window.loadGrailFile(file); break;
+      case 'sharedStash': window.loadSharedStash(file); break;
+    }
+    setStatus(Lfmt('ui_autosave_loaded_and_set',
+      'Loaded {file} — auto-save target set.', { file: file.name }), 'loaded');
+  } catch (e) {
+    if (e && e.name === 'AbortError') return;
+    _logCaught('loadFileForAutoSave.' + kind, e);
+    showPopup(Lfmt('ui_autosave_load_failed', 'Load failed: {err}',
+      { err: (e && e.message) || String(e) }));
+  }
+};
+
+// Write bytes to a handle. Ensures readwrite permission (may prompt once in
+// rehydration scenarios). Throws on permission denied, locked file, etc.
+async function writeHandle(kind, bytes) {
+  const handle = _fileHandles[kind];
+  if (!handle) throw new Error('No auto-save target set for ' + kind);
+  const perm = await handle.queryPermission({ mode: 'readwrite' });
+  if (perm !== 'granted') {
+    const req = await handle.requestPermission({ mode: 'readwrite' });
+    if (req !== 'granted') throw new Error('Permission denied');
+  }
+  // Flag the write so the focus-change detector doesn't race us and falsely
+  // read a half-written mtime (or miss our mtime update and re-prompt).
+  _autoSaveWriting[kind] = true;
+  try {
+    const w = await handle.createWritable();
+    try {
+      await w.write(bytes);
+      await w.close();
+    } catch (e) {
+      try { await w.abort(); } catch (_abortErr) { /* best-effort */ }
+      throw e;
+    }
+    // Remember the updated mtime so the focus-change detector doesn't flag our
+    // own write as an external modification.
+    try {
+      const f = await handle.getFile();
+      _lastSeenMtime[kind] = f.lastModified || 0;
+    } catch (e) { /* best-effort — mtime recovery on next focus check */ }
+  } finally {
+    _autoSaveWriting[kind] = false;
+  }
+}
+
+// Debounced scheduler. Called from mark*Dirty() helpers.
+function scheduleAutoSave(kind) {
+  if (!_autoSaveEnabled) return;
+  if (!_hasAutoSaveSupport()) return;
+  if (!_autoSaveKindHasData(kind)) return;
+  // Skip recursive schedules triggered by our own apply*/commit* pass — those
+  // just reflect the state we're in the middle of writing, not a genuine edit.
+  if (_autoSaveInApply) return;
+  if (_autoSaveTimers[kind]) clearTimeout(_autoSaveTimers[kind]);
+  _autoSaveTimers[kind] = setTimeout(() => {
+    _autoSaveTimers[kind] = null;
+    // If the previous write for this kind is still in flight (slow disk,
+    // large file, stalled IO), don't start a concurrent write. Re-schedule
+    // ourselves so we run once the current write finishes.
+    if (_autoSaveWriting[kind]) {
+      scheduleAutoSave(kind);
+      return;
+    }
+    performAutoSave(kind).then(() => {
+      // Success — reset the failure counter so prior transients don't
+      // carry over into a later run.
+      _autoSaveFailures[kind] = 0;
+    }).catch(err => {
+      console.warn('[autosave]', kind, err);
+      _autoSaveFailures[kind]++;
+      if (_autoSaveFailures[kind] >= AUTOSAVE_FAIL_LIMIT) {
+        // Persistent failure. Drop the handle so the user gets a clear
+        // "set a new target" path rather than a toast on every edit.
+        _fileHandles[kind] = null;
+        autoSaveIdbDelHandle(kind).catch(() => { /* best-effort */ });
+        _autoSaveFailures[kind] = 0;
+        setStatus(Lfmt('ui_autosave_paused_fail',
+          'Auto-save for {kind} paused after repeated failures. Open Advanced Options to set a new target.',
+          { kind: _kindDisplayName(kind) }), 'error');
+      } else {
+        setStatus(
+          Lfmt('ui_autosave_failed', 'Auto-save of {kind} failed: {err}',
+               { kind, err: (err && err.message) || String(err) }),
+          'error'
+        );
+      }
+    });
+  }, AUTOSAVE_DELAY_MS);
+}
+
+async function performAutoSave(kind) {
+  switch (kind) {
+    case 'char':        return autoSaveChar();
+    case 'vault':       return autoSaveVault();
+    case 'grail':       return autoSaveGrail();
+    case 'sharedStash': return autoSaveSharedStash();
+  }
+}
+
+async function autoSaveChar() {
+  if (!workBytes || !parsedChar) return;
+  if (!_fileHandles.char) {
+    setStatus(L('ui_autosave_no_target', 'Auto-save paused — no target set. Reopen Advanced Options.'), 'modified');
+    return;
+  }
+  // Same prep as saveFile(): apply any pending tab edits, flush, checksum.
+  // Wrap the apply pass so internal markDirty calls (from commitStats/Level/
+  // MercExp etc.) don't schedule a fresh autosave timer on top of the one
+  // we're currently fulfilling.
+  _autoSaveInApply = true;
+  try {
+    try { applyCurrentTab(); } catch (e) { _logCaught('autoSaveChar.applyCurrentTab', e); }
+    try { applyMerc(); } catch (e) { _logCaught('autoSaveChar.applyMerc', e); }
+  } finally {
+    _autoSaveInApply = false;
+  }
+  flushDeletedItems();
+  flushVirtualItems();
+  recalcChecksum(workBytes);
+  // Snapshot edit generation before the await — if the user edits during the
+  // write, the gen advances and we leave isDirty alone (the change is still
+  // pending). This prevents the "isDirty=false despite real pending edit"
+  // window between close() and the next markDirty.
+  const genAtStart = _editGen.char;
+  await writeHandle('char', new Uint8Array(workBytes));
+  if (_editGen.char === genAtStart) {
+    isDirty = false;
+  }
+  updateSaveButton();
+  _updateUndoSnapshotForKind('char');
+  setStatus(Lfmt('ui_autosave_saved', 'Auto-saved {file}', { file: fileName }), 'loaded');
+}
+
+async function autoSaveVault() {
+  if (!_fileHandles.vault) {
+    setStatus(L('ui_autosave_no_target', 'Auto-save paused — no target set. Reopen Advanced Options.'), 'modified');
+    return;
+  }
+  const out = encodeVault(vaultItems, vaultPageNames);
+  vaultD2i = out;
+  const genAtStart = _editGen.vault;
+  await writeHandle('vault', new Uint8Array(out));
+  if (_editGen.vault === genAtStart) {
+    vaultDirty = false;
+  }
+  _updateUndoSnapshotForKind('vault');
+  setStatus(Lfmt('ui_autosave_saved', 'Auto-saved {file}', { file: vaultFileName || 'Vault.d2i' }), 'loaded');
+}
+
+async function autoSaveGrail() {
+  if (!grailD2i) return;
+  if (!_fileHandles.grail) {
+    setStatus(L('ui_autosave_no_target', 'Auto-save paused — no target set. Reopen Advanced Options.'), 'modified');
+    return;
+  }
+  // grailD2i is kept write-ready by every mutation (checksum + length already set)
+  const genAtStart = _editGen.grail;
+  await writeHandle('grail', new Uint8Array(grailD2i));
+  if (_editGen.grail === genAtStart) {
+    grailDirty = false;
+  }
+  _updateUndoSnapshotForKind('grail');
+  setStatus(Lfmt('ui_autosave_saved', 'Auto-saved {file}', { file: grailFileName || 'grail.d2i' }), 'loaded');
+}
+
+async function autoSaveSharedStash() {
+  // Shared stash has no mutation path today. Keeping the wiring so when edit
+  // features land the debounce is already in place.
+  if (!sharedStashData) return;
+  if (!_fileHandles.sharedStash) return;
+  const genAtStart = _editGen.sharedStash;
+  await writeHandle('sharedStash', new Uint8Array(sharedStashData));
+  if (_editGen.sharedStash === genAtStart) {
+    sharedStashDirty = false;
+  }
+  _updateUndoSnapshotForKind('sharedStash');
+}
+
+// ── Advanced Options dialog ──
+
+window.openAdvancedOptions = function() {
+  // Treat Safari as "not supported" even though it ships showSaveFilePicker —
+  // its createWritable throws for user-visible files, so enabling auto-save
+  // would just fail every write.
+  const hasFSA = _hasAutoSaveSupport();
+  const autoOn = _autoSaveEnabled;
+
+  // All four file kinds are always listed when auto-save is on, so the user
+  // can load missing ones or change/set targets for loaded ones in one place.
+  const kindLabels = {
+    char:        L('ui_autosave_target_char',        'Character (.d2s)'),
+    sharedStash: L('ui_autosave_target_sharedstash', 'Shared Stash (.d2i)'),
+    grail:       L('ui_autosave_target_grail',       'Grail (.d2i)'),
+    vault:       L('ui_autosave_target_vault',       'Vault (.d2i)'),
+  };
+  let targetsHtml = '';
+  if (hasFSA && autoOn) {
+    const rows = Object.keys(kindLabels).map(k => {
+      const loaded = _autoSaveKindHasData(k);
+      const hasHandle = !!_fileHandles[k];
+
+      // Three states: not loaded → Load; loaded + no handle → Set; loaded + handle → Change
+      let status, btnLabel, btnAction;
+      if (!loaded) {
+        status    = `<span style="color:var(--d2-text-dim);font-style:italic">${esc(L('ui_autosave_not_loaded','not loaded'))}</span>`;
+        btnLabel  = L('ui_autosave_target_load_btn', 'Load…');
+        btnAction = `loadFileForAutoSave('${k}')`;
+      } else if (!hasHandle) {
+        status    = `<span style="color:#c8a030">${esc(L('ui_autosave_target_not_set','no target'))}</span>`;
+        btnLabel  = L('ui_autosave_target_set_btn', 'Set');
+        btnAction = `setAutoSaveTargetForKind('${k}')`;
+      } else {
+        status    = `<span style="color:var(--d2-green-bright)">✓ ${esc(L('ui_autosave_target_set','target set'))}</span>`;
+        btnLabel  = L('ui_autosave_target_change', 'Change');
+        btnAction = `setAutoSaveTargetForKind('${k}')`;
+      }
+      const btn = `<button type="button" class="btn" style="font-size:10px;padding:3px 10px"
+                           onclick="${btnAction}">${esc(btnLabel)}</button>`;
+      return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;
+                          padding:6px 10px;border-top:1px solid var(--d2-border)">
+                <span style="color:var(--d2-text-dim);font-size:11px">${esc(kindLabels[k])}</span>
+                <span style="display:inline-flex;align-items:center;gap:10px">${status}${btn}</span>
+              </div>`;
+    }).join('');
+    targetsHtml = `<div style="margin-top:10px;border:1px solid var(--d2-border);border-radius:2px">
+      <div style="padding:6px 10px;font-family:'Cinzel',serif;font-size:10px;letter-spacing:1px;
+                  color:var(--d2-gold);background:var(--d2-surface3)">
+        ${esc(L('ui_autosave_targets_header','Auto-save destinations'))}
+      </div>${rows}</div>`;
+  }
+
+  // Gate the toggle on a character being loaded. Flipping auto-save on from
+  // a blank state would leave the user chasing load/target prompts for every
+  // file kind — much cleaner to require the character first (which is the
+  // primary file anyway) and let vault/grail/shared stash Load buttons
+  // handle the rest.
+  const hasChar = !!workBytes;
+  const needCharMsg = !hasChar
+    ? L('ui_autosave_need_char', 'Load a character save first, then return here to enable auto-save.')
+    : '';
+
+  // Only block turning ON when no char is loaded. Turning OFF is always
+  // allowed (covers the rare "on from last session, page reloaded, no char
+  // loaded yet" case — user can still opt out from this screen).
+  const canFlip = hasChar || autoOn;
+  const showHint = !hasChar && !autoOn;
+
+  const toggleRow = hasFSA
+    ? `<label style="display:flex;align-items:center;gap:10px;
+                     cursor:${canFlip ? 'pointer' : 'not-allowed'};
+                     opacity:${canFlip ? '1' : '0.55'};
+                     padding:10px 12px;border:1px solid var(--d2-border);
+                     border-radius:2px;background:var(--d2-surface2)">
+         <input type="checkbox" id="autoSaveToggle" ${autoOn ? 'checked' : ''}
+                ${canFlip ? '' : 'disabled'}
+                onchange="onAutoSaveToggleChange(this)">
+         <span style="flex:1">
+           <div style="color:var(--d2-gold);font-family:'Cinzel',serif;
+                       font-size:11px;letter-spacing:1px;margin-bottom:4px">
+             ${esc(L('ui_adv_autosave_title', 'Auto-save'))}
+           </div>
+           <div style="color:var(--d2-text-dim);font-size:11px">
+             ${esc(L('ui_adv_autosave_desc','Automatically write loaded files to disk a few seconds after each edit.'))}
+           </div>
+           ${showHint ? `<div style="color:#c8a030;font-size:10px;margin-top:6px;font-style:italic">${esc(needCharMsg)}</div>` : ''}
+         </span>
+       </label>`
+    : `<div style="padding:10px 12px;border:1px solid var(--d2-border);border-radius:2px;
+                   background:var(--d2-surface2);color:var(--d2-text-dim);font-size:11px">
+         ${esc(L('ui_adv_autosave_unavailable','Auto-save requires File System Access API (Chrome, Edge, or Brave).'))}
+       </div>`;
+
+  showDialog({
+    title:   L('ui_adv_options_title', 'Advanced Options'),
+    titleTone: 'gold',
+    bodyHtml: `<div style="padding:4px 2px 8px 2px;font-size:13px;line-height:1.5">${toggleRow}${targetsHtml}</div>`,
+    buttons: [{ label: L('ui_btn_close', 'Close'), tone: 'ghost' }],
+  });
+};
+
+// Called when the checkbox flips. Turning OFF is free; turning ON shows the
+// confirmation warning and, on confirm, prompts for handles for any loaded
+// kind that doesn't already have one — using the confirm-click gesture.
+window.onAutoSaveToggleChange = function(checkbox) {
+  if (!checkbox.checked) {
+    setAutoSaveEnabled(false);
+    _refreshAdvancedOptionsDialog();
+    return;
+  }
+
+  // Defense in depth: the HTML disables the checkbox when there's no char,
+  // but if we ever end up here anyway, refuse the turn-on.
+  if (!workBytes) {
+    checkbox.checked = false;
+    setStatus(L('ui_autosave_need_char', 'Load a character save first, then return here to enable auto-save.'), 'modified');
+    return;
+  }
+
+  // Build warning body based on what's loaded
+  const missing = [];
+  if (!workBytes)        missing.push(L('ui_autosave_target_char',        'Character (.d2s)'));
+  if (!sharedStashData)  missing.push(L('ui_autosave_target_sharedstash', 'Shared Stash (.d2i)'));
+  if (!grailD2i)         missing.push(L('ui_autosave_target_grail',       'Grail (.d2i)'));
+  if (!vaultD2i)         missing.push(L('ui_autosave_target_vault',       'Vault (.d2i)'));
+
+  const lines = [
+    L('ui_autosave_warn_header', 'Enabling auto-save means:'),
+    '',
+    L('ui_autosave_warn_write',  '• Every edit writes to disk ~2.5 seconds later (no manual save needed).'),
+    L('ui_autosave_warn_lock',   '• If D2R is running and has the save file locked, writes will silently fail — launch the editor with the game closed.'),
+    L('ui_autosave_warn_backup', '• There is no "unsaved changes" safety net — back up your saves before heavy edits.'),
+    L('ui_autosave_warn_chromium','• Only works in Chromium-based browsers (Chrome, Edge, Brave).'),
+  ];
+  if (missing.length) {
+    lines.push('');
+    lines.push(Lfmt('ui_autosave_warn_missing',
+      'Not loaded yet: {list}. You can set those targets later from Advanced Options or by loading the file.',
+      { list: missing.join(', ') }));
+  }
+
+  // Revert the checkbox until user confirms — avoids partial-commit state if
+  // they cancel.
+  checkbox.checked = false;
+  showConfirm(
+    lines.join('\n'),
+    async function onConfirm() {
+      // IMPORTANT: capture handles / upgrade permissions FIRST, _then_ flip
+      // the auto-save flag on. If we enabled first and the user edited
+      // during the async permission flow, a debounce timer would race the
+      // requestPermission call (which needs a user gesture). Swapping the
+      // order means edits during the prompt window just accumulate as dirty
+      // flags with no timer; we flush them explicitly after permissions land.
+      setStatus(L('ui_autosave_enabling', 'Requesting file permissions…'), 'loading');
+      // Cross-tab guard: only one tab may hold auto-save active at a time.
+      // If another tab is already holding the lock, refuse and bail.
+      const gotLock = await _tryAcquireAutoSaveLock();
+      if (!gotLock) {
+        setStatus(L('ui_autosave_multi_tab',
+          'Auto-save is already active in another browser tab. Disable it there first.'), 'modified');
+        _refreshAdvancedOptionsDialog();
+        return;
+      }
+      const kinds = ['char', 'sharedStash', 'grail', 'vault'].filter(k =>
+        _autoSaveKindHasData(k));
+      const failed = [];
+      let anySucceeded = false;
+      for (const kind of kinds) {
+        const h = await captureAutoSaveHandle(kind);
+        if (h) {
+          anySucceeded = true;
+        } else {
+          // Don't break the loop — the user may have only cancelled this one
+          // kind's picker, and the remaining kinds might just need a
+          // requestPermission upgrade (no new gesture needed since we're
+          // already in the onConfirm click chain).
+          failed.push(_kindDisplayName(kind));
+        }
+      }
+      if (!anySucceeded) {
+        // User cancelled everything — honour that, don't flip the toggle on.
+        // Release the lock we just acquired so another tab (or a retry here)
+        // can try again.
+        _releaseAutoSaveLock();
+        setStatus(L('ui_autosave_enable_cancelled',
+          'Auto-save not enabled — no targets configured.'), 'modified');
+        _refreshAdvancedOptionsDialog();
+        return;
+      }
+      setAutoSaveEnabled(true);
+      if (failed.length) {
+        setStatus(Lfmt('ui_autosave_partial_enable',
+          'Auto-save on. Targets still missing: {list}. Use Advanced Options to set them.',
+          { list: failed.join(', ') }), 'modified');
+      } else {
+        setStatus(L('ui_autosave_enabled_ok', 'Auto-save enabled.'), 'ready');
+      }
+      // Flush any kind that went dirty while the permission prompts were up.
+      // scheduleAutoSave is safe to call for kinds without handles — it bails
+      // inside performAutoSave with a status message rather than retrying.
+      if (isDirty)          scheduleAutoSave('char');
+      if (vaultDirty)       scheduleAutoSave('vault');
+      if (grailDirty)       scheduleAutoSave('grail');
+      if (sharedStashDirty) scheduleAutoSave('sharedStash');
+      _refreshAdvancedOptionsDialog();
+    },
+    L('ui_autosave_confirm_yes', 'Enable')
+  );
+};
+
+// Called from the "Set"/"Change" button inline in the Advanced Options list.
+window.setAutoSaveTargetForKind = async function(kind) {
+  await captureAutoSaveHandle(kind);
+  _refreshAdvancedOptionsDialog();
+};
+
+function _refreshAdvancedOptionsDialog() {
+  // showDialog rewrites innerHTML + sets display:flex on every call, so just
+  // re-invoke openAdvancedOptions while the overlay is already visible —
+  // it replaces content in-place with no visual flicker.
+  const ovl = document.getElementById('sharedDialogOverlay');
+  if (ovl && ovl.style.display !== 'none') {
+    window.openAdvancedOptions();
+  }
+}
+
+function setAutoSaveEnabled(on) {
+  _autoSaveEnabled = !!on;
+  // Intentionally NOT persisted to localStorage — auto-save is session-scoped
+  // (it's in the Advanced Options section and the user should opt in each
+  // session rather than have destructive-feeling writes happen silently on
+  // page reload). Handles in IndexedDB still persist so re-enabling doesn't
+  // need a fresh save-picker, just a permission re-grant.
+  if (!on) {
+    // cancel pending writes; keep handles so re-enabling doesn't re-prompt
+    for (const k of Object.keys(_autoSaveTimers)) {
+      if (_autoSaveTimers[k]) { clearTimeout(_autoSaveTimers[k]); _autoSaveTimers[k] = null; }
+    }
+    // Reset per-kind failure counters so a fresh enable starts clean
+    for (const k of Object.keys(_autoSaveFailures)) _autoSaveFailures[k] = 0;
+    // Release the cross-tab lock so another tab can enable auto-save
+    _releaseAutoSaveLock();
+  }
+  // Undo and Save button state depend on this flag — refresh now so the UI
+  // reflects the new mode immediately rather than on next edit.
+  updateUndoButton();
+  updateSaveButton();
+}
+
+// ── External file-change detection ──
+// When the user alt-tabs away to play D2R and comes back, the save file on
+// disk may have been rewritten by the game. Compare each handle's current
+// mtime against the last mtime we recorded after our own load/write; if
+// it's newer, either silently reload (clean state) or prompt (dirty state).
+
+function _isKindDirty(kind) {
+  switch (kind) {
+    case 'char':        return isDirty;
+    case 'vault':       return vaultDirty;
+    case 'grail':       return grailDirty;
+    case 'sharedStash': return sharedStashDirty;
+  }
+  return false;
+}
+
+async function _reloadKindFromFile(kind, file) {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  if (!hasValidSaveMagic(buf)) {
+    // Acknowledge the mtime so we don't re-prompt on every focus. The user
+    // has been told; repeatedly blocking their flow helps nobody.
+    _lastSeenMtime[kind] = file.lastModified || 0;
+    setStatus(L('ui_external_reload_invalid', 'External file refresh failed — invalid save magic.'), 'error');
+    return;
+  }
+  const tabContent = document.getElementById('tabContent');
+  switch (kind) {
+    case 'char': {
+      // Validate version inline (loadFile's wrapper checks too, but we bypass it).
+      if (buf.length >= 8) {
+        const ver = buf[4] | (buf[5]<<8) | (buf[6]<<16) | (buf[7]<<24);
+        if (ver < 105) {
+          _lastSeenMtime[kind] = file.lastModified || 0; // same as above — don't re-prompt
+          setStatus(L('ui_external_reload_invalid', 'External file refresh failed — unsupported version.'), 'error');
+          return;
+        }
+      }
+      const wasUnlocked = inventoryUnlocked;
+      rawBytes   = buf;
+      workBytes  = new Uint8Array(buf);
+      parsedChar = parseD2S(workBytes);
+      try { snapshotQuestState(); snapshotSkillState(); } catch (e) { _logCaught('reload.snapshot', e); }
+      _deletedItemOffsets.clear();
+      isDirty = false;
+      inventoryUnlocked = wasUnlocked; // don't force the user through the unlock dialog again
+      try { updateCharStrip(); } catch (e) { _logCaught('reload.updateCharStrip', e); }
+      try { buildTabs(); renderTab(); } catch (e) { _logCaught('reload.render', e); }
+      fileName = file.name;
+      break;
+    }
+    case 'vault': {
+      vaultD2i = buf;
+      try {
+        const hdr = decodeVaultHeader(vaultD2i);
+        vaultPageNames = hdr.pageNames;
+        vaultItems = parseVaultItems(vaultD2i, hdr.jmOffset, hdr.itemPageIds);
+      } catch (e) { _logCaught('reload.vaultDecode', e); }
+      vaultDirty = false;
+      vaultFileName = file.name;
+      if (activeTab === 'vault' && tabContent) {
+        try { renderVault(tabContent); } catch (e) { _logCaught('reload.renderVault', e); }
+      }
+      break;
+    }
+    case 'grail': {
+      grailD2i = buf;
+      grailFileName = file.name;
+      grailDirty = false;
+      try { parseGrailD2i(); } catch (e) { _logCaught('reload.parseGrail', e); }
+      if (activeTab === 'grail' && tabContent) {
+        try { renderGrail(tabContent); } catch (e) { _logCaught('reload.renderGrail', e); }
+      }
+      break;
+    }
+    case 'sharedStash': {
+      sharedStashData = buf;
+      sharedStashName = file.name;
+      sharedStashDirty = false;
+      try { parseSharedStash(); } catch (e) { _logCaught('reload.parseSharedStash', e); }
+      if (activeTab === 'sharedStash' && tabContent) {
+        try { renderSharedStash(tabContent); } catch (e) { _logCaught('reload.renderSharedStash', e); }
+      }
+      break;
+    }
+  }
+  _lastSeenMtime[kind] = file.lastModified || 0;
+  updateSaveButton();
+  updateUndoButton();
+  takeUndoSnapshot(); // reloaded state is the new undo baseline
+  setStatus(Lfmt('ui_external_reload_done',
+    'Refreshed {file} from disk', { file: file.name }), 'loaded');
+}
+
+function _kindDisplayName(kind) {
+  switch (kind) {
+    case 'char':        return L('ui_autosave_target_char',        'Character (.d2s)');
+    case 'vault':       return L('ui_autosave_target_vault',       'Vault (.d2i)');
+    case 'grail':       return L('ui_autosave_target_grail',       'Grail (.d2i)');
+    case 'sharedStash': return L('ui_autosave_target_sharedstash', 'Shared Stash (.d2i)');
+  }
+  return kind;
+}
+
+async function _handleExternalChange(kind, file) {
+  if (_isKindDirty(kind)) {
+    // Conflict: local edits + external modification. Let the user decide.
+    showDialog({
+      title:   L('ui_external_conflict_title', 'File changed on disk'),
+      titleTone: 'gold',
+      message: Lfmt('ui_external_conflict_body',
+        '{kind} was modified by another program (likely the game) while you have unsaved edits.\n\nReload from disk to pick up those changes (your local edits will be lost), or keep your edits (they will overwrite the disk version on the next save).',
+        { kind: _kindDisplayName(kind) }),
+      buttons: [
+        { label: L('ui_external_conflict_reload', 'Reload from disk'), tone: 'danger',
+          onClick: () => { _reloadKindFromFile(kind, file).catch(err => _logCaught('externalReload.' + kind, err)); } },
+        { label: L('ui_external_conflict_keep',   'Keep my edits'),    tone: 'ghost',
+          onClick: () => {
+            // Acknowledge the external version so we don't keep prompting on
+            // every focus. Our next write will overwrite it anyway.
+            _lastSeenMtime[kind] = file.lastModified || 0;
+          } },
+      ],
+      dismissOnBackdrop: false, // force an explicit choice
+    });
+  } else {
+    // No local changes — silent reload is safe and matches expectations
+    await _reloadKindFromFile(kind, file);
+  }
+}
+
+// Check every handled kind for external modification. Runs on focus +
+// visibilitychange (user returning from another app/tab) and a one-shot
+// after DOM ready if handles were rehydrated.
+async function checkExternalFileChanges() {
+  if (!('showSaveFilePicker' in window)) return;
+  for (const kind of ['char', 'sharedStash', 'grail', 'vault']) {
+    const handle = _fileHandles[kind];
+    if (!handle) continue;
+    if (!_autoSaveKindHasData(kind)) continue;
+    // Skip if there's a pending debounce timer — that means auto-save is about
+    // to write anyway, and checking mtime now could race with it. Also skip
+    // if a write is currently in flight (we don't want to read mtime between
+    // createWritable().close() and the _lastSeenMtime update that follows).
+    if (_autoSaveTimers[kind]) continue;
+    if (_autoSaveWriting[kind]) continue;
+    try {
+      const perm = await handle.queryPermission({ mode: 'read' });
+      if (perm !== 'granted') continue;
+      const f = await handle.getFile();
+      const mtime = f.lastModified || 0;
+      if (!_lastSeenMtime[kind]) {
+        // First time we've seen this kind — establish a baseline without
+        // triggering a reload. The user just loaded it, so memory matches disk.
+        _lastSeenMtime[kind] = mtime;
+        continue;
+      }
+      // 1s tolerance for filesystem mtime rounding
+      if (mtime > _lastSeenMtime[kind] + 1000) {
+        await _handleExternalChange(kind, f);
+      }
+    } catch (e) {
+      // Handle is dead (file deleted, moved off-disk, or permission revoked).
+      // Drop it so we don't keep throwing on every focus event.
+      if (e && (e.name === 'NotFoundError' || e.name === 'NotAllowedError')) {
+        _fileHandles[kind] = null;
+        try { await autoSaveIdbDelHandle(kind); } catch (_) { /* best-effort */ }
+        setStatus(Lfmt('ui_autosave_target_gone',
+          'Auto-save target for {kind} is no longer available. Open Advanced Options to set a new one.',
+          { kind: _kindDisplayName(kind) }), 'modified');
+      } else {
+        _logCaught('checkExternalFileChanges.' + kind, e);
+      }
+    }
+  }
+}
+
+// Debounce the focus/visibility checks — alt-tabbing can fire both events in
+// quick succession and each call does async IO. 300ms coalesces them.
+let _externalCheckTimer = null;
+function scheduleExternalCheck() {
+  if (_externalCheckTimer) clearTimeout(_externalCheckTimer);
+  _externalCheckTimer = setTimeout(() => {
+    _externalCheckTimer = null;
+    checkExternalFileChanges().catch(err => _logCaught('scheduleExternalCheck', err));
+  }, 300);
+}
+
+window.addEventListener('focus', scheduleExternalCheck);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') scheduleExternalCheck();
+});
+
+// Restore handles from IndexedDB on page load. Browsers drop FSA write
+// permission on reload (queryPermission returns 'prompt'), so we adopt the
+// handle regardless of current permission state. The first time the user
+// loads the same file in this session, maybeCaptureAutoSaveHandle will call
+// requestPermission() from inside the load user-gesture — that's when the
+// 'allow edits to X' prompt appears, and we never lose a session's handle.
+async function rehydrateFileHandles() {
+  if (!('showSaveFilePicker' in window)) return;
+  for (const kind of ['char', 'sharedStash', 'grail', 'vault']) {
+    const h = await autoSaveIdbGetHandle(kind);
+    if (!h) continue;
+    // If the user loaded a fresh file during the DOMContentLoaded → rehydrate
+    // async gap, they've already populated _fileHandles[kind] with the correct
+    // handle. Don't stomp it with the stale rehydrated one.
+    if (_fileHandles[kind]) continue;
+    _fileHandles[kind] = h;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -9998,11 +11381,11 @@ function renderSharedStash(c) {
         ${introHtml}
       </div>
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
-        <label class="btn btn-primary" style="cursor:pointer;margin:0">
+        <button type="button" class="btn btn-primary" style="margin:0" onclick="openAuxFileForKind('sharedStash')">
           ${esc(L('ui_ss_browse_btn','Browse .d2i'))}
-          <input type="file" accept=".d2i" id="sharedStashFileInput" style="display:none"
-            onchange="loadSharedStash(this.files[0])">
-        </label>
+        </button>
+        <input type="file" accept=".d2i" id="sharedStashFileInput" style="display:none"
+          onchange="loadSharedStash(this.files[0])">
         <span id="sharedStashFileName" style="color:var(--d2-text-dim);font-size:12px">
           ${sharedStashData ? esc(sharedStashName) + ' (' + sharedStashData.length + ' bytes)' : esc(L('ui_ss_no_file','No file loaded'))}
         </span>
@@ -10027,8 +11410,11 @@ window.loadSharedStash = function(file) {
     sharedStashData = buf;
     sharedStashName = file.name;
     sharedStashOpenTab = '';
+    sharedStashDirty = false;
     parseSharedStash();
     renderSharedStash(document.getElementById('tabContent'));
+    takeUndoSnapshot();
+    maybeCaptureAutoSaveHandle('sharedStash');
   };
   reader.readAsArrayBuffer(file);
 };
@@ -10554,6 +11940,7 @@ function addItemsToGrail(itemEntries) {
   writeU32LE(grailD2i, 16, grailD2i.length);
   recalcChecksum(grailD2i);
   parseGrailD2i();
+  markGrailDirty();
 }
 
 window.loadGrailFile = function(file) {
@@ -10569,8 +11956,11 @@ window.loadGrailFile = function(file) {
     }
     grailD2i = buf;
     grailFileName = file.name;
+    grailDirty = false;
     parseGrailD2i();
     renderGrail(document.getElementById('tabContent'));
+    takeUndoSnapshot();
+    maybeCaptureAutoSaveHandle('grail');
   };
   reader.readAsArrayBuffer(file);
 };
@@ -10582,6 +11972,8 @@ window.saveGrailFile = function() {
   const a = document.createElement('a');
   a.href = url; a.download = grailFileName || 'grail.d2i'; a.click();
   URL.revokeObjectURL(url);
+  grailDirty = false;
+  takeUndoSnapshot();
 };
 
 window.moveItemsToGrail = function() {
@@ -10839,10 +12231,10 @@ function renderGrail(c) {
   let html = `<div style="padding:20px;max-width:800px;margin:0 auto">
     <h2 style="color:var(--d2-gold);font-family:'Cinzel',serif;margin:0 0 16px">${esc(L('ui_grail_heading','Holy Grail'))}</h2>
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap">
-      <label class="btn btn-primary" style="cursor:pointer;margin:0">
+      <button type="button" class="btn btn-primary" style="margin:0" onclick="openAuxFileForKind('grail')">
         ${esc(L('ui_grail_load_btn','Load Grail .d2i'))}
-        <input type="file" accept=".d2i" style="display:none" onchange="loadGrailFile(this.files[0])">
-      </label>
+      </button>
+      <input type="file" accept=".d2i" id="grailFileInput" style="display:none" onchange="loadGrailFile(this.files[0])">
       <button class="btn btn-primary" onclick="moveItemsToGrail()">${esc(L('ui_grail_copy_items_btn','Copy Items to Grail'))}</button>
       <span style="color:var(--d2-text-dim);font-size:12px">${grailD2i ? esc(grailFileName) : esc(L('ui_grail_no_loaded','No grail loaded'))}</span>
     </div>
@@ -10989,6 +12381,7 @@ window.removeGrailItem = function(byteOffset) {
     writeU32LE(grailD2i, 16, grailD2i.length);
     recalcChecksum(grailD2i);
     parseGrailD2i(); // this calls scanGrailFound which rebuilds grailFound set
+    markGrailDirty();
 
     closeTooltip(true);
     renderGrail(document.getElementById('tabContent'));
@@ -11976,6 +13369,8 @@ window.loadVaultFile = function(file) {
       vaultDirty     = false;
       vaultActivePage = 0;
       if (activeTab === 'vault') renderVault(document.getElementById('tabContent'));
+      takeUndoSnapshot();
+      maybeCaptureAutoSaveHandle('vault');
     } catch (err) {
       showPopup('Vault load failed: ' + (err.message || err));
     }
@@ -11996,6 +13391,7 @@ window.saveVaultFile = function() {
     vaultD2i   = out;
     vaultDirty = false;
     if (activeTab === 'vault') renderVault(document.getElementById('tabContent'));
+    takeUndoSnapshot();
   } catch (err) {
     showPopup('Vault save failed: ' + (err.message || err));
   }
@@ -12522,7 +13918,7 @@ window.moveSourceItemToVault = function(byteOffset, explicit) {
 
   // Append to vault and remove from source (if char; shared stash is COPY for now).
   vaultItems.push(...newItems);
-  vaultDirty = true;
+  markVaultDirty();
   vaultActivePage = placement.pageId;   // jump to the placed page so user sees the result
 
   if (kind === 'char') {
@@ -12651,7 +14047,7 @@ window.moveVaultItemToSource = function(byteOffset, destKind, explicit) {
 
   const toRemove = new Set([vItem, ...children]);
   vaultItems = vaultItems.filter(it => !toRemove.has(it));
-  vaultDirty = true;
+  markVaultDirty();
 
   for (const child of children) {
     parsedChar.items.push({
@@ -12695,7 +14091,7 @@ window.deleteVaultItem = function(byteOffset) {
     const children = findSocketedChildren(vaultD2i, vaultItems, item);
     const toRemove = new Set([item, ...children]);
     vaultItems = vaultItems.filter(it => !toRemove.has(it));
-    vaultDirty = true;
+    markVaultDirty();
 
     try {
       vaultD2i = encodeVault(vaultItems, vaultPageNames);
@@ -12776,10 +14172,10 @@ function renderVault(c) {
   c.innerHTML = `
     <div style="padding:16px">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
-        <label class="btn" style="cursor:pointer">
+        <button type="button" class="btn" onclick="openAuxFileForKind('vault')">
           ${esc(L('ui_vault_load_btn','Load Vault .d2i'))}
-          <input type="file" accept=".d2i" style="display:none" onchange="loadVaultFile(this.files[0])">
-        </label>
+        </button>
+        <input type="file" accept=".d2i" id="vaultFileInput" style="display:none" onchange="loadVaultFile(this.files[0])">
         <span style="color:var(--d2-text-dim);font-size:12px;flex:1">${fileInfo}</span>
         <button class="btn" onclick="saveVaultFile()" ${loaded ? '' : 'disabled'}>
           ${esc(L('ui_vault_save_btn','Save Vault .d2i'))}
@@ -12864,7 +14260,7 @@ function _vaultApplyRename(value) {
     }
     vaultPageNames[vaultActivePage] = trimmed;
   }
-  vaultDirty = true;
+  markVaultDirty();
   renderVault(document.getElementById('tabContent'));
 }
 
