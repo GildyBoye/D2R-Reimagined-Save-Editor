@@ -1968,6 +1968,19 @@ const ELEM_DMG_RANGE_KEY = {
   57: 'strModPoisonDamageRange',     // poisonmindam → poisonmaxdam (also has "over X seconds" token)
 };
 
+// Per-class string-table keys for stat 83 (item_addclassskills), indexed by class byte.
+// Full table + rationale in doc/PROPERTY-ENCODING.md "Class-skill templates (stat 83)".
+const _CLASS_SKILL_TEMPLATE_KEYS = [
+  'ModStr3a',    // 0 Amazon
+  'ModStr3d',    // 1 Sorceress
+  'ModStr3c',    // 2 Necromancer
+  'ModStr3b',    // 3 Paladin
+  'ModStr3e',    // 4 Barbarian
+  'ModStre8a',   // 5 Druid
+  'ModStre8b',   // 6 Assassin
+  'ModStrge9',   // 7 Warlock
+];
+
 function buildStatDescriptors() {
   STAT_DESCRIPTORS = {};
   STAT_DGRP_MEMBERS = {};
@@ -4532,29 +4545,59 @@ function showDialog(options) {
   const noteHtml = opts.note
     ? `<div class="dlg-note" style="color:var(--d2-text-dim);font-size:12px;line-height:1.5;margin-bottom:20px;white-space:pre-line">${esc(opts.note)}</div>`
     : '';
+  // Optional single-line text input. Buttons receive its current value as the
+  // first arg to onClick when present. Enter submits the first (primary) button.
+  const inputHtml = opts.input
+    ? `<input type="text" id="dlgInput"
+        value="${esc(opts.input.value || '')}"
+        placeholder="${esc(opts.input.placeholder || '')}"
+        maxlength="${opts.input.maxLength || 255}"
+        style="width:100%;box-sizing:border-box;background:var(--d2-surface2);color:var(--d2-text);border:1px solid var(--d2-border);padding:8px 10px;font-family:'Crimson Text',serif;font-size:14px;margin-bottom:16px;outline:none">`
+    : '';
   const buttonsHtml = buttons.map((b, i) => {
     const tone = _DIALOG_BTN_STYLES[b.tone] || _DIALOG_BTN_STYLES.primary;
     return `<button type="button" class="dlg-btn" data-dlg-idx="${i}" style="${_DIALOG_BTN_BASE}${tone}">${esc(b.label || '')}</button>`;
   }).join('');
 
   overlay.innerHTML = `<div role="dialog" aria-modal="true" style="background:var(--d2-grad-box);border:1px solid var(--d2-gold-dim);border-radius:3px;padding:${opts.title ? '24px 32px' : '20px 28px'};max-width:420px;min-width:260px;box-shadow:0 8px 40px rgba(0,0,0,0.9);text-align:center">
-    ${titleHtml}${messageHtml}${noteHtml}
+    ${titleHtml}${messageHtml}${noteHtml}${inputHtml}
     <div style="display:flex;gap:${opts.title ? '12' : '10'}px;justify-content:center;flex-wrap:wrap">${buttonsHtml}</div>
   </div>`;
 
   function close() { overlay.style.display = 'none'; }
+
+  const inputEl = opts.input ? overlay.querySelector('#dlgInput') : null;
+  function currentInputValue() { return inputEl ? inputEl.value : undefined; }
 
   // Wire buttons via addEventListener (no inline onclick strings → no XSS surface).
   overlay.querySelectorAll('.dlg-btn').forEach(btn => {
     const idx = parseInt(btn.dataset.dlgIdx, 10);
     btn.addEventListener('click', () => {
       const spec = buttons[idx];
+      const val  = currentInputValue();
       close();
       if (spec && typeof spec.onClick === 'function') {
-        try { spec.onClick(); } catch (e) { _logCaught('dialog.' + (spec.label || 'btn'), e); }
+        try { spec.onClick(val); } catch (e) { _logCaught('dialog.' + (spec.label || 'btn'), e); }
       }
     });
   });
+
+  if (inputEl) {
+    // Enter submits as if the first button was clicked; Escape cancels as if
+    // the last button was clicked (whatever it is — Cancel by convention).
+    inputEl.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const primary = overlay.querySelector('.dlg-btn[data-dlg-idx="0"]');
+        if (primary) primary.click();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        close();
+      }
+    });
+    // Defer focus to after layout so the caret lands reliably.
+    setTimeout(() => { inputEl.focus(); inputEl.select(); }, 0);
+  }
 
   // Backdrop dismiss — clicking outside the dialog box closes it.
   if (opts.dismissOnBackdrop !== false) {
@@ -4723,7 +4766,7 @@ function encodeExtendedItem(item) {
   } else if (quality === 4) {
     wbN(pos, item._prefixId || 0, 11); pos += 11;
     wbN(pos, item._suffixId || 0, 11); pos += 11;
-    pos += 1;  // trailing gap bit — decoder's `bit+=1` at line ~8131. Same class of 1-bit-gap bug as the Phase 10 Ogre's Embrace pad. Currently unreachable (editor has no magic-insert path), fixed preemptively.
+    pos += 1;  // Magic items have a trailing gap bit after the 22-bit prefix/suffix block.
   } else if (quality === 5) {
     wbN(pos, item.setId ?? item.setItemId ?? 0, 12); pos += 12;
     if (wantsNonArmorExtraBit) pos += 1;
@@ -4731,7 +4774,7 @@ function encodeExtendedItem(item) {
     wbN(pos, 0, 8); pos += 8;
     wbN(pos, 0, 8); pos += 8;
     for (let i = 0; i < 6; i++) { wbN(pos, 0, 1); pos += 1; }
-    pos += 1;  // trailing gap bit — decoder's `bit+=1` at line ~8143. Same fix as q=4 above. Note: if rare-affix insert support is ever added, the 6-flag loop above also needs to conditionally write an 11-bit affix id after each flag=1.
+    // No trailing gap bit — see decoder note. Matches game format (22 bits for q=6/q=8 block).
   } else if (quality === 7) {
     wbN(pos, item.uniqueId ?? 0, 12); pos += 12;
     if (wantsNonArmorExtraBit) pos += 1;
@@ -4911,12 +4954,13 @@ function flushDeletedItems() {
   // This is more reliable than re-scanning for the 4-byte header pattern,
   // which can false-match inside item property data.
 
-  // Collect all known non-virtual item offsets (including already-deleted ones still in _deletedItemOffsets)
-  // and the surviving items from parsedChar.items
+  // Collect offsets from deletions + surviving char items. Merc items MUST be excluded —
+  // otherwise the last char item's kept range extends past endBound into merc territory,
+  // producing a duplicated merc section (see SESSION-HISTORY Phase 11).
   const allOffsets = new Set();
   for (const off of _deletedItemOffsets) allOffsets.add(off);
   for (const item of (parsedChar.items || [])) {
-    if (item.byteOffset >= 0 && !item.isVirtual) allOffsets.add(item.byteOffset);
+    if (item.byteOffset >= 0 && !item.isVirtual && !item.isMerc) allOffsets.add(item.byteOffset);
   }
 
   // Sort offsets to determine item byte ranges
@@ -5028,8 +5072,9 @@ function flushVirtualItems() {
   if (jm2Off < 0) return;
 
   const encoded = virtuals.map(it => {
-    // Grail-copied items already have exact binary — use it directly
+    // Honor pre-baked binaries so grail-copy and vault-move flows preserve exact bytes.
     if (it._grailCopyBytes) return it._grailCopyBytes;
+    if (it._virtualBytes)   return it._virtualBytes;
     const code = it.typeCode || '';
     // Runes are extended items in D2RR (not compact)
     const isRune = /^[rs]\d{2}$/.test(code);
@@ -6161,6 +6206,7 @@ const TAB_ICONS = {
   quests: `<svg width="14" height="14" viewBox="0 0 14 14" style="vertical-align:-2px;margin-right:4px"><rect x="2" y="1" width="10" height="12" rx="1" fill="#6b4423" stroke="#8b6233"/><rect x="3.5" y="2.5" width="7" height="9" rx="0.5" fill="#f5e6c8"/><line x1="5" y1="5" x2="9" y2="5" stroke="#6b4423" stroke-width="0.6"/><line x1="5" y1="7" x2="9" y2="7" stroke="#6b4423" stroke-width="0.6"/><line x1="5" y1="9" x2="8" y2="9" stroke="#6b4423" stroke-width="0.6"/></svg>`,
   waypoints: `<svg width="14" height="14" viewBox="0 0 14 14" style="vertical-align:-2px;margin-right:4px"><circle cx="7" cy="7" r="5" fill="none" stroke="#6090d0" stroke-width="1.2"/><circle cx="7" cy="7" r="2" fill="#4080cc"/><path d="M7 2 L7 0 M7 12 L7 14 M2 7 L0 7 M12 7 L14 7" stroke="#6090d0" stroke-width="0.8"/><circle cx="7" cy="7" r="0.8" fill="#a0d0ff"/></svg>`,
   grail: `<svg width="14" height="14" viewBox="0 0 14 14" style="vertical-align:-2px;margin-right:4px"><path d="M4 1 L10 1 L11 5 Q11 7 9 7 L9 10 L10.5 11 L10.5 13 L3.5 13 L3.5 11 L5 10 L5 7 Q3 7 3 5 Z" fill="#c8a050" stroke="#a08030" stroke-width="0.6"/><path d="M4.5 2 L9.5 2 L10 5 Q10 6.5 8.5 6.5 L5.5 6.5 Q4 6.5 4 5 Z" fill="#e8c860" opacity="0.5"/><ellipse cx="7" cy="3" rx="2" ry="0.6" fill="#ffe090" opacity="0.4"/></svg>`,
+  vault: `<svg width="14" height="14" viewBox="0 0 14 14" style="vertical-align:-2px;margin-right:4px"><rect x="1.5" y="2" width="11" height="10" rx="0.6" fill="#3a3a42" stroke="#8a7a30" stroke-width="0.8"/><circle cx="7" cy="7" r="3" fill="none" stroke="#c8a030" stroke-width="0.9"/><circle cx="7" cy="7" r="1.4" fill="#c8a030"/><line x1="7" y1="4" x2="7" y2="3" stroke="#c8a030" stroke-width="0.8"/><line x1="7" y1="10" x2="7" y2="11" stroke="#c8a030" stroke-width="0.8"/><line x1="4" y1="7" x2="3" y2="7" stroke="#c8a030" stroke-width="0.8"/><line x1="10" y1="7" x2="11" y2="7" stroke="#c8a030" stroke-width="0.8"/></svg>`,
   sharedstash: `<svg width="14" height="14" viewBox="0 0 14 14" style="vertical-align:-2px;margin-right:4px"><rect x="1" y="5" width="12" height="8" rx="1" fill="#8b6914" stroke="#a08030"/><path d="M1 6 Q7 3 13 6" fill="#a07020" stroke="#b89040"/><rect x="5.5" y="7" width="3" height="2" rx="0.5" fill="#d4aa30" stroke="#c09020"/><line x1="7" y1="1" x2="7" y2="4" stroke="#d4aa30" stroke-width="0.8"/><circle cx="4" cy="2" r="1" fill="#d4aa30" opacity="0.6"/><circle cx="10" cy="2" r="1" fill="#d4aa30" opacity="0.6"/></svg>`,
   mercenary: `<svg width="14" height="14" viewBox="0 0 14 14" style="vertical-align:-2px;margin-right:4px"><path d="M2 13 Q2 9 5 8" fill="none" stroke="#c8a050" stroke-width="1.5" stroke-linecap="round"/><path d="M12 13 Q12 9 9 8" fill="none" stroke="#c8a050" stroke-width="1.5" stroke-linecap="round"/><path d="M5 8 Q7 7 9 8" fill="none" stroke="#c8a050" stroke-width="1" stroke-linecap="round"/><circle cx="4" cy="5" r="2" fill="none" stroke="#c8a050" stroke-width="1.2"/><circle cx="10" cy="5" r="2" fill="none" stroke="#c8a050" stroke-width="1.2"/></svg>`,
 };
@@ -6171,6 +6217,7 @@ function getTabs() { return [
   {id:'sharedstash',label:L('ui_tab_shared_stash','Shared Stash'),danger:true},
   {id:'mercenary',label:L('ui_tab_mercenary','Mercenary')},
   {id:'grail',label:L('ui_tab_grail','Grail'),danger:true},
+  {id:'vault',label:L('ui_tab_vault','Vault'),danger:true},
 ];}
 
 // Inventory/stash item parsing is gated behind an explicit unlock to prevent
@@ -6187,7 +6234,13 @@ function buildTabs() {
     // must be escaped so a translated string with stray markup can't inject into the DOM.
     b.innerHTML=(TAB_ICONS[t.id]||'')+esc(t.label);
     b.title = isDanger ? L('ui_tab_danger_tooltip','Item editing not currently supported — click to see warning') : '';
-    b.onclick=()=>{ applyCurrentTab(); activeTab=t.id; buildTabs(); renderTab(); };
+    b.onclick=()=>{
+      // Close any pinned tooltip before the DOM underneath it is thrown away —
+      // otherwise _tooltipOpenFrom keeps a stale byteOffset that can collide with
+      // a different item's offset on the new tab.
+      if (typeof closeTooltip === 'function') closeTooltip(true);
+      applyCurrentTab(); activeTab=t.id; buildTabs(); renderTab();
+    };
     bar.appendChild(b);
   });
 }
@@ -6211,6 +6264,9 @@ function renderTab() {
     case 'grail':
       if (!inventoryUnlocked) { renderItemWarning(c, 'grail'); break; }
       renderGrail(c);     break;
+    case 'vault':
+      if (!inventoryUnlocked) { renderItemWarning(c, 'vault'); break; }
+      renderVault(c);     break;
   }
 }
 
@@ -6289,7 +6345,7 @@ function renderChar(c) {
     ${parsedChar.error?`<p class="parse-error">${esc(L('ui_parse_warning','Parse warning:'))} ${esc(parsedChar.error)}</p>`:''}
     ${h2(L('ui_char_info','Character Info'))}
     <div class="stat-grid">
-      ${card(L('ui_name','Name'),  txtIn(h.name,'inpName'))}
+      ${card(L('ui_name','Name'),  txtIn(h.name,'inpName',` maxlength="${HDR.NAME_LEN - 1}"`))}
       ${card(L('ui_class','Class'), `<div class="stat-input" style="cursor:default;opacity:0.8">${esc(CLASS_NAMES[cls]||L('ui_unknown','Unknown'))}</div>`)}
       ${card(L('ui_level','Level'), numIn(h.level,1,100,'inpLevel'))}
       ${card(L('ui_experience','Experience'), numIn(parsedChar.stats.experience||0,0,'','inpExp'))}
@@ -6475,7 +6531,11 @@ window.applyStats = function() {
   const newStats = {};
   ids.forEach(k => {
     const el = document.getElementById('st'+k.charAt(0).toUpperCase()+k.slice(1));
-    if (el) newStats[k] = parseInt(el.value||'0',10) || 0;
+    if (!el) return;
+    // All character stats are unsigned — negative values would corrupt the save.
+    // DOM input has min=0 but JS doesn't enforce it; devtools / paste can bypass.
+    const raw = parseInt(el.value || '0', 10) || 0;
+    newStats[k] = Math.max(0, raw);
   });
   // Only recalculate life/mana/stamina if the user actually changed vit or energy.
   // Otherwise preserve the game's stored values (which include item/skill bonuses).
@@ -6583,17 +6643,20 @@ function renderSkills(c) {
 }
 
 window.applySkills = function() {
-  // Write skill levels
+  // Write skill levels — clamp to valid skill level range [0, 20] per D2 convention.
+  // Per-skill inputs have HTML min/max but those aren't re-enforced on commit.
   document.querySelectorAll('.skill-cell-input[data-skill-idx]').forEach(inp => {
     const idx = parseInt(inp.dataset.skillIdx || '-1', 10);
     if (idx < 0 || idx >= 30) return;
-    commitSkill(idx, parseInt(inp.value || '0', 10));
+    const lvl = Math.max(0, Math.min(20, parseInt(inp.value || '0', 10) || 0));
+    commitSkill(idx, lvl);
     inp.classList.remove('modified');
   });
-  // Write skill points remaining (newskills stat)
+  // Write skill points remaining — clamp to [0, 250]. 250 is the D2 stat-field cap
+  // for newskills; HTML max says the same but devtools/paste can bypass.
   const spInput = document.querySelector('.skill-sp-input');
   if (spInput && parsedChar.stats) {
-    const sp = Math.max(0, parseInt(spInput.value || '0', 10));
+    const sp = Math.max(0, Math.min(250, parseInt(spInput.value || '0', 10) || 0));
     parsedChar.stats.newskills = sp;
     commitStats({ newskills: sp });
   }
@@ -7932,7 +7995,7 @@ function positionTooltip(tt, triggerEl) {
 function ensureItemProps(item) {
   if (item._propsDecoded) return;
   item._propsDecoded = true;
-  const dataBuf = item.isGrail ? grailD2i : item.isSharedStash ? sharedStashData : workBytes;
+  const dataBuf = item.isGrail ? grailD2i : item.isVault ? vaultD2i : item.isSharedStash ? sharedStashData : workBytes;
   if (item.simple || item.isVirtual || !dataBuf || item.byteOffset < 0) return;
   const ext = decodeItemProperties(dataBuf, item.byteOffset, item);
   if (ext.simple) return;
@@ -8007,17 +8070,28 @@ function _readPropListAt(buf, byteOff, startBit) {
     const stored=rbL(bit,sb);bit+=sb;
     const def=STAT_DEF[id];
     const value=stored-(def?def[1]:0);
-    // Handle follow stats (elemental damage min+max pairs)
+    // Handle follow stats (elemental damage min+max pairs, cold/poison also have length).
+    // value2 captures the first follower (max damage), value3 captures the second (length
+    // in frames for cold/poison — 25 frames = 1 second). Without value3 the display layer
+    // can't show "over N seconds" and can't scale encoded poison damage back to human units.
     const follow=(id<FOLLOW_STATS.length)?FOLLOW_STATS[id]:0;
-    let value2=undefined;
+    let value2=undefined, value3=undefined;
     for(let f=0,s2=id;f<follow;f++){
       s2++;
       const pb2=(s2<SAVE_PARAM_BITS.length?SAVE_PARAM_BITS[s2]:0);
       const sb2=(s2<SAVE_BITS.length?SAVE_BITS[s2]:0);
-      if(sb2){bit+=pb2;const stored2=rbL(bit,sb2);bit+=sb2;const def2=STAT_DEF[s2];if(f===0)value2=stored2-(def2?def2[1]:0);}
-      else{bit+=pb2;}
+      if(sb2){
+        bit+=pb2;
+        const stored2=rbL(bit,sb2);bit+=sb2;
+        const def2=STAT_DEF[s2];
+        const v2=stored2-(def2?def2[1]:0);
+        if(f===0)      value2=v2;
+        else if(f===1) value3=v2;
+      } else {
+        bit+=pb2;
+      }
     }
-    mods.push({id,param,stored,value,value2});
+    mods.push({id,param,stored,value,value2,value3});
   }
   return {mods,endBit:bit,terminated};
 }
@@ -8053,19 +8127,16 @@ function decodeItemProperties(buf, byteOff, item) {
     const q=rbL(bit,4);bit+=4;r.quality=q;
     if(rbL(bit,1))bit+=4;else bit+=1;
     if(rbL(bit,1))bit+=12;else bit+=1;
-    // D2RR V105 quality-specific block. The format has an extra 1-bit gap after the
-    // quality-specific field for SOME quality/slot combinations; we handle it inline here
-    // where it's deterministic (q=1/2/3/4/6/8), and rely on _readPropList's +1 retry path
-    // for q=5/q=7 jewelry (where the gap depends on the item type being non-armor/non-weapon
-    // at the time of writing — the encoder's wantsNonArmorExtraBit gate). See doc/PROPERTY-ENCODING.md.
+    // Quality-specific block. Trailing-gap rules per doc/PROPERTY-ENCODING.md:
+    //   q=4 has a trailing gap; q=6/q=8 do NOT; q=5/q=7 have a gap only for MISC items.
     const isRuneItem = /^[rs]\d{2}$/.test((item.typeCode||''));
     if(q===1)bit+=3;else if(q===2 && isRuneItem)bit+=1;else if(q===3)bit+=3;else if(q===4){
       r._prefixId=rbL(bit,11);bit+=11;
       r._suffixId=rbL(bit,11);bit+=11;
       bit+=1;
     }
-    else if(q===5){r.setId=rbL(bit,12);bit+=12;}         // extra bit (if present) absorbed by _readPropList retry
-    else if(q===7){r.uniqueId=rbL(bit,12);bit+=12;}      // extra bit (if present) absorbed by _readPropList retry
+    else if(q===5){r.setId=rbL(bit,12);bit+=12;}
+    else if(q===7){r.uniqueId=rbL(bit,12);bit+=12;}
     else if(q===6||q===8){
       r.rareNameId1=rbL(bit,8);bit+=8;
       r.rareNameId2=rbL(bit,8);bit+=8;
@@ -8074,14 +8145,14 @@ function decodeItemProperties(buf, byteOff, item) {
         const flag=rbL(bit,1);bit+=1;
         if(flag){r.rareAffixes.push({slot:i,id:rbL(bit,11)});bit+=11;}
       }
-      bit+=1;
     }
+    const code=item.typeCode||'';
+    if ((q === 5 || q === 7) && MISC_SET.has(code)) bit += 1;
     if(item.runeword)bit+=16; // runeword padding (name resolved by matching socketed runes)
     if(item.personalized){for(let i=0;i<50;i++){const c=rbL(bit,7);bit+=7;if(!c)break;}}
     const tc=(item.typeCode||'').slice(0,3).toLowerCase();
     if(tc==='tbk'||tc==='tsc')bit+=5;
     bit+=1; // timestamp
-    const code=item.typeCode||'';
     const isArm=ARMOR_SET.has(code), isWep=WEAPON_SET.size?WEAPON_SET.has(code):(!ARMOR_SET.has(code)&&!STACK_SET.has(code)&&!MISC_SET.has(code)&&code.length===3);
     if(isArm)bit+=11;
     if(isArm||isWep){const md=rbL(bit,8);bit+=8;if(md>0)bit+=10;}  // D2R V105: curDur is 10 bits
@@ -8150,7 +8221,8 @@ function _substituteTokens(template, value, context) {
 
 // Format a stat via its itemstatcost descriptor. Returns a display string, or null if the
 // descriptor can't format this stat cleanly (caller falls back to the legacy STAT_DEF path).
-function applyDescfunc(desc, value, param, value2) {
+// value3 is the second follow-stat value when present (cold/poison length in frames).
+function applyDescfunc(desc, value, param, value2, value3) {
   if (!desc) return null;
   const key = value >= 0 ? desc.strPos : (desc.strNeg || desc.strPos);
   if (!key) return null;
@@ -8164,26 +8236,34 @@ function applyDescfunc(desc, value, param, value2) {
   // The binary decoder pairs min/max damage stats into a single (value, value2) entry on the
   // min-damage leader. Use Blizzard's dedicated range templates so non-English locales get
   // the correct grammar ("Fügt 5-10 Feuerschaden hinzu" etc.) instead of two separate lines.
+  //
+  // Cold (stat 54) and poison (stat 57) also carry `value3` = duration in frames (25 fps), and
+  // Blizzard's range templates for those stats include a third `%d` for "over N Seconds".
+  // Poison additionally encodes damage as (display * 256 / lengthFrames), so we scale stored
+  // values back to human-readable damage before substituting.
   if (value2 !== undefined) {
     const rangeKey = ELEM_DMG_RANGE_KEY[desc.id];
     if (rangeKey && stringTable[rangeKey]) {
+      let minD = value, maxD = value2;
+      // Poison: scale stored-per-frame damage back to displayed total-over-duration.
+      if (desc.id === 57 && value3 && value3 > 0) {
+        minD = Math.round(value  * value3 / 256);
+        maxD = Math.round(value2 * value3 / 256);
+      }
       let s = stringTable[rangeKey];
-      s = s.replace(/%d/, String(value));   // min
-      s = s.replace(/%d/, String(value2));  // max
+      s = s.replace(/%d/, String(minD));   // min
+      s = s.replace(/%d/, String(maxD));   // max
+      if (value3 !== undefined && s.includes('%d')) {
+        // Third %d in range template = duration in seconds (length frames / 25).
+        const secs = Math.max(1, Math.round(value3 / 25));
+        s = s.replace(/%d/, String(secs));
+      }
       return s;
     }
   }
 
-  // ── Per-level stats (descstr2 = "increaseswithplaylevelX") ──
-  // Stored value is units per 8 character levels; display the scaled current-level value
-  // plus the per-level rate so perfection comparisons and roll inspection remain clear.
-  // (The rate annotation already implies level scaling, so we omit the Blizzard
-  // "Based on Character Level" suffix to avoid a redundant double-parenthetical.)
-  //
-  // Restricted to stat IDs 218-267 to match legacy behaviour — in D2 / D2RR, hp/mana
-  // perlevel (216/217) are used in contexts where the scaling math doesn't apply the
-  // same way, so we leave those to the plain-template path.
-  if (desc.str2 === 'increaseswithplaylevelX' && value > 0 && desc.id >= 218 && desc.id <= 267) {
+  // Per-level stats: scale stored (units per 8 levels) to char level, append rate suffix.
+  if (desc.str2 === 'increaseswithplaylevelX' && value > 0) {
     const charLvl = (parsedChar && parsedChar.header) ? (parsedChar.header.level || 1) : 1;
     const scaled  = Math.floor(value * charLvl / 8);
     const perLvl  = (value / 8).toFixed(value % 8 ? 1 : 0);
@@ -8237,8 +8317,12 @@ function applyDescfunc(desc, value, param, value2) {
       if (/%[+]?[dis]/.test(tpl)) return _substituteTokens(tpl, value);
       return desc.val === 2 ? tpl + ' ' + value : signedVal + ' ' + tpl;
 
-    // ── 13: +value to {class} Skill Levels (param = class index) ──
+    // ── 13: +value to {class} Skill Levels (see doc/PROPERTY-ENCODING.md for the key table) ──
     case 13: {
+      const classKey = _CLASS_SKILL_TEMPLATE_KEYS[param];
+      if (classKey && stringTable[classKey]) {
+        return _substituteTokens(stringTable[classKey], value);
+      }
       const className = CLASS_NAMES[param] || 'Class#' + param;
       return _substituteTokens(tpl, value, { s: [className] });
     }
@@ -8417,7 +8501,7 @@ const _FORMAT_MOD_BLACKLIST = new Set([
 // All other stats with value=0 are filtered as noise.
 const _FORMAT_MOD_ZERO_OK = new Set([116, 152, 153, 194]);
 
-function _formatMod(id, param, value, value2) {
+function _formatMod(id, param, value, value2, value3) {
   if (_FORMAT_MOD_BLACKLIST.has(id)) return null;
 
   // Filter noise before doing any formatting work
@@ -8431,7 +8515,7 @@ function _formatMod(id, param, value, value2) {
   // absent from the current language's string table, or the descfunc isn't in applyDescfunc's table.
   const desc = STAT_DESCRIPTORS[id];
   if (desc) {
-    const fromDescfunc = applyDescfunc(desc, value, param, value2);
+    const fromDescfunc = applyDescfunc(desc, value, param, value2, value3);
     if (fromDescfunc) {
       // Filter control-char artifacts that occasionally appear in raw Blizzard strings
       if (fromDescfunc.includes('\u00ff') || fromDescfunc.charCodeAt(0) === 0xff) return null;
@@ -8443,9 +8527,10 @@ function _formatMod(id, param, value, value2) {
   const def = STAT_DEF[id];
   if (!def) return null;
   let t = def[0];
-  // Per-level stats (IDs 218-267): stored value = units per 8 levels
-  // Calculate actual value based on character level and show both
-  if(id >= 218 && id <= 267 && value > 0){
+  // Per-level stat scaling (legacy fallback — descfunc path handles it when descriptors exist).
+  const _desc = STAT_DESCRIPTORS && STAT_DESCRIPTORS[id];
+  const _isPerLevel = _desc ? _desc.str2 === 'increaseswithplaylevelX' : (id >= 218 && id <= 267);
+  if(_isPerLevel && value > 0){
     const charLvl = (parsedChar && parsedChar.header) ? (parsedChar.header.level || 1) : 1;
     const calcVal = Math.floor(value * charLvl / 8);
     const perLvlLabel = (value / 8).toFixed(value % 8 ? 1 : 0);
@@ -8503,6 +8588,20 @@ function _formatMods(mods, skipDedup) {
   // `_grouped` entries that carry a ready-to-render display line.
   const grouped = applyDgrpGrouping(mods);
 
+  // Hide stat 23/24 when they match their primary pair (21/22) — classic D2 writes both on
+  // max-damage affixes; game dedupes when values match.
+  const _hideSecondaryDmg = new Set();
+  {
+    const byId = new Map();
+    for (const e of grouped) if (!e._grouped && e.id !== undefined) byId.set(e.id, e);
+    const pair = (main, secondary) => {
+      const m = byId.get(main), s = byId.get(secondary);
+      if (m && s && m.value === s.value) _hideSecondaryDmg.add(secondary);
+    };
+    pair(21, 23);  // min damage pair
+    pair(22, 24);  // max damage pair
+  }
+
   const lines = [];
   const seenIds = new Set();
   for (let i = 0; i < grouped.length; i++) {
@@ -8512,13 +8611,19 @@ function _formatMods(mods, skipDedup) {
       lines.push(entry.displayLine);
       continue;
     }
-    const { id, param, value, value2 } = entry;
+    const { id, param, value, value2, value3 } = entry;
     // Skip follow stats already consumed as value2 of their leader (e.g. stat 18 following 17)
     if (id === 18 && i > 0 && grouped[i - 1] && grouped[i - 1].id === 17) continue;
-    // Deduplicate by stat ID unless caller asked for raw output (e.g. enchant mod lists)
-    if (!skipDedup && seenIds.has(id)) continue;
-    const line = _formatMod(id, param, value, value2);
-    if (line !== null) { lines.push(line); seenIds.add(id); }
+    // Skip secondary-damage stats that duplicate their primary counterpart (classic D2 pairing)
+    if (_hideSecondaryDmg.has(id)) continue;
+    // Deduplicate by (id, param) — stats like 107 (item_singleskill) and 204 (charged skill)
+    // have one entry per skill, so deduping by id alone collapses "+4 to Abyss" and
+    // "+4 to Enhanced Entropy" into a single line. Param-bearing stats use the composite key;
+    // for no-param stats this degenerates to id-only dedupe, preserving existing behaviour.
+    const dedupKey = `${id}:${param || 0}`;
+    if (!skipDedup && seenIds.has(dedupKey)) continue;
+    const line = _formatMod(id, param, value, value2, value3);
+    if (line !== null) { lines.push(line); seenIds.add(dedupKey); }
   }
   return lines;
 }
@@ -8609,6 +8714,96 @@ function buildItemTooltipHtml(item, options) {
     // Show all actual rolled values from binary — one unified list
     const lines = _formatMods(item._mods);
     if(lines.length) propHtml='<hr class="tt-divider">'+lines.map(l=>`<div class="tt-mod">${esc(l)}</div>`).join('');
+
+    // Socketed children contributions (jewels, runes, gems). Skipped for runewords since
+    // the runeword properties are already in the base mod list (would double-count).
+    if (!item.runeword) try {
+      const srcBuf = item.isGrail ? grailD2i
+                   : item.isVault ? vaultD2i
+                   : item.isSharedStash ? sharedStashData
+                   : workBytes;
+      const srcItems = item.isGrail ? (grailParsed ? grailParsed.tabs.flatMap(t => t.items) : [])
+                     : item.isVault ? vaultItems
+                     : item.isSharedStash ? (sharedStashParsed ? sharedStashParsed.tabs.flatMap(t => t.items) : [])
+                     : (parsedChar ? (parsedChar.items || []) : []);
+      if (srcBuf && srcItems && srcItems.length) {
+        // Real items use byte-offset cascade; virtuals use array-index walk because their
+        // negative fake offsets break findSocketedChildren's ordering filter.
+        let children;
+        if (item.isVirtual || item.byteOffset < 0) {
+          children = [];
+          const cap = item.numSockets || 0;
+          const idx = srcItems.indexOf(item);
+          if (idx >= 0 && cap > 0) {
+            for (let j = idx + 1; j < srcItems.length && children.length < cap; j++) {
+              const next = srcItems[j];
+              if (!next.isVirtual) break;
+              if (next.parent !== 6) break;
+              children.push(next);
+            }
+          }
+        } else {
+          children = findSocketedChildren(srcBuf, srcItems, item);
+        }
+        const socketModsRaw = [];
+        // Slot category for gems.txt column lookup: weapons → weaponMod, shields → shieldMod,
+        // everything else in armor (helms + body armor) → helmMod.
+        const armorRow  = baseData && baseData['armor']  ? baseData['armor'].rows.find(r => (r['code']||'').trim() === code) : null;
+        const armorType = armorRow ? (armorRow['type'] || '').trim() : '';
+        const isShieldItem = armorType === 'shie' || armorType === 'ashd' || armorType === 'head' || armorType === 'grim';
+        const gemPrefix = WEAPON_SET.has(code) ? 'weaponMod' : isShieldItem ? 'shieldMod' : 'helmMod';
+
+        for (const child of children) {
+          try { ensureItemProps(child); } catch (_) {}
+          if (child._mods && child._mods.length) {
+            socketModsRaw.push(...child._mods);
+            continue;
+          }
+          // Simple socketed items (runes, gems, skulls) have no property list of their own.
+          // Their socketed effect comes from gems.txt — a 3-mod template keyed on (rune/gem
+          // code, parent slot type). Look it up and roll each entry at its max value so the
+          // display shows the authoritative contribution.
+          if (child.simple && baseData && baseData['gems']) {
+            const gemRow = baseData['gems'].rows.find(r => (r['code']||'').trim() === (child.typeCode||'').trim());
+            if (gemRow) {
+              for (let i = 1; i <= 3; i++) {
+                const propCode = (gemRow[gemPrefix + i + 'Code'] || '').trim();
+                if (!propCode) continue;
+                const propPar  = (gemRow[gemPrefix + i + 'Param'] || '').trim();
+                const propMin  = parseInt(gemRow[gemPrefix + i + 'Min'] || '0', 10);
+                const propMax  = parseInt(gemRow[gemPrefix + i + 'Max'] || '0', 10);
+                if (typeof propCodeToStatEntries === 'function') {
+                  const entries = propCodeToStatEntries(propCode, propMin, propMax, propPar, 'max');
+                  for (const e of entries) socketModsRaw.push(e);
+                }
+              }
+            }
+          }
+        }
+        // Sum matching (id, param) entries across sockets so 3× "+25 Life" jewels render
+        // as "+75 Life". value2/value3 (damage ranges, durations) stay on the first entry.
+        const byKey = new Map();
+        for (const mod of socketModsRaw) {
+          const key = `${mod.id}:${mod.param || 0}`;
+          const prev = byKey.get(key);
+          if (prev) {
+            prev.value = (prev.value || 0) + (mod.value || 0);
+            prev.stored = (prev.stored || 0) + (mod.stored || 0);
+          } else {
+            byKey.set(key, { ...mod });
+          }
+        }
+        const socketMods = [...byKey.values()];
+        if (socketMods.length) {
+          const socketLines = _formatMods(socketMods);
+          if (socketLines.length) {
+            propHtml += `<hr class="tt-divider"><div class="tt-mod" style="color:var(--d2-gold);font-size:11px">${esc(L('ui_tooltip_socketed','Socketed:'))}</div>`;
+            propHtml += socketLines.map(l => `<div class="tt-mod" style="color:#6090c0">${esc(l)}</div>`).join('');
+          }
+        }
+      }
+    } catch (e) { _logCaught('tooltip.socketedChildren', e); }
+
     // Set partial/full bonuses (from txt)
     if(resolved.setBonusLines && resolved.setBonusLines.length){
       for(const bonus of resolved.setBonusLines){
@@ -8947,12 +9142,21 @@ let _modalSelectedIdx = null;
 window.openInsertModal = function(context) {
   _modalContext = context;
   _modalSelectedIdx = null;
+  _modalSelectedEntry = null;
   document.getElementById('modalTitle').textContent = context.mode === 'equip'
     ? Lfmt('ui_modal_insert_into','Insert into: {label}',{label:context.label})
     : Lfmt('ui_modal_insert_at','Insert at position ({x}, {y})',{x:context.x,y:context.y});
   document.getElementById('modalSearch').value = '';
   document.getElementById('modalSelected').style.display = 'none';
   document.getElementById('modalInsertBtn').style.display = 'none';
+  // Reset per-item inputs so stale values from a prior open don't bleed through
+  // (e.g. socket count > new item's max, Max Values checkbox left on, ilvl from prior choice).
+  const maxChk   = document.getElementById('modalMaxValues');
+  const sockIn   = document.getElementById('modalSockets');
+  const ilvlIn   = document.getElementById('modalIlvl');
+  if (maxChk) { maxChk.checked = false; maxChk.disabled = false; }
+  if (sockIn) { sockIn.value = '0'; sockIn.disabled = false; sockIn.removeAttribute('title'); }
+  if (ilvlIn) { ilvlIn.value = '80'; }
   filterModalItems();
   document.getElementById('itemModal').classList.add('visible');
   setTimeout(()=>document.getElementById('modalSearch').focus(), 50);
@@ -9493,7 +9697,10 @@ window.confirmInsertItem = function() {
   const qual     = entry.qual ?? 2;
   const isRune = /^[rs]\d{2}$/.test(typeCode);
   const isMiscItem = entry.tier === 'misc' || entry.category === 'misc';
-  const ilvl = (isRune || isMiscItem) ? 1 : (parseInt((document.getElementById('modalIlvl')||{}).value||'80',10)||80);
+  // Clamp ilvl to [1, 99] — input has HTML min/max attributes but they're not
+  // re-enforced here, so devtools/paste can slip through unclamped values.
+  const ilvlRaw = parseInt((document.getElementById('modalIlvl') || {}).value || '80', 10) || 80;
+  const ilvl = (isRune || isMiscItem) ? 1 : Math.max(1, Math.min(99, ilvlRaw));
 
   // ── Inventory/stash collision check ──
   if (ctx.mode === 'inventory' || ctx.mode === 'stash') {
@@ -9582,8 +9789,12 @@ window.confirmInsertItem = function() {
   //   - Regular socketable items: user picks 0..maxSock via the input.
   // Encoder deliberately doesn't write stat 194 for func 14 (see propCodeToStatEntries)
   // so the ONLY socket count in the binary is this num_sockets field.
+  // Clamp to [0, maxSock] so a stale value from a prior modal open (or devtools
+  // manipulation) can't produce an oversized socket count that the game rejects.
   const sockInput = document.getElementById('modalSockets');
-  const socks = sockInput ? (parseInt(sockInput.value, 10) || 0) : 0;
+  const sockMax   = MAX_SOCKETS_BY_CODE[typeCode] || 0;
+  const sockRaw   = sockInput ? (parseInt(sockInput.value, 10) || 0) : 0;
+  const socks     = Math.max(0, Math.min(sockMax, sockRaw));
   if (socks > 0) { newItem.numSockets = socks; newItem.socketed = true; }
 
   // Max values checkbox from modal
@@ -10536,6 +10747,10 @@ function findSocketedChildren(sourceBuf, sourceItems, parentItem) {
 window.executeGrailTransfer = function(removeOriginals) {
   const eligible = window._grailTransferList;
   if (!eligible || !eligible.length) return;
+  // Clear the list IMMEDIATELY — a second click (double-click, keyboard repeat)
+  // or a throw mid-transfer could otherwise retrigger this with stale state and
+  // duplicate items into grail or re-delete already-removed items from the save.
+  window._grailTransferList = null;
 
   // Collect all item binaries to add in one batch
   const allEntries = [];
@@ -10591,7 +10806,6 @@ window.executeGrailTransfer = function(removeOriginals) {
 
   if (removeOriginals) markDirty();
 
-  window._grailTransferList = null;
   renderGrail(document.getElementById('tabContent'));
   showPopup(
     (removeOriginals ? L('ui_grail_items_moved','{n} item(s) moved to grail.') : L('ui_grail_items_copied','{n} item(s) copied to grail.'))
@@ -11504,6 +11718,1155 @@ window.applyMerc = function() {
   const exp = el ? (parseInt(el.value||'0',10)||0) : (parsedChar.header.mercExp || 0);
   commitMercExp(exp);
 };
+
+// ═══════════════════════════════════════════════════════════
+//  VAULT — Global 100-page item bank (see doc/VAULT.md for format spec)
+// ═══════════════════════════════════════════════════════════
+
+const VAULT_PAGE_TYPE  = 99;
+const VAULT_GRID_W     = 16;
+const VAULT_GRID_H     = 13;
+const VAULT_PAGE_COUNT = 100;
+const VAULT_FORMAT_TAG = 'VLT1';  // ASCII at offset 0x40 when present
+
+let vaultD2i        = null;     // raw Uint8Array (when loaded from disk)
+let vaultFileName   = null;     // for the save-download filename
+let vaultItems      = [];       // decoded items (same shape as stash items)
+let vaultPageNames  = {};       // { [pageId:number]: displayName:string }
+let vaultActivePage = 0;        // 0..99
+let vaultDirty      = false;    // set on any move/rename/delete
+
+function vaultPageLabel(pageId) {
+  const custom = vaultPageNames[pageId];
+  if (custom && custom.length) return custom;
+  return `Page ${pageId + 1}`;
+}
+
+// ── Encoder ─────────────────────────────────────────────────
+// Builds a complete Vault.d2i byte array from the in-memory state.
+function encodeVault(items, pageNames) {
+  // 1. JM block: "JM" [u16 count] [items bytes...]
+  //    Items already carry their per-item byte payload when loaded; for freshly
+  //    inserted (virtual) items we would serialise via the existing extended-item
+  //    encoder. Phase 1 only round-trips previously-decoded items so we just
+  //    splice their raw bytes back together.
+  const itemBytes = [];
+  let itemBytesTotal = 0;
+  for (const it of items) {
+    if (!it._vaultRawBytes) continue;  // skip any item without a captured byte range
+    itemBytes.push(it._vaultRawBytes);
+    itemBytesTotal += it._vaultRawBytes.length;
+  }
+
+  // Matching per-item pageIds (parallel array, written in same order as items)
+  const itemPageIds = [];
+  for (const it of items) {
+    if (!it._vaultRawBytes) continue;  // mirror the filter above
+    const pid = Math.max(0, Math.min(VAULT_PAGE_COUNT - 1, (it.pageId | 0)));
+    itemPageIds.push(pid);
+  }
+
+  // 2. Compute metadata block size
+  const nameEntries = Object.entries(pageNames)
+    .filter(([, n]) => typeof n === 'string' && n.length)
+    .map(([pageId, name]) => ({
+      pageId: parseInt(pageId, 10) & 0xFF,
+      bytes:  new TextEncoder().encode(name),
+    }));
+  const metaSize = 4 /* "VLT1" */ + 2 /* gridW */ + 2 /* gridH */ + 2 /* pageCount */ + 2 /* nameCount */
+                 + nameEntries.reduce((s, e) => s + 1 + 2 + e.bytes.length, 0)
+                 + 2 /* itemPageIdCount */ + itemPageIds.length;
+
+  // 3. Total file size
+  const jmSize    = 2 /* "JM" */ + 2 /* count */ + itemBytesTotal;
+  const totalSize = 0x40 + metaSize + jmSize;
+
+  // 4. Allocate + fill
+  const buf = new Uint8Array(totalSize);
+  // d2i header
+  buf[0] = 0x55; buf[1] = 0xAA; buf[2] = 0x55; buf[3] = 0xAA;
+  writeU32LE(buf, 4, 1);      // count (one JM block)
+  writeU32LE(buf, 8, 105);    // version
+  // Checksum at 12..15 filled last
+  writeU32LE(buf, 16, totalSize);
+  // 0x14..0x3F already zero
+
+  // VLT1 metadata
+  let pos = 0x40;
+  buf[pos++] = 0x56; buf[pos++] = 0x4C; buf[pos++] = 0x54; buf[pos++] = 0x31;  // "VLT1"
+  buf[pos++] = VAULT_GRID_W & 0xFF;     buf[pos++] = (VAULT_GRID_W >> 8) & 0xFF;
+  buf[pos++] = VAULT_GRID_H & 0xFF;     buf[pos++] = (VAULT_GRID_H >> 8) & 0xFF;
+  buf[pos++] = VAULT_PAGE_COUNT & 0xFF; buf[pos++] = (VAULT_PAGE_COUNT >> 8) & 0xFF;
+  buf[pos++] = nameEntries.length & 0xFF; buf[pos++] = (nameEntries.length >> 8) & 0xFF;
+  for (const e of nameEntries) {
+    buf[pos++] = e.pageId;
+    buf[pos++] = e.bytes.length & 0xFF; buf[pos++] = (e.bytes.length >> 8) & 0xFF;
+    buf.set(e.bytes, pos); pos += e.bytes.length;
+  }
+
+  // Per-item pageId array
+  buf[pos++] = itemPageIds.length & 0xFF;
+  buf[pos++] = (itemPageIds.length >> 8) & 0xFF;
+  for (const pid of itemPageIds) buf[pos++] = pid;
+
+  // JM block
+  buf[pos++] = 0x4A; buf[pos++] = 0x4D;  // "JM"
+  const itemCount = itemBytes.length;
+  buf[pos++] = itemCount & 0xFF; buf[pos++] = (itemCount >> 8) & 0xFF;
+  for (const b of itemBytes) { buf.set(b, pos); pos += b.length; }
+
+  // Checksum (covers whole file with checksum bytes zeroed)
+  recalcChecksum(buf);
+  return buf;
+}
+
+// ── Decoder ─────────────────────────────────────────────────
+// Parses a loaded Vault.d2i byte array, returning { items, pageNames, jmOffset }.
+// If the VLT1 magic is absent at 0x40, treats the file as a plain .d2i (no names).
+function decodeVaultHeader(buf) {
+  if (!hasValidSaveMagic(buf) || buf.length < 0x44) {
+    throw new Error('Not a valid .d2i file (missing 0x55AA55AA magic)');
+  }
+
+  const hasVlt1 = buf[0x40] === 0x56 && buf[0x41] === 0x4C
+               && buf[0x42] === 0x54 && buf[0x43] === 0x31;
+
+  if (!hasVlt1) {
+    // Legacy / plain .d2i — JM expected right at 0x40; items default to pageId=0
+    return { pageNames: {}, gridW: VAULT_GRID_W, gridH: VAULT_GRID_H, jmOffset: 0x40, itemPageIds: [] };
+  }
+
+  let pos = 0x44;
+  const gridW     = buf[pos] | (buf[pos+1] << 8); pos += 2;
+  const gridH     = buf[pos] | (buf[pos+1] << 8); pos += 2;
+  /*pageCount*/    pos += 2;
+  const nameCount = buf[pos] | (buf[pos+1] << 8); pos += 2;
+
+  const pageNames = {};
+  for (let i = 0; i < nameCount; i++) {
+    if (pos + 3 > buf.length) throw new Error('Truncated vault name entry at ' + pos);
+    const pageId  = buf[pos]; pos += 1;
+    const nameLen = buf[pos] | (buf[pos+1] << 8); pos += 2;
+    if (pos + nameLen > buf.length) throw new Error('Truncated vault name payload at ' + pos);
+    pageNames[pageId] = new TextDecoder().decode(buf.subarray(pos, pos + nameLen));
+    pos += nameLen;
+  }
+
+  // Per-item pageId array
+  if (pos + 2 > buf.length) throw new Error('Truncated vault itemPageIdCount at ' + pos);
+  const itemPageIdCount = buf[pos] | (buf[pos+1] << 8); pos += 2;
+  if (pos + itemPageIdCount > buf.length) throw new Error('Truncated vault itemPageIds at ' + pos);
+  const itemPageIds = Array.from(buf.subarray(pos, pos + itemPageIdCount));
+  pos += itemPageIdCount;
+
+  return { pageNames, gridW, gridH, jmOffset: pos, itemPageIds };
+}
+
+// ── Load / Save ─────────────────────────────────────────────
+// Loads items from the JM block starting at jmOffset. Reuses the grail-style
+// scanner so we don't duplicate all the bit-decode plumbing. Phase 1 keeps a
+// copy of each item's raw bytes in _vaultRawBytes for lossless round-trip.
+function parseVaultItems(buf, jmOffset, itemPageIds) {
+  // JM block: "JM" [u16 count] [items...]
+  if (buf[jmOffset] !== 0x4A || buf[jmOffset+1] !== 0x4D) {
+    throw new Error('JM marker missing at offset 0x' + jmOffset.toString(16));
+  }
+  const count = buf[jmOffset+2] | (buf[jmOffset+3] << 8);
+  const itemsStart = jmOffset + 4;
+  // Scan for item-start bit patterns (same heuristic as parseGrailD2i).
+  const rb = (off, bitStart, n) => {
+    let val = 0;
+    for (let i = 0; i < n; i++) {
+      const p = off * 8 + bitStart + i;
+      val |= ((buf[p >> 3] >> (p & 7)) & 1) << i;
+    }
+    return val;
+  };
+  const huffDecode = (off, bitPos) => {
+    let node = D2R_HUFFMAN;
+    while (Array.isArray(node)) {
+      const p = off * 8 + bitPos;
+      node = node[(buf[p >> 3] >> (p & 7)) & 1];
+      bitPos++;
+    }
+    return [node, bitPos];
+  };
+  const huffDecodeType = (off) => {
+    let bit = 53, c = '';
+    for (let i = 0; i < 4; i++) {
+      const [ch, next] = huffDecode(off, bit);
+      if (i < 3) c += (ch || '?');
+      bit = next;
+    }
+    return [c, bit];
+  };
+
+  const found = [];
+  for (let i = 0; i < buf.length - itemsStart - 4; i++) {
+    const off = itemsStart + i;
+    if ((buf[off] & 0xE0) !== 0 || !(buf[off + 2] & 0x80) || (buf[off + 4] & 0x05) !== 0x05) continue;
+    try {
+      const [typeCode] = huffDecodeType(off);
+      if (!typeCode || !typeCode.match(/^[a-zA-Z0-9]{2,3}$/) || !itemNameByCode[typeCode]) continue;
+      found.push({
+        byteOffset: off,
+        identified: rb(off, 4, 1),
+        socketed:   rb(off, 11, 1),
+        simple:     rb(off, 21, 1),
+        ethereal:   rb(off, 22, 1),
+        personalized: rb(off, 24, 1),
+        runeword:   rb(off, 26, 1),
+        parent:     rb(off, 35, 3),
+        equipSlot:  rb(off, 38, 4),
+        x:          rb(off, 42, 4),
+        y:          rb(off, 46, 4),
+        storage:    rb(off, 50, 3),
+        typeCode,
+        location:   rb(off, 35, 3),
+        numSockets: 0,
+        itemLevel:  0,
+        quality:    0,
+        isVault:    true,
+        _propsDecoded: false,
+      });
+    } catch (_) {
+      // False-positive byte patterns throw; expected, same as grail/shared stash scan.
+    }
+  }
+
+  // Attach raw bytes per item so we can round-trip without a full re-encoder.
+  // Byte range = from this item's offset to the next one (or end of file).
+  // Also pair each item with its vault pageId from the parallel array.
+  found.sort((a, b) => a.byteOffset - b.byteOffset);
+  const pageIds = Array.isArray(itemPageIds) ? itemPageIds : [];
+  const pageIdsMatch = pageIds.length === found.length;
+  for (let i = 0; i < found.length; i++) {
+    const start = found[i].byteOffset;
+    const end   = (i + 1 < found.length) ? found[i+1].byteOffset : buf.length;
+    found[i]._vaultRawBytes = buf.slice(start, end);
+    found[i].pageId = pageIdsMatch ? (pageIds[i] | 0) : 0;
+  }
+  if (found.length !== count) {
+    console.warn(`Vault item count mismatch: header says ${count}, scanner found ${found.length}`);
+  }
+  if (pageIds.length && !pageIdsMatch) {
+    console.warn(`Vault pageId array length (${pageIds.length}) != item count (${found.length}); defaulting to page 0`);
+  }
+  return found;
+}
+
+window.loadVaultFile = function(file) {
+  if (!file) return;
+  const sizeErr = validateSaveFileSize(file);
+  if (sizeErr) { showPopup(sizeErr); return; }
+  const reader = new FileReader();
+  reader.onload = function(ev) {
+    try {
+      const buf = new Uint8Array(ev.target.result);
+      if (!hasValidSaveMagic(buf)) {
+        showPopup(L('ui_invalid_d2i','Invalid .d2i file — expected 0x55AA55AA signature.'));
+        return;
+      }
+      const hdr = decodeVaultHeader(buf);
+      const items = parseVaultItems(buf, hdr.jmOffset, hdr.itemPageIds);
+      vaultD2i       = buf;
+      vaultFileName  = file.name;
+      vaultItems     = items;
+      vaultPageNames = hdr.pageNames;
+      vaultDirty     = false;
+      vaultActivePage = 0;
+      if (activeTab === 'vault') renderVault(document.getElementById('tabContent'));
+    } catch (err) {
+      showPopup('Vault load failed: ' + (err.message || err));
+    }
+  };
+  reader.readAsArrayBuffer(file);
+};
+
+window.saveVaultFile = function() {
+  try {
+    const out = encodeVault(vaultItems, vaultPageNames);
+    const blob = new Blob([out], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = vaultFileName || 'Vault.d2i';
+    a.click();
+    URL.revokeObjectURL(url);
+    vaultD2i   = out;
+    vaultDirty = false;
+    if (activeTab === 'vault') renderVault(document.getElementById('tabContent'));
+  } catch (err) {
+    showPopup('Vault save failed: ' + (err.message || err));
+  }
+};
+
+// ── Vault item lookup + tooltip ─────────────────────────────
+function findVaultItem(byteOffset) {
+  return vaultItems.find(it => it.byteOffset === byteOffset) || null;
+}
+
+window.showVaultItemDetail = function(byteOffsets, triggerEl, fromHover) {
+  if (!byteOffsets || !byteOffsets.length) return;
+  if (fromHover && _tooltipPinned) return;
+  const tt = document.getElementById('itemTooltip');
+  const content = document.getElementById('itemTooltipContent');
+  if (!tt || !content) return;
+  const item = findVaultItem(byteOffsets[0]);
+  if (!item) return;
+  ensureItemProps(item);
+  // Vault → Char actions. Vault → Shared Stash is never offered (one-way rule).
+  const charLoaded = !!(parsedChar && parsedChar.items);
+  let actionButtons = '';
+  if (charLoaded) {
+    actionButtons += `<button type="button" class="btn" style="font-size:11px;padding:4px 12px;background:#0e2a0e;border-color:var(--d2-green);color:#fff"
+      onclick="event.stopPropagation();moveVaultItemToSource(${byteOffsets[0]}, 'inventory')">${esc(L('ui_vault_btn_move_to_inv','Move to Inventory'))}</button>`;
+    actionButtons += `<button type="button" class="btn" style="font-size:11px;padding:4px 12px;background:#0e2a0e;border-color:var(--d2-green);color:#fff"
+      onclick="event.stopPropagation();moveVaultItemToSource(${byteOffsets[0]}, 'stash')">${esc(L('ui_vault_btn_move_to_stash','Move to Stash'))}</button>`;
+  }
+  actionButtons += `<button type="button" class="btn" style="font-size:11px;padding:4px 12px;background:#8b2020;color:#fff"
+    onclick="event.stopPropagation();deleteVaultItem(${byteOffsets[0]})">${esc(L('ui_vault_btn_delete','Delete'))}</button>`;
+  content.innerHTML = buildItemTooltipHtml(item, { actionButtons });
+  positionTooltip(tt, triggerEl || null);
+  _tooltipOpenFrom = byteOffsets[0];
+};
+
+// ── Grid builder (one page at a time) ───────────────────────
+// Places every item that lives on `pageId` into the 16×13 grid at its stored
+// (x, y). Unlike the grail renderer this doesn't auto-pack — vault items have
+// a real position on their page.
+function buildVaultPageGrid(pageId, cellPx) {
+  const gridW = VAULT_GRID_W, gridH = VAULT_GRID_H;
+  const onPage = vaultItems.filter(it => it.pageId === pageId);
+
+  // Lazy-decode so tooltips render the right name/quality/mods.
+  for (const it of onPage) { try { ensureItemProps(it); } catch(_) {} }
+
+  const cellMap = new Map();         // "x,y" -> item (only the item's top-left cell)
+  const cellOccupied = new Set();    // all cells occupied by any item (for empty-cell check)
+  const overlaps = [];               // items that couldn't be placed without collision
+  for (const it of onPage) {
+    const { w, h } = getItemSize(it.typeCode);
+    const x = Math.max(0, Math.min(gridW - w, it.x | 0));
+    const y = Math.max(0, Math.min(gridH - h, it.y | 0));
+
+    // Collision check against already-placed items
+    let collides = false;
+    for (let dy = 0; dy < h && !collides; dy++)
+      for (let dx = 0; dx < w && !collides; dx++)
+        if (cellOccupied.has(`${x + dx},${y + dy}`)) collides = true;
+
+    if (collides) { overlaps.push(it); continue; }
+
+    cellMap.set(`${x},${y}`, { item: it, x, y, w, h });
+    for (let dy = 0; dy < h; dy++)
+      for (let dx = 0; dx < w; dx++)
+        cellOccupied.add(`${x + dx},${y + dy}`);
+  }
+
+  // width:max-content keeps the grid from stretching when its parent (the vault
+  // panel) is sized by the nav row above — otherwise the grid's dark background
+  // paints the extra space to the right of the cells.
+  // Drop zone: ondragover + ondrop on the wrapper catches any drop inside the
+  // grid and lets the drop handler compute the target cell from the coordinates.
+  let html = `<div class="inv-grid-wrap"
+    ondragover="vaultDragOver(event)"
+    ondrop="vaultDropOnVault(event)"
+    style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${gridH},${cellPx}px);gap:1px;background:rgba(60,46,22,0.4);border:1px solid rgba(60,46,22,0.5);padding:0;position:relative;width:max-content">`;
+  const rendered = new Set();
+  for (let row = 0; row < gridH; row++) {
+    for (let col = 0; col < gridW; col++) {
+      const key = `${col},${row}`;
+      if (rendered.has(key)) continue;
+      const entry = cellMap.get(key);
+      if (entry) {
+        for (let dy = 0; dy < entry.h; dy++)
+          for (let dx = 0; dx < entry.w; dx++)
+            rendered.add(`${col + dx},${row + dy}`);
+        const { name, cls } = itemDisplayName(entry.item);
+        const borderCls = itemQualityCls(entry.item);
+        const displayName = abbreviateItemName(name, entry.w, entry.h);
+        html += `<div class="inv-item ${borderCls}"
+          draggable="true"
+          ondragstart="vaultDragStart(event, ${entry.item.byteOffset}, 'vault', ${entry.w}, ${entry.h})"
+          ondragend="vaultDragEnd()"
+          style="grid-column:${col + 1}/span ${entry.w};grid-row:${row + 1}/span ${entry.h};position:relative;cursor:grab"
+          onclick="showVaultItemDetail([${entry.item.byteOffset}],this);pinTooltip()"
+          onmouseenter="showVaultItemDetail([${entry.item.byteOffset}],this,true)"
+          onmouseleave="closeTooltip(false)"
+          title="${esc(name)}">
+          <div class="inv-item-name ${cls}">${esc(displayName)}</div>
+        </div>`;
+      } else if (!cellOccupied.has(key)) {
+        html += `<div class="inv-cell-empty"></div>`;
+      }
+    }
+  }
+  html += `</div>`;
+  return { html, itemsOnPage: onPage.length, overlaps };
+}
+
+// ── Source panel state ──────────────────────────────────────
+// Phase 3 adds a read-only left-pane that mirrors the active character's
+// inventory / personal stash / shared stash. Phase 4 will wire click+move
+// between the source and the vault.
+let vaultSource = {
+  kind:      'inventory',   // 'inventory' | 'stash' | 'sharedStash'
+  sharedTab: '',            // virtual-tab id when kind='sharedStash' (set on first render)
+};
+
+// Get the items + grid dims for whichever source is currently selected. Returns
+// null when the source isn't available (e.g. shared stash not loaded).
+function getVaultSourceView() {
+  if (vaultSource.kind === 'inventory') {
+    if (!parsedChar || !parsedChar.items) return null;
+    const { inventory } = getItemsByLocation();
+    const dims = getInventoryDimensions(parsedChar.header.cls);
+    return { items: inventory, gridW: dims.invW, gridH: dims.invH, domain: 'char' };
+  }
+  if (vaultSource.kind === 'stash') {
+    if (!parsedChar || !parsedChar.items) return null;
+    const { personalStash } = getItemsByLocation();
+    const dims = getInventoryDimensions(parsedChar.header.cls);
+    return { items: personalStash, gridW: dims.stashW, gridH: dims.stashH, domain: 'char' };
+  }
+  if (vaultSource.kind === 'sharedStash') {
+    if (!sharedStashParsed) return null;
+    // Build the same virtual-tab layout renderSharedStashTabs does.
+    const vtabs = [];
+    let regularIdx = 0;
+    for (let t = 0; t < sharedStashParsed.tabs.length; t++) {
+      const tab = sharedStashParsed.tabs[t];
+      if (tab.pageType === 1) {
+        const gems = [], runes = [], mats = [];
+        for (const it of tab.items) {
+          const cat = _specialtyCategory(it.typeCode);
+          if (cat === 'gems') gems.push(it);
+          else if (cat === 'runes') runes.push(it);
+          else mats.push(it);
+        }
+        vtabs.push({ id: 's'+t+'_gems',  label: L('ui_ss_cat_gems','Gems'),           items: gems });
+        vtabs.push({ id: 's'+t+'_runes', label: L('ui_ss_cat_runes','Runes'),         items: runes });
+        vtabs.push({ id: 's'+t+'_mats',  label: L('ui_ss_cat_materials','Materials'), items: mats });
+      } else {
+        regularIdx++;
+        vtabs.push({ id: 't'+t, label: `${L('ui_ss_tab_prefix','Tab')} ${regularIdx}`, items: tab.items });
+      }
+    }
+    if (!vtabs.length) return null;
+    if (!vaultSource.sharedTab || !vtabs.find(v => v.id === vaultSource.sharedTab)) {
+      vaultSource.sharedTab = vtabs[0].id;
+    }
+    const active = vtabs.find(v => v.id === vaultSource.sharedTab) || vtabs[0];
+    return { items: active.items, gridW: 16, gridH: 13, domain: 'shared', vtabs, activeVtabId: active.id };
+  }
+  return null;
+}
+
+// Look up a source item by its byteOffset across the possible sources, so the
+// tooltip can find an item regardless of which source the user is currently viewing.
+function findVaultSourceItem(byteOffset) {
+  if (parsedChar && parsedChar.items) {
+    const it = parsedChar.items.find(x => x.byteOffset === byteOffset);
+    if (it) return { item: it, isShared: false };
+  }
+  if (sharedStashParsed) {
+    for (const tab of sharedStashParsed.tabs) {
+      const it = tab.items.find(x => x.byteOffset === byteOffset);
+      if (it) return { item: it, isShared: true };
+    }
+  }
+  return null;
+}
+
+window.showVaultSourceItemDetail = function(byteOffset, triggerEl, fromHover) {
+  if (fromHover && _tooltipPinned) return;
+  const tt = document.getElementById('itemTooltip');
+  const content = document.getElementById('itemTooltipContent');
+  if (!tt || !content) return;
+  const found = findVaultSourceItem(byteOffset);
+  if (!found) return;
+  ensureItemProps(found.item);
+  // Button label reflects the semantics: MOVE from character, COPY from shared stash
+  // (shared stash has no edit infrastructure yet).
+  const label = found.isShared
+    ? L('ui_vault_btn_copy_to_vault','Copy to Vault')
+    : L('ui_vault_btn_move_to_vault','Move to Vault');
+  const actionButtons = `<button type="button" class="btn" style="font-size:11px;padding:4px 12px;background:#0e2a0e;border-color:var(--d2-green);color:#fff"
+    onclick="event.stopPropagation();moveSourceItemToVault(${byteOffset})">${esc(label)}</button>`;
+  content.innerHTML = buildItemTooltipHtml(found.item, { actionButtons });
+  positionTooltip(tt, triggerEl || null);
+  _tooltipOpenFrom = byteOffset;
+};
+
+// Read-only grid for the source panel. Reuses the same cell+styling conventions
+// as renderSharedStash / buildInvGrid so it visually matches the other tabs.
+function buildVaultSourceGrid(items, gridW, gridH, cellPx, sourceKind) {
+  // sourceKind ∈ 'inventory' | 'stash' | 'sharedStash'. Determines the drag
+  // origin label and whether this grid is a drop target for vault items.
+  const dragOrigin    = (sourceKind === 'sharedStash') ? 'shared' : 'char';
+  const acceptsDrops  = (sourceKind === 'inventory' || sourceKind === 'stash');
+  const dropAttrs     = acceptsDrops
+    ? `ondragover="vaultDragOver(event)" ondrop="vaultDropOnSource(event, '${sourceKind}')"`
+    : '';
+  // Filter: only stored, non-socketed, non-equipped items visible on this view.
+  const visible = items.filter(it => {
+    const parent = it.parent ?? it.location ?? 0;
+    if (parent === 6) return false;   // socketed child — belongs to parent
+    return true;
+  });
+  for (const it of visible) { try { ensureItemProps(it); } catch(_) {} }
+
+  // Group by position (same stacking logic shared stash uses).
+  const stacks = new Map();
+  for (const it of visible) {
+    const { w, h } = getItemSize(it.typeCode);
+    if (it.x < 0 || it.x + w > gridW || it.y < 0 || it.y + h > gridH) continue;
+    const key = `${it.x},${it.y}`;
+    if (!stacks.has(key)) stacks.set(key, []);
+    stacks.get(key).push({ item: it, w, h });
+  }
+
+  const occupied = new Set();
+  for (const [key, stack] of stacks) {
+    const { w, h } = stack[0];
+    const [x, y] = key.split(',').map(Number);
+    for (let dy = 0; dy < h; dy++)
+      for (let dx = 0; dx < w; dx++)
+        occupied.add(`${x + dx},${y + dy}`);
+  }
+
+  let html = `<div class="inv-grid-wrap" ${dropAttrs} style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${gridH},${cellPx}px);gap:1px;background:rgba(60,46,22,0.4);border:1px solid rgba(60,46,22,0.5);padding:0;position:relative;width:max-content">`;
+  const rendered = new Set();
+  for (let row = 0; row < gridH; row++) {
+    for (let col = 0; col < gridW; col++) {
+      const key = `${col},${row}`;
+      if (rendered.has(key)) continue;
+      const stack = stacks.get(key);
+      if (stack) {
+        const { w, h } = stack[0];
+        const topItem = stack[0].item;
+        const { name, cls } = itemDisplayName(topItem);
+        for (let dy = 0; dy < h; dy++)
+          for (let dx = 0; dx < w; dx++)
+            rendered.add(`${col + dx},${row + dy}`);
+        const borderCls = itemQualityCls(topItem);
+        const displayName = abbreviateItemName(name, w, h);
+        const countBadge = stack.length > 1
+          ? `<div style="position:absolute;top:1px;right:2px;font-size:8px;color:var(--d2-gold);font-family:'Cinzel',serif">x${stack.length}</div>`
+          : '';
+        html += `<div class="inv-item ${borderCls}"
+          draggable="true"
+          ondragstart="vaultDragStart(event, ${topItem.byteOffset}, '${dragOrigin}', ${w}, ${h})"
+          ondragend="vaultDragEnd()"
+          style="grid-column:${col + 1}/span ${w};grid-row:${row + 1}/span ${h};position:relative;cursor:grab"
+          onclick="showVaultSourceItemDetail(${topItem.byteOffset},this);pinTooltip()"
+          onmouseenter="showVaultSourceItemDetail(${topItem.byteOffset},this,true)"
+          onmouseleave="closeTooltip(false)"
+          title="${esc(name)}">
+          ${countBadge}
+          <div class="inv-item-name ${cls}">${esc(displayName)}</div>
+        </div>`;
+      } else if (!occupied.has(key)) {
+        html += `<div class="inv-cell-empty"></div>`;
+      }
+    }
+  }
+  html += `</div>`;
+  return html;
+}
+
+window.vaultSelectSource = function(kind) {
+  vaultSource.kind = kind;
+  renderVault(document.getElementById('tabContent'));
+};
+
+window.vaultSelectSharedTab = function(vtabId) {
+  vaultSource.sharedTab = vtabId;
+  renderVault(document.getElementById('tabContent'));
+};
+
+// ── Drag & drop between panels ──────────────────────────────
+// Dragging an item starts a session: byteOffset + origin kind + w/h are captured
+// on the drag source; drop handlers read that state and dispatch to the right
+// move function. One-way rule: vault → shared stash is never accepted.
+let _vaultDragState = null;   // { byteOffset, origin: 'vault'|'char'|'shared', w, h, sharedCopy: bool }
+
+// Cell step used for coordinate → (col, row) conversion. Must match cellPx + gap
+// used in buildVaultPageGrid / buildVaultSourceGrid. Kept as a single constant so
+// the grid CSS and the drop math never drift apart.
+const VAULT_CELL_PX   = 29;
+const VAULT_CELL_GAP  = 1;
+const VAULT_CELL_STEP = VAULT_CELL_PX + VAULT_CELL_GAP;
+
+window.vaultDragStart = function(ev, byteOffset, origin, w, h) {
+  _vaultDragState = { byteOffset, origin, w, h, sharedCopy: origin === 'shared' };
+  // effectAllowed signals the browser which ops are valid. 'move' turns the
+  // cursor into the move variant; we still treat shared-stash drops as COPY
+  // semantically even though the hint is 'move'.
+  if (ev.dataTransfer) {
+    ev.dataTransfer.effectAllowed = 'move';
+    try { ev.dataTransfer.setData('text/plain', String(byteOffset)); } catch (_) {}
+  }
+};
+
+window.vaultDragEnd = function() { _vaultDragState = null; };
+
+// dragover on a drop zone must call preventDefault to allow the subsequent drop.
+window.vaultDragOver = function(ev) {
+  if (!_vaultDragState) return;
+  ev.preventDefault();
+  if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+};
+
+// Compute the (col, row) on a grid wrapper for a given drop event. Returns null
+// if the drop lands outside the grid tracks (e.g. in the border).
+function _vaultDropCell(ev, gridEl) {
+  const rect = gridEl.getBoundingClientRect();
+  // The wrapper has a 1px border; subtract it before dividing into tracks.
+  const ox = ev.clientX - rect.left - 1;
+  const oy = ev.clientY - rect.top  - 1;
+  if (ox < 0 || oy < 0) return null;
+  const col = Math.floor(ox / VAULT_CELL_STEP);
+  const row = Math.floor(oy / VAULT_CELL_STEP);
+  return { col, row };
+}
+
+// Drop target: the vault grid. Accepts anything in _vaultDragState except a
+// vault-origin drag (intra-vault rearrange isn't in scope for this phase).
+window.vaultDropOnVault = function(ev) {
+  if (!_vaultDragState) return;
+  ev.preventDefault();
+  const state = _vaultDragState;
+  _vaultDragState = null;
+  if (state.origin === 'vault') {
+    // Intra-vault rearrange is not implemented here. Silently ignore.
+    return;
+  }
+  const cell = _vaultDropCell(ev, ev.currentTarget);
+  if (!cell) return;
+  moveSourceItemToVault(state.byteOffset, { pageId: vaultActivePage, x: cell.col, y: cell.row });
+};
+
+// Drop target: one of the source grids (inventory or character stash). Only
+// accepts vault-origin drags. Shared stash has no drop handler (one-way rule).
+window.vaultDropOnSource = function(ev, destKind) {
+  if (!_vaultDragState) return;
+  ev.preventDefault();
+  const state = _vaultDragState;
+  _vaultDragState = null;
+  if (state.origin !== 'vault') return;     // only vault → source drops
+  if (destKind !== 'inventory' && destKind !== 'stash') return;
+  const cell = _vaultDropCell(ev, ev.currentTarget);
+  if (!cell) return;
+  moveVaultItemToSource(state.byteOffset, destKind, { x: cell.col, y: cell.row });
+};
+
+// ── Move semantics ──────────────────────────────────────────
+// Character items  → Vault : MOVE  (item removed from char, gained by vault)
+// Shared-stash      → Vault : COPY  (shared stash has no edit infra yet; item
+//                                     stays in shared stash, vault gets a clone)
+// Vault → Inventory / Stash: MOVE  (item removed from vault, gained by char)
+// Vault → Shared Stash     : ✗ forbidden (never offered in UI)
+
+// Write bit `v` at bit offset `p` in a mutable buffer.
+function _vaultWriteBit(buf, p, v) {
+  if (v) buf[p >> 3] |= (1 << (p & 7));
+  else   buf[p >> 3] &= ~(1 << (p & 7));
+}
+
+// Patch an item's binary to set its on-grid position + parent/storage.
+// Leaves every other bit untouched. Returns a new Uint8Array (original preserved).
+function _patchItemPosition(srcBytes, x, y, storage, parent) {
+  const out = new Uint8Array(srcBytes);
+  for (let i = 0; i < 3; i++) _vaultWriteBit(out, 35 + i, (parent  >> i) & 1);  // parent
+  for (let i = 0; i < 4; i++) _vaultWriteBit(out, 42 + i, (x       >> i) & 1);  // x
+  for (let i = 0; i < 4; i++) _vaultWriteBit(out, 46 + i, (y       >> i) & 1);  // y
+  for (let i = 0; i < 3; i++) _vaultWriteBit(out, 50 + i, (storage >> i) & 1);  // storage
+  return out;
+}
+
+// Returns the set of cells occupied on a given vault page. Used for pack + collision checks.
+function _vaultPageOccupancy(pageId) {
+  const occ = new Set();
+  for (const it of vaultItems) {
+    if (it.pageId !== pageId) continue;
+    const { w, h } = getItemSize(it.typeCode);
+    for (let dy = 0; dy < h; dy++)
+      for (let dx = 0; dx < w; dx++)
+        occ.add(`${it.x + dx},${it.y + dy}`);
+  }
+  return occ;
+}
+
+// Try to place a w×h item starting from the active page and spilling onto later
+// pages. Returns {pageId, x, y} or null if no room anywhere.
+function _vaultFindPlacement(w, h) {
+  for (let pg = vaultActivePage; pg < VAULT_PAGE_COUNT; pg++) {
+    const occ = _vaultPageOccupancy(pg);
+    const pos = packItemIntoGrid(occ, VAULT_GRID_W, VAULT_GRID_H, w, h);
+    if (pos) return { pageId: pg, x: pos.x, y: pos.y };
+  }
+  // Wrap to earlier pages if active page is mid-vault
+  for (let pg = 0; pg < vaultActivePage; pg++) {
+    const occ = _vaultPageOccupancy(pg);
+    const pos = packItemIntoGrid(occ, VAULT_GRID_W, VAULT_GRID_H, w, h);
+    if (pos) return { pageId: pg, x: pos.x, y: pos.y };
+  }
+  return null;
+}
+
+// Resolve an item by byteOffset across both possible sources + return the bits
+// we need to extract its bytes and (optionally) delete it.
+function _resolveSourceForMove(byteOffset) {
+  if (parsedChar && parsedChar.items) {
+    const it = parsedChar.items.find(x => x.byteOffset === byteOffset);
+    if (it) {
+      const jmOff = parsedChar.itemsOffset;
+      let sectionEnd = 0;
+      if (jmOff >= 0) {
+        for (let i = jmOff + 4; i < workBytes.length - 1; i++) {
+          if (workBytes[i] === 0x4a && workBytes[i + 1] === 0x4d) { sectionEnd = i; break; }
+        }
+      }
+      // lengthItems (for getItemBinaryLength) must include pending-delete offsets so
+      // out-of-byte-order batch moves don't skip over a deleted neighbour's byte range.
+      const lengthItems = [
+        ...parsedChar.items,
+        ...Array.from(_deletedItemOffsets).map(off => ({ byteOffset: off })),
+      ];
+      return { kind: 'char', item: it, buf: workBytes, items: parsedChar.items, lengthItems, sectionEnd };
+    }
+  }
+  if (sharedStashParsed) {
+    for (const tab of sharedStashParsed.tabs) {
+      const it = tab.items.find(x => x.byteOffset === byteOffset);
+      if (it) {
+        const allItems = sharedStashParsed.tabs.flatMap(t => t.items);
+        return { kind: 'shared', item: it, buf: sharedStashData, items: allItems, lengthItems: allItems, sectionEnd: 0, owningTab: tab };
+      }
+    }
+  }
+  return null;
+}
+
+// Main entry: called from the source tooltip "Move/Copy to Vault" button or
+// from a drag-and-drop. Optional `explicit` placement = {pageId, x, y} overrides
+// the auto-pack. Auto-pack is used by the tooltip button.
+window.moveSourceItemToVault = function(byteOffset, explicit) {
+  const resolved = _resolveSourceForMove(byteOffset);
+  if (!resolved) { showPopup('Source item not found.'); return; }
+  const { kind, item, buf, items, lengthItems, sectionEnd } = resolved;
+  ensureItemProps(item);
+
+  // Cascade children (socketed gems/runes/jewels go with the parent).
+  const children = findSocketedChildren(buf, items, item);
+
+  // Extract raw bytes + compute placement for the parent.
+  const { w, h } = getItemSize(item.typeCode);
+  let placement;
+  if (explicit) {
+    // Validate the caller-supplied cell: must fit in grid + unoccupied on that page.
+    const { pageId, x, y } = explicit;
+    if (pageId < 0 || pageId >= VAULT_PAGE_COUNT || x < 0 || y < 0 || x + w > VAULT_GRID_W || y + h > VAULT_GRID_H) {
+      showPopup(`Invalid drop target.`);
+      return;
+    }
+    const occ = _vaultPageOccupancy(pageId);
+    for (let dy = 0; dy < h; dy++)
+      for (let dx = 0; dx < w; dx++)
+        if (occ.has(`${x + dx},${y + dy}`)) {
+          showPopup(`Cell is occupied.`);
+          return;
+        }
+    placement = { pageId, x, y };
+  } else {
+    placement = _vaultFindPlacement(w, h);
+    if (!placement) {
+      showPopup(`Vault full — no ${w}×${h} slot available on any page. Delete items to make room.`);
+      return;
+    }
+  }
+
+  const parentLen = getItemBinaryLength(buf, item.byteOffset, lengthItems, sectionEnd);
+  const parentBytes = buf.slice(item.byteOffset, item.byteOffset + parentLen);
+  // parent=0 (stored), storage=5 (masquerade as stash — same convention as grail).
+  const patchedParent = _patchItemPosition(parentBytes, placement.x, placement.y, 5, 0);
+
+  const newItems = [{
+    typeCode: item.typeCode,
+    pageId:   placement.pageId,
+    x:        placement.x,
+    y:        placement.y,
+    byteOffset: nextFakeOffset(),
+    isVault:  true,
+    _propsDecoded: false,
+    _vaultRawBytes: patchedParent,
+  }];
+
+  // Children keep parent=6 (socketed in_item) — don't touch their bits, just copy.
+  for (const child of children) {
+    const cLen = getItemBinaryLength(buf, child.byteOffset, lengthItems, sectionEnd);
+    const cBytes = buf.slice(child.byteOffset, child.byteOffset + cLen);
+    // Children's position fields don't matter (they're socketed) — leave untouched.
+    newItems.push({
+      typeCode: child.typeCode,
+      pageId:   placement.pageId,     // same page as parent for cascade consistency
+      x: 0, y: 0,                      // unused for parent=6 items
+      byteOffset: nextFakeOffset(),
+      isVault:  true,
+      _propsDecoded: false,
+      _vaultRawBytes: new Uint8Array(cBytes),
+    });
+  }
+
+  // Append to vault and remove from source (if char; shared stash is COPY for now).
+  vaultItems.push(...newItems);
+  vaultDirty = true;
+  vaultActivePage = placement.pageId;   // jump to the placed page so user sees the result
+
+  if (kind === 'char') {
+    if (item.byteOffset >= 0 && !item.isVirtual) {
+      _deletedItemOffsets.add(item.byteOffset);
+    }
+    for (const child of children) {
+      if (child.byteOffset >= 0 && !child.isVirtual) {
+        _deletedItemOffsets.add(child.byteOffset);
+      }
+    }
+    // Splice from in-memory items so getItemsByLocation() and renderers stop showing them.
+    const removeOffsets = new Set([item.byteOffset, ...children.map(c => c.byteOffset)]);
+    parsedChar.items = parsedChar.items.filter(it => !removeOffsets.has(it.byteOffset));
+    markDirty();
+  }
+
+  // Need to rebuild vaultD2i so ensureItemProps can decode fresh mods from it.
+  // Simplest: encode, then re-decode on next hover via ensureItemProps.
+  try {
+    vaultD2i = encodeVault(vaultItems, vaultPageNames);
+    // Re-scan positions so subsequent ensureItemProps calls have up-to-date byte offsets
+    _refreshVaultItemOffsets();
+  } catch (err) {
+    console.error('Failed to rebuild vaultD2i after move:', err);
+  }
+
+  closeTooltip(true);
+  renderVault(document.getElementById('tabContent'));
+  const verb = kind === 'char' ? L('ui_vault_moved_to_vault','Moved to Vault') : L('ui_vault_copied_to_vault','Copied to Vault (shared stash remains)');
+  console.log(`${verb}: ${item.typeCode} → page ${placement.pageId + 1} at (${placement.x}, ${placement.y})`);
+};
+
+// After encodeVault runs, the in-memory vault items' byteOffset values no longer
+// point at real bytes in vaultD2i (they were negative fake offsets). Re-scan the
+// freshly encoded buffer and re-attach real offsets so ensureItemProps can work.
+function _refreshVaultItemOffsets() {
+  if (!vaultD2i) return;
+  try {
+    const hdr = decodeVaultHeader(vaultD2i);
+    const fresh = parseVaultItems(vaultD2i, hdr.jmOffset, hdr.itemPageIds);
+    // Pair fresh[i] with vaultItems[i] by order (encode preserves order).
+    if (fresh.length === vaultItems.length) {
+      for (let i = 0; i < fresh.length; i++) {
+        vaultItems[i].byteOffset    = fresh[i].byteOffset;
+        vaultItems[i]._propsDecoded = false;
+        vaultItems[i]._vaultRawBytes = fresh[i]._vaultRawBytes;
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to refresh vault item offsets:', err);
+  }
+}
+
+// Vault → Character: place into inventory or personal stash by auto-pack, or
+// at an explicit {x, y} from a drag-drop.
+window.moveVaultItemToSource = function(byteOffset, destKind, explicit) {
+  if (destKind === 'sharedStash') { showPopup('Shared Stash is a one-way destination.'); return; }
+  if (!parsedChar || !parsedChar.items) { showPopup('Open a character save first.'); return; }
+
+  const vItem = findVaultItem(byteOffset);
+  if (!vItem) { showPopup('Vault item not found.'); return; }
+  ensureItemProps(vItem);
+
+  // Cascade: children of this vault item travel with it.
+  // Children live in vaultItems with parent=6 and live adjacent in byte order.
+  const children = findSocketedChildren(vaultD2i, vaultItems, vItem);
+
+  // Figure out the destination grid + storage value.
+  const dims = getInventoryDimensions(parsedChar.header.cls);
+  const gridW = destKind === 'inventory' ? dims.invW  : dims.stashW;
+  const gridH = destKind === 'inventory' ? dims.invH  : dims.stashH;
+  const storage = destKind === 'inventory' ? 1 : 5;
+
+  // Build current occupancy for the target grid.
+  const { inventory, personalStash } = getItemsByLocation();
+  const destItems = destKind === 'inventory' ? inventory : personalStash;
+  const occ = new Set();
+  for (const it of destItems) {
+    const { w, h } = getItemSize(it.typeCode);
+    for (let dy = 0; dy < h; dy++)
+      for (let dx = 0; dx < w; dx++)
+        occ.add(`${it.x + dx},${it.y + dy}`);
+  }
+
+  const { w, h } = getItemSize(vItem.typeCode);
+  let pos;
+  if (explicit) {
+    const { x, y } = explicit;
+    if (x < 0 || y < 0 || x + w > gridW || y + h > gridH) {
+      showPopup(`Invalid drop target.`);
+      return;
+    }
+    for (let dy = 0; dy < h; dy++)
+      for (let dx = 0; dx < w; dx++)
+        if (occ.has(`${x + dx},${y + dy}`)) {
+          showPopup(`Cell is occupied.`);
+          return;
+        }
+    pos = { x, y };
+  } else {
+    pos = packItemIntoGrid(occ, gridW, gridH, w, h);
+    if (!pos) {
+      showPopup(`No ${w}×${h} slot available in ${destKind === 'inventory' ? 'inventory' : 'stash'}. Make room and try again.`);
+      return;
+    }
+  }
+
+  // Spread vItem so decoded state (quality/uniqueId/setId/mods/etc.) carries over to the
+  // virtual item — ensureItemProps short-circuits on isVirtual, so a blank template would
+  // leave the tooltip rendering a white item. See doc/VAULT.md.
+  const patched = _patchItemPosition(vItem._vaultRawBytes, pos.x, pos.y, storage, 0);
+  const virt = {
+    ...vItem,
+    x: pos.x, y: pos.y, storage, parent: 0, location: 0,
+    equipSlot: 0,
+    isVault: false,
+    isVirtual: true,
+    byteOffset: nextFakeOffset(),
+    _virtualBytes: patched,
+    _vaultRawBytes: undefined,
+    _propsDecoded: true,
+  };
+  parsedChar.items.push(virt);
+  markDirty();
+
+  const toRemove = new Set([vItem, ...children]);
+  vaultItems = vaultItems.filter(it => !toRemove.has(it));
+  vaultDirty = true;
+
+  for (const child of children) {
+    parsedChar.items.push({
+      ...child,
+      x: 0, y: 0, storage: 0, parent: 6, location: 6,
+      equipSlot: 0,
+      isVault: false,
+      isVirtual: true,
+      byteOffset: nextFakeOffset(),
+      _virtualBytes: new Uint8Array(child._vaultRawBytes),
+      _vaultRawBytes: undefined,
+      _propsDecoded: true,
+    });
+  }
+
+  // Rebuild vaultD2i to keep _vaultRawBytes/byteOffset consistent.
+  try {
+    vaultD2i = encodeVault(vaultItems, vaultPageNames);
+    _refreshVaultItemOffsets();
+  } catch (err) {
+    console.error('Failed to rebuild vaultD2i after vault→char move:', err);
+  }
+
+  closeTooltip(true);
+  renderVault(document.getElementById('tabContent'));
+  console.log(`Moved vault item ${vItem.typeCode} → ${destKind} at (${pos.x}, ${pos.y})`);
+};
+
+// Vault-only delete (no cross-file effect).
+window.deleteVaultItem = function(byteOffset) {
+  const item = findVaultItem(byteOffset);
+  if (!item) return;
+  ensureItemProps(item);
+  const name = itemDisplayName(item).name;
+  // Themed confirm matches the app's other destructive prompts (grail remove,
+  // character item remove). Native confirm() can be blocked by some browser
+  // settings and breaks the visual style. `showConfirm` takes a callback that
+  // runs on Yes; the body runs inside it.
+  showConfirm(L('ui_vault_confirm_delete','Permanently delete from vault?') + `\n\n${name}`, () => {
+    // Cascade socketed children too (can't leave orphan parent=6 entries in the stream)
+    const children = findSocketedChildren(vaultD2i, vaultItems, item);
+    const toRemove = new Set([item, ...children]);
+    vaultItems = vaultItems.filter(it => !toRemove.has(it));
+    vaultDirty = true;
+
+    try {
+      vaultD2i = encodeVault(vaultItems, vaultPageNames);
+      _refreshVaultItemOffsets();
+    } catch (err) {
+      console.error('Failed to rebuild vaultD2i after delete:', err);
+    }
+
+    closeTooltip(true);
+    renderVault(document.getElementById('tabContent'));
+  });
+};
+
+// Minimal virtual-item stub — same shape as parsedChar.items entries the Insert
+// Modal creates, so downstream writers (flushVirtualItems etc.) work unchanged.
+function _blankVirtualItem() {
+  return {
+    byteOffset: 0, identified: 1, socketed: 0, simple: 0, ethereal: 0,
+    personalized: 0, runeword: 0, parent: 0, equipSlot: 0,
+    x: 0, y: 0, storage: 0, location: 0, typeCode: '',
+    numSockets: 0, itemLevel: 0, quality: 0,
+    isVirtual: true, _propsDecoded: false,
+  };
+}
+
+// ── Render ──────────────────────────────────────────────────
+function renderVault(c) {
+  const dirtyBadge = vaultDirty
+    ? `<span style="color:#c8a030;font-size:11px;margin-left:8px">● unsaved</span>`
+    : '';
+  const loaded = vaultD2i || vaultItems.length > 0 || Object.keys(vaultPageNames).length > 0;
+  const fileInfo = loaded
+    ? esc(vaultFileName || 'Vault.d2i') + dirtyBadge
+    : esc(L('ui_vault_no_loaded', 'No vault loaded'));
+
+  const pageName = esc(vaultPageLabel(vaultActivePage));
+  const itemCountOnPage = vaultItems.filter(it => it.pageId === vaultActivePage).length;
+
+  // ── Source panel HTML ──
+  const srcView = getVaultSourceView();
+  const charLoaded = !!(parsedChar && parsedChar.items);
+  const sharedLoaded = !!sharedStashParsed;
+
+  const srcDropdown = `
+    <select onchange="vaultSelectSource(this.value)"
+            style="background:var(--d2-surface2);color:var(--d2-text);border:1px solid var(--d2-border);padding:6px 10px;font-family:'Cinzel',serif;font-size:12px">
+      <option value="inventory"   ${vaultSource.kind==='inventory'?'selected':''} ${charLoaded?'':'disabled'}>${esc(L('ui_tab_inventory','Inventory'))}</option>
+      <option value="stash"       ${vaultSource.kind==='stash'?'selected':''}     ${charLoaded?'':'disabled'}>${esc(L('ui_tab_stash','Stash'))}</option>
+      <option value="sharedStash" ${vaultSource.kind==='sharedStash'?'selected':''} ${sharedLoaded?'':'disabled'}>${esc(L('ui_tab_shared_stash','Shared Stash'))}</option>
+    </select>
+  `;
+
+  let sharedTabStrip = '';
+  if (vaultSource.kind === 'sharedStash' && srcView && srcView.vtabs) {
+    sharedTabStrip = `<div style="display:flex;gap:4px;flex-wrap:wrap;margin:8px 0">`;
+    for (const vt of srcView.vtabs) {
+      const active = vt.id === srcView.activeVtabId;
+      sharedTabStrip += `<button class="btn" onclick="vaultSelectSharedTab('${vt.id}')"
+        style="font-size:11px;padding:4px 10px;${active?'background:rgba(200,160,48,0.2);border-color:var(--d2-gold)':''}">
+        ${esc(vt.label)} <span style="color:#888;font-size:10px">(${vt.items.length})</span>
+      </button>`;
+    }
+    sharedTabStrip += `</div>`;
+  }
+
+  // ── Source body ──
+  let sourceBody = '';
+  if (!srcView) {
+    if (vaultSource.kind === 'sharedStash' && !sharedLoaded) {
+      sourceBody = `<div style="color:var(--d2-text-dim);font-size:12px;padding:40px;text-align:center">${esc(L('ui_vault_load_shared_hint','Load a Shared Stash .d2i from the Shared Stash tab to see items here.'))}</div>`;
+    } else {
+      sourceBody = `<div style="color:var(--d2-text-dim);font-size:12px;padding:40px;text-align:center">${esc(L('ui_vault_no_char_hint','Open a character save to see inventory / stash items here.'))}</div>`;
+    }
+  } else {
+    sourceBody = buildVaultSourceGrid(srcView.items, srcView.gridW, srcView.gridH, 29, vaultSource.kind);
+  }
+
+  c.innerHTML = `
+    <div style="padding:16px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+        <label class="btn" style="cursor:pointer">
+          ${esc(L('ui_vault_load_btn','Load Vault .d2i'))}
+          <input type="file" accept=".d2i" style="display:none" onchange="loadVaultFile(this.files[0])">
+        </label>
+        <span style="color:var(--d2-text-dim);font-size:12px;flex:1">${fileInfo}</span>
+        <button class="btn" onclick="saveVaultFile()" ${loaded ? '' : 'disabled'}>
+          ${esc(L('ui_vault_save_btn','Save Vault .d2i'))}
+        </button>
+      </div>
+
+      <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+        <!-- ── SOURCE PANEL ── -->
+        <!-- Fixed 500px keeps the panel width stable regardless of which source
+             is selected (inventory 10×4 vs stash 16×13), so the vault doesn't
+             slide horizontally when switching. -->
+        <div style="flex:0 0 500px">
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+            <span style="font-family:'Cinzel',serif;color:var(--d2-gold);font-size:13px;letter-spacing:1px">${esc(L('ui_vault_source_label','SOURCE'))}</span>
+            ${srcDropdown}
+          </div>
+          ${sharedTabStrip}
+          ${sourceBody}
+        </div>
+
+        <!-- ── VAULT PANEL ── -->
+        <!-- flex:0 0 auto sizes to content; margin-left:auto pushes it to the
+             right edge of the flex container so the grid hugs the right side
+             of the page instead of left-aligning inside stretched flex:1 space. -->
+        <div style="flex:0 0 auto;margin-left:auto">
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+            <span style="font-family:'Cinzel',serif;color:var(--d2-gold);font-size:13px;letter-spacing:1px">${esc(L('ui_vault_vault_label','VAULT'))}</span>
+            <button class="btn" onclick="vaultGoToPage(${vaultActivePage - 1})" ${vaultActivePage > 0 ? '' : 'disabled'}>◄</button>
+            <div style="min-width:180px;text-align:center;font-family:'Cinzel',serif;color:var(--d2-gold)">
+              ${pageName} <span style="color:#888;font-size:11px">(${vaultActivePage + 1}/${VAULT_PAGE_COUNT})</span>
+            </div>
+            <button class="btn" onclick="vaultGoToPage(${vaultActivePage + 1})" ${vaultActivePage < VAULT_PAGE_COUNT - 1 ? '' : 'disabled'}>►</button>
+            <input type="number" min="1" max="${VAULT_PAGE_COUNT}" value="${vaultActivePage + 1}"
+                   id="vaultPageInput" style="width:60px" onchange="vaultGoToPage(this.value - 1)">
+            <button class="btn" onclick="vaultRenamePage()">${esc(L('ui_vault_rename_btn','Rename'))}</button>
+            <span style="color:var(--d2-text-dim);font-size:11px;margin-left:auto">
+              ${itemCountOnPage} item${itemCountOnPage === 1 ? '' : 's'} · ${vaultItems.length} total
+            </span>
+          </div>
+          ${(() => {
+            const grid = buildVaultPageGrid(vaultActivePage, 29);
+            const overlapWarn = grid.overlaps.length > 0
+              ? `<div style="margin-top:8px;font-size:11px;color:#c86030">⚠ ${grid.overlaps.length} item${grid.overlaps.length===1?'':'s'} hidden due to grid collisions on this page</div>`
+              : '';
+            return grid.html + overlapWarn;
+          })()}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+window.vaultGoToPage = function(pageIdx) {
+  const idx = Math.max(0, Math.min(VAULT_PAGE_COUNT - 1, parseInt(pageIdx, 10) || 0));
+  vaultActivePage = idx;
+  if (activeTab === 'vault') renderVault(document.getElementById('tabContent'));
+};
+
+window.vaultRenamePage = function() {
+  const pageNumber = vaultActivePage + 1;
+  showDialog({
+    title:   Lfmt('ui_vault_rename_title','Rename Page {n}',{n:pageNumber}),
+    note:    L('ui_vault_rename_note','Leave blank to restore the default "Page N" name.'),
+    input:   { value: vaultPageNames[vaultActivePage] || '', placeholder: `Page ${pageNumber}`, maxLength: 120 },
+    buttons: [
+      { label: L('ui_btn_ok','OK'), tone: 'success', onClick: (val) => _vaultApplyRename(val) },
+      { label: L('ui_cancel','Cancel'), tone: 'danger' },
+    ],
+  });
+};
+
+function _vaultApplyRename(value) {
+  const trimmed = (value || '').trim();
+  if (trimmed.length === 0) {
+    delete vaultPageNames[vaultActivePage];
+  } else {
+    // UTF-8 byte cap keeps the VLT1 per-name length field (u16) safe and the UI sane.
+    const enc = new TextEncoder().encode(trimmed);
+    if (enc.length > 255) {
+      showPopup(L('ui_vault_name_too_long','Name too long (max 255 bytes).'));
+      return;
+    }
+    vaultPageNames[vaultActivePage] = trimmed;
+  }
+  vaultDirty = true;
+  renderVault(document.getElementById('tabContent'));
+}
 
 // ═══════════════════════════════════════════════════════════
 //  STATUS BAR
