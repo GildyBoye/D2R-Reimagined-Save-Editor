@@ -988,6 +988,12 @@
 // ═══════════════════════════════════════════════════════════
 const BASE_URL  = 'https://raw.githubusercontent.com/D2R-Reimagined/d2r-reimagined-mod/next/data/global/excel/';
 const STRINGS_BASE = 'https://raw.githubusercontent.com/D2R-Reimagined/d2r-reimagined-mod/next/data/local/lng/strings/';
+// Editor-specific static data that was formerly inlined into this HTML file —
+// now hosted as JSON alongside the base/ folder. Falls back to the bundled
+// local copies when GitHub is unreachable (same pattern as the mod txt data).
+// TODO: update this URL when Gild confirms the final hosting path.
+const EDITOR_DATA_URL = 'https://raw.githubusercontent.com/GildyBoye/D2R-Reimagined-Save-Editor/main/base/';
+const EDITOR_DATA_FILES = ['item_meta.json', 'templates.json', 'sprites.json', 'wheel.json'];
 // Actual string JSON files confirmed in the repo
 const STRING_FILES = [
   'item-names.json',         // weapon and armour display names
@@ -1361,6 +1367,14 @@ async function startBaseFileLoad() {
     }
   }
 
+  // ── Phase 3: editor-specific JSON data (split out of the HTML for size) ──
+  // Per-file fetch with GitHub → local fallback. These files weren't in the
+  // mod data originally — they're editor metadata (item lookup tables, class
+  // templates, campfire sprites, wheel challenge pool) that used to live as
+  // inline consts. All are non-critical: if a file fails to load, the editor
+  // still works but the feature it powers is disabled.
+  await loadEditorData(timeout);
+
   buildItemNameMap();
   rebuildLocalizedLabels();
   _updateStaticUIStrings();
@@ -1372,6 +1386,64 @@ async function startBaseFileLoad() {
   setStatus(Lfmt('ui_status_data_ready','Reimagined data ready — {files} files + {strings} string tables loaded{suffix}',{files:successCount,strings:strLoaded,suffix:sk+src}), 'ready');
 }
 
+
+// Fetch one editor-data JSON with GitHub → local fallback. Returns parsed
+// JSON or null on total failure. Non-critical — a miss just disables the
+// feature that file powers.
+async function _fetchEditorJson(file, timeout) {
+  const urls = usingFallback
+    ? [BASE_FALLBACK_URL + file]
+    : [EDITOR_DATA_URL + file, BASE_FALLBACK_URL + file];
+  for (let i = 0; i < urls.length; i++) {
+    try {
+      const res = await fetchTimed(urls[i], timeout);
+      const data = JSON.parse(await res.text());
+      const local = i > 0 || usingFallback;
+      addLog('ok', `✓ ${file}${local ? ' (local)' : ''}`);
+      return data;
+    } catch (err) {
+      // try next URL
+    }
+  }
+  addLog('warn', `⚠ ${file} — not loaded (feature disabled)`);
+  return null;
+}
+
+// Populate editor-specific globals from the 4 JSON blobs. Each file is
+// independent: a failure leaves the corresponding global as its empty default.
+async function loadEditorData(timeout) {
+  document.getElementById('loadingSub').textContent = `Fetching editor data...${usingFallback?' [local]':''}`;
+
+  // item_meta.json → ITEM_INDEX + ITEM_SIZES
+  const itemMeta = await _fetchEditorJson('item_meta.json', timeout);
+  if (itemMeta && Array.isArray(itemMeta.index) && Array.isArray(itemMeta.sizes)) {
+    ITEM_INDEX = itemMeta.index;
+    ITEM_SIZES = itemMeta.sizes;
+  }
+
+  // templates.json → _CLASS_TEMPLATES
+  const templates = await _fetchEditorJson('templates.json', timeout);
+  if (templates && typeof templates === 'object') {
+    _CLASS_TEMPLATES = templates;
+  }
+
+  // sprites.json → CLASS_SPRITES + CF_W + CF_H
+  const sprites = await _fetchEditorJson('sprites.json', timeout);
+  if (sprites && Array.isArray(sprites.sprites)) {
+    CLASS_SPRITES = sprites.sprites;
+    if (typeof sprites.cfW === 'number') CF_W = sprites.cfW;
+    if (typeof sprites.cfH === 'number') CF_H = sprites.cfH;
+  }
+
+  // wheel.json → _WHEEL_CHALLENGES + exclusion groups + pair conflicts + tree bans
+  const wheel = await _fetchEditorJson('wheel.json', timeout);
+  if (wheel) {
+    if (Array.isArray(wheel.challenges))       _WHEEL_CHALLENGES       = wheel.challenges;
+    if (Array.isArray(wheel.exclusionGroups))  _WHEEL_EXCLUSION_GROUPS = wheel.exclusionGroups.map(arr => new Set(arr));
+    if (Array.isArray(wheel.pairConflicts))    _WHEEL_PAIR_CONFLICTS   = wheel.pairConflicts;
+    if (Array.isArray(wheel.treeBans))         _WHEEL_TREE_BANS        = new Set(wheel.treeBans);
+  }
+}
 
 function addLog(cls,msg) {
   const log=document.getElementById('fileLog');
@@ -2240,10 +2312,43 @@ function propToDisplay(code, min, max, par) {
   }
   if (code === 'sock') { lines.push(`Socketed (${val})`); return lines; }
 
+  // Elemental damage (single element). Each of these uses func-15 + func-16
+  // slots that share the prop's min/max. The generic formatSlot func-15 path
+  // renders the stat label "to Minimum Fire Damage" which is awkward — the
+  // value shown is already a min-max range. Handle explicitly so output
+  // matches D2's in-game "Adds N-M Fire Damage" tooltip text. For cold/poison,
+  // the 3rd slot (func-17) carries a length value — par=frames (25 fps), so
+  // "over X seconds" = par/25.
+  if (code === 'dmg-fire') { lines.push(`Adds ${min}-${max} Fire Damage`); return lines; }
+  if (code === 'dmg-ltng') { lines.push(`Adds ${min}-${max} Lightning Damage`); return lines; }
+  if (code === 'dmg-mag')  { lines.push(`Adds ${min}-${max} Magic Damage`);     return lines; }
+  if (code === 'dmg-cold') {
+    const frames = parseInt(par, 10) || 0;
+    const secs = frames > 0 ? Math.round(frames / 25) : 0;
+    lines.push(`Adds ${min}-${max} Cold Damage` + (secs > 0 ? ` over ${secs} seconds` : ''));
+    return lines;
+  }
+  if (code === 'dmg-pois') {
+    const frames = parseInt(par, 10) || 0;
+    const secs = frames > 0 ? Math.round(frames / 25) : 0;
+    // Poison damage on items is usually listed as total damage over a duration;
+    // follow that convention. If par isn't set we just skip the duration.
+    lines.push(`Adds ${min}-${max} Poison Damage` + (secs > 0 ? ` over ${secs} seconds` : ''));
+    return lines;
+  }
+
   // Composite resistance/damage/mastery properties
   if (code === 'res-all-max') { lines.push(`${sign}${val}% to All Maximum Resistances`); return lines; }
   if (code === 'res-all-max%') { lines.push(`${sign}${val}% to All Maximum Resistances`); return lines; }
-  if (code === 'res-all/lvl') { lines.push(`${sign}${val}% to All Resistances (Based on Character Level)`); return lines; }
+  if (code === 'res-all/lvl') {
+    // Per-level rate: par/8 per character level. Falls back to the val string
+    // if par isn't set (legacy behaviour).
+    const parNum = parseInt(par, 10) || 0;
+    const r = parNum > 0 ? parNum / 8 : null;
+    const rStr = r != null ? (Number.isInteger(r) ? String(r) : r.toFixed(1)) : val;
+    lines.push(`+${rStr}% to All Resistances Per Character Level`);
+    return lines;
+  }
   if (code === 'res-curse-len') { lines.push(`${sign}${val}% Curse Resistance`); return lines; }
   if (code === 'extra-elem') { lines.push(`${sign}${val}% to Elemental Skill Damage`); return lines; }
   if (code === 'pierce-elem') { lines.push(`${sign}${val}% to Enemy Elemental Resistance`); return lines; }
@@ -2262,7 +2367,13 @@ function propToDisplay(code, min, max, par) {
   if (code === 'dmg-elem-max') { lines.push(`${sign}${val} to Maximum Elemental Damage`); return lines; }
   if (code === 'dmg2%') { lines.push(`${sign}${val}% Enhanced Damage`); return lines; }
   if (code === 'dmg3%') { lines.push(`${sign}${val}% Enhanced Throwing Damage`); return lines; }
-  if (code === 'flat-dmg/lvl') { lines.push(`${sign}${val} to Damage (Based on Character Level)`); return lines; }
+  if (code === 'flat-dmg/lvl') {
+    const parNum = parseInt(par, 10) || 0;
+    const r = parNum > 0 ? parNum / 8 : null;
+    const rStr = r != null ? (Number.isInteger(r) ? String(r) : r.toFixed(1)) : val;
+    lines.push(`+${rStr} to Damage Per Character Level`);
+    return lines;
+  }
   if (code === 'wounds/dex') { lines.push(`${sign}${val}% Chance of Open Wounds (Based on Dexterity)`); return lines; }
   if (code === 'wounds/str') { lines.push(`${sign}${val}% Chance of Open Wounds (Based on Strength)`); return lines; }
   if (code === 'extra-skill-dmg%-rand') { lines.push(`${sign}${val}% to Random Elemental Skill Damage`); return lines; }
@@ -2302,23 +2413,48 @@ function propToDisplay(code, min, max, par) {
     lines.push(`+${val} to ${skillName}`);
     return lines;
   }
-  if (code === 'hit-skill' || code === 'gethit-skill') {
+  // Chance-to-cast-on-event props. All share the same func-11 convention per
+  // properties.txt: Min = % Chance, Max = Skill Level. Event varies by code.
+  // (Prior version had min/max swapped in the display string AND only handled
+  // hit-skill/gethit-skill — so death-skill and levelup-skill fell through to
+  // the generic handler which printed "on Striking" regardless of trigger.)
+  const CHANCE_EVENT_SKILLS = {
+    'hit-skill':     'on Striking',
+    'gethit-skill':  'when Struck',
+    'death-skill':   'when you Die',
+    'levelup-skill': 'when you Level-Up',
+    'kill-skill':    'when you Kill an Enemy',
+    'att-skill':     'on Attack',
+  };
+  if (CHANCE_EVENT_SKILLS[code]) {
     const skillId = _resolveSkillId(par);
     const skillName = skillNameById[skillId] || (par ? String(par) : `Skill #${skillId}`);
-    const event = code === 'hit-skill' ? 'on Striking' : 'when Struck';
-    lines.push(`${max}% Chance to Cast Level ${min} ${skillName} ${event}`);
+    lines.push(`${min}% Chance to Cast Level ${max} ${skillName} ${CHANCE_EVENT_SKILLS[code]}`);
     return lines;
   }
   if (code === 'charged') {
     const skillId = _resolveSkillId(par);
     const skillName = skillNameById[skillId] || (par ? String(par) : `Skill #${skillId}`);
-    lines.push(`Level ${max} ${skillName} (${min}/${min} Charges)`);
+    // Convention: min = # of max charges, max = skill level. Binary stat stores
+    // both current and max — encoder writes them equal (fresh = fully charged).
+    // Display "(cur/max Charges)" matches D2's in-game format; for the txt-based
+    // preview there's no "current" yet, so we show charges/charges.
+    const charges = min;
+    const level = max;
+    lines.push(`Level ${level} ${skillName} (${charges}/${charges} Charges)`);
     return lines;
   }
   if (code === 'aura') {
     const skillId = _resolveSkillId(par);
     const skillName = skillNameById[skillId] || (par ? String(par) : `Skill #${skillId}`);
-    lines.push(`Level ${val} ${skillName} Aura When Equipped`);
+    // Real auras have a single rolled level, not a range. Most item entries
+    // define min==max; a handful (e.g. Tyrael's Might, Metalgrid) have a range
+    // of possible rolls. For both the Insert Modal preview and virtual-item
+    // tooltips, show the upper-bound level — matches what an ideal roll looks
+    // like and avoids the odd "Level 15-20 ... Aura" wording. (Binary-decoded
+    // items render via descfunc=16 which already pulls the rolled value.)
+    const level = (max != null ? max : min);
+    lines.push(`Level ${level} ${skillName} Aura When Equipped`);
     return lines;
   }
   if (code === 'skill-rand') {
@@ -2345,20 +2481,33 @@ function propToDisplay(code, min, max, par) {
   if (eng) {
     const primaryFunc = eng.func1 || 0;
 
-    // Per-level / per-time properties: show the base value
+    // Per-level / per-time / per-stat properties (funcs 17 & 18).
+    //
+    // In uniqueitems.txt these props have par set to the "per-8-units" rate
+    // (e.g. str/lvl par=8 means +8 Strength per 8 character levels = +1/level)
+    // and min/max are 0. The OLD handler recursively called the base prop with
+    // min=max=0 which produced display text like "+0 to Strength (Based on
+    // Character Level)" — accurate to the stored fields but useless to read.
+    //
+    // Fix: derive the per-unit rate from par/8 and pass that as the effective
+    // value to the base-prop display, then append a clearer suffix.
     if (primaryFunc === 17 || primaryFunc === 18) {
-      // Per-level/per-time: value is stored as units per level
-      // Display format depends on the stat it modifies
       const baseProp = code.replace(/\/(lvl|time|str|dex|vit|enr)$/, '');
-      const suffix = code.includes('/lvl') ? '(Based on Character Level)' :
-                     code.includes('/time') ? '(Increases over Time)' :
-                     code.includes('/str') ? '(Based on Strength)' :
-                     code.includes('/dex') ? '(Based on Dexterity)' :
-                     code.includes('/vit') ? '(Based on Vitality)' :
-                     code.includes('/enr') ? '(Based on Energy)' : '';
-      // Try to resolve through the base property (guard against infinite recursion)
+      const suffix = code.includes('/lvl')  ? 'Per Character Level' :
+                     code.includes('/time') ? 'Over Time' :
+                     code.includes('/str')  ? 'Per Point of Strength' :
+                     code.includes('/dex')  ? 'Per Point of Dexterity' :
+                     code.includes('/vit')  ? 'Per Point of Vitality' :
+                     code.includes('/enr')  ? 'Per Point of Energy' : '';
       if (baseProp !== code) {
-        const baseLines = propToDisplay(baseProp, min, max, par);
+        const parNum = parseInt(par, 10) || 0;
+        // Rate = par/8 per unit. Only substitute if par gives a usable rate;
+        // otherwise fall back to min/max so the old "Based on..." text still
+        // renders for items that don't follow the par-based convention.
+        const rate = parNum > 0 ? parNum / 8 : null;
+        const rateMin = rate != null ? rate : min;
+        const rateMax = rate != null ? rate : max;
+        const baseLines = propToDisplay(baseProp, rateMin, rateMax, '');
         if (baseLines.length) {
           lines.push(baseLines[0] + (suffix ? ' ' + suffix : ''));
           return lines;
@@ -2497,7 +2646,10 @@ function propToDisplay(code, min, max, par) {
       if (func === 11) {
         const skillId = _resolveSkillId(par);
         const skillName = skillNameById[skillId] || (par ? String(par) : `Skill #${skillId}`);
-        return [`${max}% Chance to Cast Level ${min} ${skillName} on Striking`];
+        // Generic fallback for func-11 props not in CHANCE_EVENT_SKILLS above.
+        // Convention: min=chance%, max=skill level. Trigger event unknown here,
+        // so default to "on Striking" — the most common case.
+        return [`${min}% Chance to Cast Level ${max} ${skillName} on Striking`];
       }
       // func 12: random skill bonus
       if (func === 12) return [`+${val} to Random Skill`];
@@ -2615,13 +2767,27 @@ function propToDisplay(code, min, max, par) {
   } else if (code === 'light') {
     lines.push(`${sign}${val} to Light Radius`);
   } else if (code === 'ease') {
-    lines.push(`Requirements ${min < 0 ? '' : '-'}${val}%`);
+    // `ease` always reduces requirements. uniqueitems.txt stores it as a
+    // negative value (e.g. -100 for "Requirements -100%") while magicprefix
+    // stores it as a positive magnitude. Normalize to always display as
+    // negative so output is consistent regardless of source.
+    const lo = Math.abs(min), hi = Math.abs(max);
+    const display = (lo === hi) ? String(lo) : `${lo}-${hi}`;
+    lines.push(`Requirements -${display}%`);
   } else if (code === 'dur%') {
     lines.push(`${sign}${val}% Increased Maximum Durability`);
   } else if (code === 'rep-dur') {
-    lines.push(`Replenishes ${val} Durability in ${par || '100'} Seconds`);
+    // Properties.txt tooltip: "Repairs 1 durability in # seconds" where
+    // # = 100/par ("Repair 1 Durability every 100/[Repair Speed] seconds").
+    // par is stored as the repair speed; the stat value tracks it.
+    const speed = parseInt(par, 10) || 0;
+    const seconds = speed > 0 ? Math.max(1, Math.round(100 / speed)) : 100;
+    lines.push(`Repairs 1 Durability in ${seconds} Seconds`);
   } else if (code === 'rep-quant') {
-    lines.push('Replenishes Quantity');
+    // Same convention as rep-dur: par = replenish speed, seconds = 100/par.
+    const speed = parseInt(par, 10) || 0;
+    const seconds = speed > 0 ? Math.max(1, Math.round(100 / speed)) : 100;
+    lines.push(`Replenishes 1 Quantity in ${seconds} Seconds`);
   } else if (code === 'thorns') {
     lines.push(`Attacker Takes Damage of ${val}`);
   } else if (code === 'slow') {
@@ -2671,11 +2837,23 @@ function propToDisplay(code, min, max, par) {
   } else if (code === 'explosivearrow') {
     lines.push('Fires Explosive Arrows/Bolts');
   } else if (code.includes('/lvl') || code.includes('/time') || code.includes('/str') || code.includes('/dex') || code.includes('/vit') || code.includes('/enr')) {
-    // Per-level etc: try base code
+    // Per-level/per-time/per-stat fallback for props NOT in properties.txt
+    // (unrecognized engines land here instead of the primary-func=17 handler).
+    // Convention matches the primary path: par stores the per-8-units rate,
+    // min/max are usually 0. Derive the per-unit rate from par/8 so the base
+    // prop doesn't render as "+0 to …".
     const baseProp = code.replace(/\/(lvl|time|str|dex|vit|enr)$/, '');
-    const suffix = code.includes('/lvl') ? ' (Based on Character Level)' :
-                   code.includes('/time') ? ' (Increases over Time)' : ' (Scales with Attribute)';
-    const baseLines = propToDisplay(baseProp, min, max, par);
+    const suffix = code.includes('/lvl')  ? ' Per Character Level' :
+                   code.includes('/time') ? ' Over Time' :
+                   code.includes('/str')  ? ' Per Point of Strength' :
+                   code.includes('/dex')  ? ' Per Point of Dexterity' :
+                   code.includes('/vit')  ? ' Per Point of Vitality' :
+                   code.includes('/enr')  ? ' Per Point of Energy' : '';
+    const parNum = parseInt(par, 10) || 0;
+    const rate = parNum > 0 ? parNum / 8 : null;
+    const rMin = rate != null ? rate : min;
+    const rMax = rate != null ? rate : max;
+    const baseLines = propToDisplay(baseProp, rMin, rMax, '');
     if (baseLines.length) lines.push(baseLines[0] + suffix);
     else lines.push(`[${code}] ${sign}${val}`);
   } else {
@@ -3764,188 +3942,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 // ── New Character Creation using real base saves per class ──
-const _CLASS_TEMPLATES = {
-  0: "VapVqmkAAABLBAAAlyRSYwAAAAAAAAAAABAeAQAAAAA95thp////////AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAAAAAAACgAAAAAAAAAAAAAA//////8b/0////////////////////////////////+AAADfWlVKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAABqYXYg/wIAAAQAAABidWMg/wIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCYXNlWm9uAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFdvbyEGAAAAKgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABXUwEAAABQAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAF3NAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABnZgAoCPCAgAwGUGAAQAYcAJABCAAeQAKAB6AAgAosAKACDAL/AWlmAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASk0MABAAogAVAADPTwAQAKIAFQQAz08AEACiABUIAM9PABAAogAVDADPTwAQAKIABeTFkAgQAKIABaTlRyIAEACCAAUARP88oAohfAUE/gMQAIIABSCEFIRvtsy5gAgD+vr8BxAAggAF5ORt7kKT6MZ1QFDffxAAggAF4EXfCjC9fSgBgf8AEACCAA0RAN3bBUZ+A5KASAT6+npdoyD/ARAAggBNFUChCMsjfdUBEQYgwMDAf0pNAABqZmtmAAEAbGYAAA==",
-  1: "VapVqmkAAAAOBAAAnVpHJgAAAAAAAAAAARAeAQAAAADB5thp////////AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAAAAAAAJAAAAAAAAAAAAAAA//////8l//////////////////////////////////+AAAD2SLAYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAABzc3Qg/wIAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCYXNlU29yYwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFdvbyEGAAAAKgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABXUwEAAABQAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAF3NAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABnZgAUCDCCgAwGKGAAAAUcAEABCABGQAKAEaAAQAksAFACDAL/AWlmAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASk0JABAAogAVAADPTwAQAKIAFQQAz08AEACiABUIAM9PABAAogAVDADPTwAQAKIABeTFkAgQAKIABaTlRyIAEACCAAUARP88AHZMSwQE/gMQAIIABWRF3wpKUNUsAYH/ABAAggANEYDIBAXPO7KACAP6+qwhkf8ASk0AAGpma2YAAQBsZgAA",
-  2: "VapVqmkAAAA0BAAAiPu/fAAAAAAAAAAAAhAeAQAAAABh5thp////////AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAAAAAAAAAAAAAAAAAAAAAAA//////8J//////////////////////////////////+AAADRdvJaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAB3bmQg/wIAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCYXNlTmVjcm8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFdvbyEGAAAAKgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABXUwEAAABQAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAF3NAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABnZgAeCJCBgAwGPGAAoAUcAGgBCAAyQAKADKAA4AksAHgCDAL/AWlmAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASk0LABAAogAVAADPTwAQAKIAFQQAz08AEACiABUIAM9PABAAogAVDADPTwAQAKIABeTFkAgQAKIABaTlRyIAEACCAAUARP88xHCWxwUE/gMQAIIABSCEFAQjZw//gAgD+vr8BxAAggAF5ORt7oJneOloQFDffxAAggAF4EXfClKq2igBgf8AEACCAA0RALBjyEy7Kw6IMKCvzxoj+Q9KTQAAamZrZgABAGxmAAA=",
-  3: "VapVqmkAAAAjBAAARjWKOgAAAAAAAAAAAxAeAQAAAACb5thp////////AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAAAAAAAYQAAAAAAAAAAAAAA//////8R/0////////////////////////////////+AAAAsJJZ9AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAABzc2Qg/wIAAAQAAABidWMg/wIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCYXNlRGluAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFdvbyEGAAAAKgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABXUwEAAABQAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAF3NAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABnZgAyCPCAAAoGZGAA4AYcALgBCAAeQAKAB6AAIAssAMgCDAL/AWlmAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASk0KABAAogAVAADPTwAQAKIAFQQAz08AEACiABUIAM9PABAAogAVDADPTwAQAKIABeTFkAgQAKIABaTlRyIAEACCAAUARP88GM5tEAUE/gMQAIIABWRF3wpBxkyVAYH/ABAAggANEYBoDE9WbpQBEQb09VkTJv8BEACCAE0VQKEIoyCr5wERBhzAwMB/Sk0AAGpma2YAAQBsZgAA",
-  4: "VapVqmkAAAAjBAAAP6ChOgAAAAAAAAAABBAeAQAAAADF5dhp////////AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAAAAAAAfgAAAAAAAAAAAAAA//////8E/0////////////////////////////////+AAADXFHMHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAABoYXgg/wIAAAQAAABidWMg/wIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCYXNlQmFyYgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFdvbyEGAAAAKgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABXUwEAAABQAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAF3NAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABnZgA8CKCAAAoGZGAA4AYcALgBCAAUQAIABaAAgAssAOACDAL/AWlmAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASk0KABAgogAVAADPTwAQIKIAFQQAz08AECCiABUIAM9PABAgogAVDADPTwAQIKIABeTFkAgQIKIABaTlRyIAECCCAAUARP88gCtV2gcE/gMQIIIABWRF3wqdQMhgAYH/ABAgggANEQA/Huiuf9cDIgzo67PGT/4DECCCAE0VQKEIWgqZ2AERBiDAwMB/Sk0AAGpma2YAAQBsZgAA",
-  5: "VapVqmkAAABJBAAA7cscBAAAAAAAAAAABRAeAQAAAAAV59hp////////AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAAAAAAA4QAAAAAAAAAAAAAA//////8M/0////////////////////////////////+AAABSkK9HAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAABjbGIg/wIAAAQAAABidWMg/wIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCYXNlRHJ1aWQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFdvbyEGAAAAKgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABXUwEAAABQAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAF3NAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABnZgAeCECBAAoGZGAA4AYcALgBCAAoQAIACqAAgAosAKACDAL/AWlmAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASk0MABAAogAVAADPTwAQAKIAFQQAz08AEACiABUIAM9PABAAogAVDADPTwAQAKIABeTFkAgQAKIABaTlRyIAEACCAAUARP88uPleLwcE/gMQAIIABSCEFASJpUepgAgD+vr8BxAAggAF5ORt7gJ++V11QFDffxAAggAF4EXfCrx8eI0Bgf8AEACCAA0RQFwNi/uq5gERBvT1WRMu/wEQAIIATRVAoQgwb52pAREGIMDAwH9KTQAAamZrZgABAGxmAAA=",
-  6: "VapVqmkAAAAjBAAAWF6/KQAAAAAAAAAABhAeAQAAAACw5dhp////////AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAAAAAAA/QAAAAAAAAAAAAAA//////8t/0////////////////////////////////+AAAAXPLhyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAABrdHIg/wIAAAQAAABidWMg/wIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCYXNlU2luAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFdvbyEGAAAAKgEBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABXUwEAAABQAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAF3NAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABnZgAoCJCBAAoGUGAAQAYcAJABCAAyQAKADKAA4AssAPgCDAL/AWlmAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASk0KABAAogAVAADPTwAQAKIAFQQAz08AEACiABUIAM9PABAAogAVDADPTwAQAKIABeTFkAgQAKIABaTlRyIAEACCAAVkRd8K39y/tgGB/wAQAIIABQBE/zw0OcRwBAT+AxAAggANEUAyJ8yuLn8GRBjQ12dNv/wHEACCAE0VQKEIMuKcfwERBhzAwMB/Sk0AAGpma2YAAQBsZgAA",
-  7: "VapVqmkAAAAOBAAAVyxx7AAAAAAAAAAABxAeAQAAAADo5thp////////AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAAAAAAAiwEAAAAAAAAAAAAA//////8Z//////////////////////////////////+AAABiMKAvAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAABkZ3Ig/wIAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCYXNlTG9jawAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFdvbyEGAAAAKgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABXUwEAAABQAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAIBAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAF3NAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABnZgAeCECBAAoGZGAA4AYcALgBCAAoQAIACqAAwAosALACDAL/AWlmAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASk0JABAAogAVAADPTwAQAKIAFQQAz08AEACiABUIAM9PABAAogAVDADPTwAQAKIABeTFkAgQAKIABaTlRyIAEACCAAUARP88PGg9zwUE/gMQAIIABWRF3wo5ftyHAYH/ABAAggANEWBcJ0gh71cERBjQ12fN4vwHSk0AAGpma2YAAQBsZgAA",
-};
+// Populated at startup from base/templates.json (see loadEditorData()).
+let _CLASS_TEMPLATES = {};
 
 // ── 8-bit character sprites for campfire scene ──
-const CLASS_SPRITES = [
-  { // 0: Amazon — brunette ponytail, gold circlet, red armor, spear + shield
-    pal: [null,'#5a3828','#c8a84b','#dbb896','#b08050','#a83030','#808890','#701818','#3a2010'],
-    rows: [
-      '..1111....',
-      '12111111..',
-      '1.113311..',
-      '..13431...',
-      '..3433....',
-      '...34.....',
-      '.25552....',
-      '.5555556..',
-      '13555536..',
-      '..12225...',
-      '..51775...',
-      '..37.13...',
-      '..57.76...',
-      '..77.77...',
-      '..88.88...',
-      '..........',
-    ]
-  },
-  { // 1: Sorceress — dark skin, teal robes, gold headdress, staff + purple orb
-    pal: [null,'#c8a84b','#2a1a18','#6a3890','#8b6848','#6b4830','#2a8070','#4a3828','#1a5048'],
-    rows: [
-      '..122.....',
-      '3312222...',
-      '..22442...',
-      '..24542...',
-      '...454....',
-      '....45....',
-      '..166661..',
-      '..666666..',
-      '56666666..',
-      '..611165..',
-      '..77877...',
-      '..47.74...',
-      '..57.75...',
-      '..87.78...',
-      '..88.88...',
-      '..........',
-    ]
-  },
-  { // 2: Necromancer — white hair, skull pauldron, dark bone armor, red cloth
-    pal: [null,'#ededed','#c0b0a0','#908078','#c8c0b0','#505058','#2a2830','#1a1820','#8b2020','#101018'],
-    rows: [
-      '...111....',
-      '..11111...',
-      '..11221...',
-      '..12321...',
-      '...232....',
-      '44.23..5..',
-      '44666565..',
-      '.4665667..',
-      '.3656563..',
-      '..65556...',
-      '..66766...',
-      '..86.68...',
-      '..76.67...',
-      '..77.77...',
-      '..99.99...',
-      '..........',
-    ]
-  },
-  { // 3: Paladin — dark skin, plate armor, quartered shield, gold cross (faces left)
-    pal: [null,'#4a3828','#8b6848','#6b4830','#353540','#505058','#c8a84b','#808080','#c8c0a8','#2a2830'],
-    rows: [
-      '..........',
-      '....111...',
-      '....221...',
-      '....232...',
-      '....232...',
-      '.....32...',
-      '...556654.',
-      '..8765554.',
-      '..8765554.',
-      '..6785553.',
-      '...77457..',
-      '...54.45..',
-      '...44.74..',
-      '...44.44..',
-      '...99.99..',
-      '..........',
-    ]
-  },
-  { // 4: Barbarian — bald, bare chest, leather pauldron, red loincloth, axe
-    pal: [null,'#8b7060','#dbb896','#3f48cc','#5a3828','#808080','#b08050','#3a2418','#a03030','#701818','#2a1a10'],
-    rows: [
-      '..........',
-      '...111....',
-      '...122....',
-      '...222....',
-      '...232....',
-      '...23.....',
-      '.4222245..',
-      '.2222222..',
-      '.6222226..',
-      '.2477742..',
-      '..88988...',
-      '..28.82...',
-      '..68.86...',
-      '..77.77...',
-      '..aa.aa...',
-      '..........',
-    ]
-  },
-  { // 5: Druid — red hair, fur cloak, leather armor, bulky
-    pal: [null,'#8b3818','#c0a080','#907858','#6b5038','#4a3828','#7a6848','#c8a84b','#3a2818','#5a4030'],
-    rows: [
-      '..1111....',
-      '.111111...',
-      '.112211...',
-      '.112321...',
-      '..12211...',
-      '...121....',
-      '.9455549..',
-      '94444449..',
-      '.3446443..',
-      '..47774...',
-      '..46664...',
-      '..45.54...',
-      '..85.58...',
-      '..85.58...',
-      '..88.88...',
-      '..........',
-    ]
-  },
-  { // 6: Assassin — dark hair, brown corset, red-brown pants, katars
-    pal: [null,'#1a1018','#dbb896','#b08050','#808890','#5a3828','#3a2018','#c8a84b','#a83030','#701818'],
-    rows: [
-      '...111....',
-      '..11111...',
-      '..11221...',
-      '..12321...',
-      '...232....',
-      '...23.....',
-      '.4255524..',
-      '.2556552..',
-      '.3556553..',
-      '.4577754..',
-      '.4887884..',
-      '..89.98...',
-      '..89.98...',
-      '..96.69...',
-      '..66.66...',
-      '..........',
-    ]
-  },
-  { // 7: Warlock — dark hair, red+gray robes, gold trim, high collar (faces left)
-    pal: [null,'#2a1a18','#c0a888','#907860','#8b2030','#601020','#808890','#c8a84b','#505058','#4a3828'],
-    rows: [
-      '....111...',
-      '...11111..',
-      '...12211..',
-      '...12321..',
-      '....232...',
-      '..5.32.5..',
-      '..5464645.',
-      '..4464644.',
-      '..3464643.',
-      '...47774..',
-      '...46464..',
-      '...46464..',
-      '..4464644.',
-      '..5544455.',
-      '...99.99..',
-      '..........',
-    ]
-  },
-];
+// Populated at startup from base/sprites.json (see loadEditorData()).
+let CLASS_SPRITES = [];
 
 function _renderSprite(canvas, sprite) {
   const rows = sprite.rows, pal = sprite.pal;
@@ -3980,7 +3982,7 @@ const _cfPal = [];
     _cfPal.push([r,g,b,a]);
   }
 })();
-const CF_W=30, CF_H=40;
+let CF_W=30, CF_H=40;  // defaults; overwritten by base/sprites.json at startup
 let _cfGrid=null, _cfAnimId=null, _cfFrame=0;
 
 function _cfStep(){
@@ -4122,133 +4124,20 @@ window.selectNewCharClass = function(idx) {
 let _wheelAnimTimer = null;
 let _wheelSettledResult = null; // most recent settled roll (before Accept) — survives between reroll+accept
 
-const _WHEEL_CHALLENGES = [
-  // ── Original 32 (adapted from gheedsgamble.com) ──────────────────────
-  { name: 'No Runewords',            desc: 'Cannot create or use runewords' },
-  { name: 'No Teleport',             desc: 'Teleport skill and Enigma are forbidden' },
-  { name: 'SSF',                     desc: 'Solo self-found — no trading, no outside help' },
-  { name: 'No Mercenary',            desc: 'Adventure alone, no hireling' },
-  { name: 'Walking Only',            desc: 'Toggle run off, walk everywhere' },
-  { name: 'Rare Items Only',         desc: 'Can only equip rare (yellow) items' },
-  { name: 'Magic Items Only',        desc: 'Can only equip magic (blue) items' },
-  { name: 'No Potions',              desc: 'Wells only — no healing/mana potions' },
-  { name: 'Pacifist',                desc: 'No direct attacks — thorns, auras, reflect only' },
-  { name: 'No Rare Items',           desc: 'Cannot equip rare (yellow) items' },
-  { name: 'No Unique Items',         desc: 'Cannot equip unique (gold) items' },
-  { name: 'No Set Items',            desc: 'Cannot equip set (green) items' },
-  { name: 'Cosplay Run',             desc: 'Must use items matching a specific theme of your choice' },
-  { name: 'Glass Cannon',            desc: 'No defensive stat investment (vit, block, etc.)' },
-  { name: 'No Synergies',            desc: 'Cannot invest in skills that synergize with your signature' },
-  { name: 'No Waypoints',            desc: 'Must travel on foot; town portals allowed' },
-  { name: 'No Town Portal',          desc: 'Only waypoints for travel — no scrolls, no Enigma TP' },
-  { name: 'No Charms',               desc: 'Inventory must stay charm-free' },
-  { name: 'No Crafting',             desc: 'No Horadric Cube crafting recipes' },
-  { name: 'First Skill Tree Banned', desc: 'Cannot invest in any skill from the first tree' },
-  { name: 'Second Skill Tree Banned',desc: 'Cannot invest in any skill from the second tree' },
-  { name: 'Third Skill Tree Banned', desc: 'Cannot invest in any skill from the third tree' },
-  { name: 'Drop on Level',           desc: 'Drop one equipped item every level up' },
-  { name: 'No Repairs',              desc: 'Cannot repair gear — replace when broken' },
-  { name: 'No Vendor Trading',       desc: 'Cannot buy or sell items to NPCs' },
-  { name: 'No Rejuvenation Potions', desc: 'Cannot use rejuv potions of either size' },
-  { name: 'No Mana Potions',         desc: 'Mana recovery from regen/leech only' },
-  { name: 'Same Song on Repeat',     desc: 'Pick one song, loop it the whole run' },
-  { name: 'Ethereals Only',          desc: 'Only ethereal items may be equipped' },
-  { name: 'No Shields',              desc: 'No shields or off-hand items' },
-  { name: 'Bow Only',                desc: 'Bows are the only permitted weapon' },
-  { name: 'Shirtless Wonder',        desc: 'No chest armor may be equipped' },
-  // ── Slot denials ─────────────────────────────────────────────────────
-  { name: 'Fisticuffs',              desc: 'No main-hand weapon equipped' },
-  { name: 'Wash Yo Feet',            desc: 'No boots equipped' },
-  { name: 'Thick Head',              desc: 'No helmet equipped' },
-  { name: 'Butterfingers',           desc: 'No rings equipped' },
-  { name: 'Bare Knuckle',            desc: 'No gloves equipped' },
-  { name: 'Unbelted',                desc: 'No belt equipped' },
-  { name: 'Neck Exposed',            desc: 'No amulet equipped' },
-  // ── Weapon-type mono ────────────────────────────────────────────────
-  { name: 'Sword Dance',             desc: 'Swords only' },
-  { name: 'Axe Murderer',            desc: 'Axes only' },
-  { name: 'Mace Face',               desc: 'Maces, clubs, and hammers only' },
-  { name: 'Spear Phisher',           desc: 'Spears and polearms only' },
-  { name: 'Staff Infection',         desc: 'Staves only' },
-  { name: 'Dagger Daddy',            desc: 'Daggers only' },
-  { name: 'Wand Aficionado',         desc: 'Wands only' },
-  { name: 'Claw Machine',            desc: 'Claws only' },
-  { name: 'Throwing Fit',            desc: 'Throwing weapons only' },
-  // ── Gear quality ────────────────────────────────────────────────────
-  { name: 'Plain Jane',              desc: 'White/gray (normal-tier) items only' },
-  { name: 'Perfectionist',           desc: 'Only uniques/sets with ≥80% perfection rolls' },
-  // ── Skill / stat meta ───────────────────────────────────────────────
-  { name: 'One-Trick Pony',          desc: 'Only the rolled signature skill — no other skill investment' },
-  { name: 'No Passives',             desc: 'No weapon/armor/element passive skills' },
-  { name: 'Pre-req Shuffle',         desc: 'Every skill capped at exactly 5 points' },
-  { name: 'No Respec',               desc: 'Cannot use any respec mechanic' },
-  { name: 'Stat Purist',             desc: 'All stat points into Vitality' },
-  { name: 'Stat Dumper',             desc: 'All stat points into Energy (yes, even on Barb)' },
-  // ── Movement / speed ────────────────────────────────────────────────
-  { name: 'Snail Pace',              desc: 'No +Faster Run/Walk gear' },
-  { name: 'Slow Hands',              desc: 'No +Increased Attack Speed gear' },
-  { name: 'Molasses',                desc: 'None of FRW / IAS / FCR / FHR' },
-  { name: 'Stand Your Ground',       desc: 'No movement skills (Teleport, Whirlwind, Vigor, Leap, etc.)' },
-  // ── Mercenary ───────────────────────────────────────────────────────
-  { name: 'Naked Merc',              desc: 'Mercenary wears no gear' },
-  { name: 'Merc Minimum',            desc: "Never upgrade mercenary's starting gear" },
-  { name: 'Lone Wolf',               desc: 'Mercenary cannot be revived once killed' },
-  // ── Economy / progression ───────────────────────────────────────────
-  { name: "Hoarder's Curse",         desc: 'Never sell anything to a vendor' },
-  { name: 'Spendthrift',             desc: 'Must buy one vendor item per level gained' },
-  { name: 'Pocket Lint',             desc: 'Max 10 items in stash at any time' },
-  { name: 'Poverty Pact',            desc: 'Gold must stay under 10,000 at all times' },
-  { name: 'No Gheed',                desc: 'Never visit Gheed — no gambling, no charm vendor' },
-  { name: 'No Cain',                 desc: 'No Deckard identifies — scrolls only or raw guesswork' },
-  { name: 'No Chests',               desc: 'Every chest / container / body stays closed' },
-  { name: 'Rag Tag',                 desc: 'Only use gear bought from vendors — no drops' },
-];
+// Populated at startup from base/wheel.json (see loadEditorData()).
+let _WHEEL_CHALLENGES = [];
 
 // Challenges that are mutually exclusive within the same group — pick at most one
 // per spin. Everything not in a group is combinable freely (overlap like No Potions
 // ⊇ No Mana Potions is intentionally allowed to keep the chaotic flavor at high counts).
-const _WHEEL_EXCLUSION_GROUPS = [
-  new Set(['Rare Items Only', 'Magic Items Only', 'Ethereals Only', 'Plain Jane']),
-  new Set(['Stat Purist', 'Stat Dumper', 'Glass Cannon']),
-  new Set([
-    'Bow Only', 'Sword Dance', 'Axe Murderer', 'Mace Face', 'Spear Phisher',
-    'Staff Infection', 'Dagger Daddy', 'Wand Aficionado', 'Claw Machine',
-    'Throwing Fit', 'Fisticuffs',
-  ]),
-];
+let _WHEEL_EXCLUSION_GROUPS = [];
 
 // Direct pair conflicts (order-independent). Each entry is a 2-tuple of challenge names
 // that must not coexist in the same spin.
-const _WHEEL_PAIR_CONFLICTS = (() => {
-  const pairs = [
-    ['Rare Items Only', 'No Rare Items'],
-    ['No Vendor Trading', 'Spendthrift'],
-    ['No Vendor Trading', 'Rag Tag'],
-    ['No Mercenary', 'Naked Merc'],
-    ['No Mercenary', 'Merc Minimum'],
-    ['No Mercenary', 'Lone Wolf'],
-    ['One-Trick Pony', 'Pre-req Shuffle'],
-    // One-Trick Pony (only signature skill) already subsumes tree bans —
-    // rolling them together is either redundant or outright contradictory
-    // (if the signature lives in a banned tree).
-    ['One-Trick Pony', 'First Skill Tree Banned'],
-    ['One-Trick Pony', 'Second Skill Tree Banned'],
-    ['One-Trick Pony', 'Third Skill Tree Banned'],
-  ];
-  // Pacifist forbids direct attacks — clashes with every weapon-mono (but not
-  // Fisticuffs; no-weapon + no-attack is consistent).
-  const weaponMonos = [
-    'Bow Only', 'Sword Dance', 'Axe Murderer', 'Mace Face', 'Spear Phisher',
-    'Staff Infection', 'Dagger Daddy', 'Wand Aficionado', 'Claw Machine', 'Throwing Fit',
-  ];
-  for (const w of weaponMonos) pairs.push(['Pacifist', w]);
-  return pairs;
-})();
+let _WHEEL_PAIR_CONFLICTS = [];
 
 // Skill-tree bans: cap at 2 of 3 (all three leaves the character with no skillable tree).
-const _WHEEL_TREE_BANS = new Set([
-  'First Skill Tree Banned', 'Second Skill Tree Banned', 'Third Skill Tree Banned',
-]);
+let _WHEEL_TREE_BANS = new Set();
 
 function _wheelCandidateConflicts(candidate, pickedNames) {
   // Exclusion groups: reject if any already-picked name shares a group with candidate
@@ -6703,175 +6592,11 @@ window.applySkills = function() {
 //  weapons.txt (0-305) + armor.txt (306-522) + misc.txt (523-798)
 //  Each entry: [code, name]
 // ═══════════════════════════════════════════════════════════
-const ITEM_INDEX=[
-['hax','Hand Axe'],['axe','Axe'],['2ax','Double Axe'],['mpi','Military Pick'],['wax','War Axe'],
-['lax','Large Axe'],['bax','Broad Axe'],['btx','Battle Axe'],['gax','Great Axe'],['gix','Giant Axe'],
-['wnd','Wand'],['ywn','Yew Wand'],['bwn','Bone Wand'],['gwn','Grim Wand'],['clb','Club'],
-['scp','Scepter'],['gsc','Grand Scepter'],['wsp','War Scepter'],['spc','Spiked Club'],['mac','Mace'],
-['mst','Morning Star'],['fla','Flail'],['whm','War Hammer'],['mau','Maul'],['gma','Great Maul'],
-['ssd','Short Sword'],['scm','Scimitar'],['sbr','Saber'],['flc','Falchion'],['crs','Crystal Sword'],
-['bsd','Broad Sword'],['lsd','Long Sword'],['wsd','War Sword'],['2hs','Two-Handed Sword'],['clm','Claymore'],
-['gis','Giant Sword'],['bsw','Bastard Sword'],['flb','Flamberge'],['gsd','Great Sword'],['dgr','Dagger'],
-['dir','Dirk'],['kri','Kriss'],['bld','Blade'],['tkf','Throwing Knife'],['tax','Throwing Axe'],
-['bkf','Balanced Knife'],['bal','Balanced Axe'],['jav','Javelin'],['pil','Pilum'],['ssp','Short Spear'],
-['glv','Glaive'],['tsp','Throwing Spear'],['spr','Spear'],['tri','Trident'],['brn','Brandistock'],
-['spt','Spetum'],['pik','Pike'],['bar','Bardiche'],['vou','Voulge'],['scy','Scythe'],
-['pax','Poleaxe'],['hal','Halberd'],['wsc','War Scythe'],['sst','Short Staff'],['lst','Long Staff'],
-['cst','Gnarled Staff'],['bst','Battle Staff'],['wst','War Staff'],['sbw','Short Bow'],['hbw',"Hunter's Bow"],
-['lbw','Long Bow'],['cbw','Composite Bow'],['sbb','Short Battle Bow'],['lbb','Long Battle Bow'],['swb','Short War Bow'],
-['lwb','Long War Bow'],['lxb','Light Crossbow'],['mxb','Crossbow'],['hxb','Heavy Crossbow'],['rxb','Repeating Crossbow'],
-['gps','Rancid Gas Potion'],['ops','Oil Potion'],['gpm','Choking Gas Potion'],['opm','Exploding Potion'],['gpl','Strangling Gas Potion'],
-['opl','Fulminating Potion'],['d33','Decoy Gidbinn'],['g33','The Gidbinn'],['leg',"Wirt's Leg"],['hdm','Horadric Malus'],
-['hfh','Hellforge Hammer'],['hst','Horadric Staff'],['msf','Staff of Kings'],['9ha','Hatchet'],['9ax','Cleaver'],
-['92a','Twin Axe'],['9mp','Crowbill'],['9wa','Naga'],['9la','Military Axe'],['9ba','Bearded Axe'],
-['9bt','Tabar'],['9ga','Gothic Axe'],['9gi','Ancient Axe'],['9wn','Burnt Wand'],['9yw','Petrified Wand'],
-['9bw','Tomb Wand'],['9gw','Grave Wand'],['9cl','Cudgel'],['9sc','Rune Scepter'],['9qs','Holy Water Sprinkler'],
-['9ws','Divine Scepter'],['9sp','Barbed Club'],['9ma','Flanged Mace'],['9mt','Jagged Star'],['9fl','Knout'],
-['9wh','Battle Hammer'],['9m9','War Club'],['9gm','Martel de Fer'],['9ss','Gladius'],['9sm','Cutlass'],
-['9sb','Shamshir'],['9fc','Tulwar'],['9cr','Dimensional Blade'],['9bs','Battle Sword'],['9ls','Rune Sword'],
-['9wd','Ancient Sword'],['92h','Espandon'],['9cm','Dacian Falx'],['9gs','Tusk Sword'],['9b9','Gothic Sword'],
-['9fb','Zweihander'],['9gd','Executioner Sword'],['9dg','Poignard'],['9di','Rondel'],['9kr','Cinquedeas'],
-['9bl','Stilleto'],['9tk','Battle Dart'],['9ta','Francisca'],['9bk','War Dart'],['9b8','Hurlbat'],
-['9ja','War Javelin'],['9pi','Great Pilum'],['9s9','Simbilan'],['9gl','Spiculum'],['9ts','Harpoon'],
-['9sr','War Spear'],['9tr','Fuscina'],['9br','War Fork'],['9st','Yari'],['9p9','Lance'],
-['9b7','Lochaber Axe'],['9vo','Bill'],['9s8','Battle Scythe'],['9pa','Partizan'],['9h9','Bec-de-Corbin'],
-['9wc','Grim Scythe'],['8ss','Jo Staff'],['8ls','Quarterstaff'],['8cs','Cedar Staff'],['8bs','Gothic Staff'],
-['8ws','Rune Staff'],['8sb','Edge Bow'],['8hb','Razor Bow'],['8lb','Cedar Bow'],['8cb','Double Bow'],
-['8s8','Short Siege Bow'],['8l8','Long Siege Bow'],['8sw','Rune Bow'],['8lw','Gothic Bow'],['8lx','Arbalest'],
-['8mx','Siege Crossbow'],['8hx','Ballista'],['8rx','Chu-Ko-Nu'],['qf1',"Khalim's Flail"],['qf2',"Khalim's Will"],
-['ktr','Katar'],['wrb','Wrist Blade'],['axf','Hatchet Hands'],['ces','Cestus'],['clw','Claws'],
-['btl','Blade Talons'],['skr','Scissors Katar'],['9ar','Quhab'],['9wb','Wrist Spike'],['9xf','Fascia'],
-['9cs','Hand Scythe'],['9lw','Greater Claws'],['9tw','Greater Talons'],['9qr','Scissors Quhab'],['7ar','Suwayyah'],
-['7wb','Wrist Sword'],['7xf','War Fist'],['7cs','Battle Cestus'],['7lw','Feral Claws'],['7tw','Runic Talons'],
-['7qr','Scissors Suwayyah'],['7ha','Tomahawk'],['7ax','Small Crescent'],['72a','Ettin Axe'],['7mp','War Spike'],
-['7wa','Berserker Axe'],['7la','Feral Axe'],['7ba','Silver-edged Axe'],['7bt','Decapitator'],['7ga','Champion Axe'],
-['7gi','Glorious Axe'],['7wn','Polished Wand'],['7yw','Ghost Wand'],['7bw','Lich Wand'],['7gw','Unearthed Wand'],
-['7cl','Truncheon'],['7sc','Mighty Scepter'],['7qs','Seraph Rod'],['7ws','Caduceus'],['7sp','Tyrant Club'],
-['7ma','Reinforced Mace'],['7mt','Devil Star'],['7fl','Scourge'],['7wh','Legendary Mallet'],['7m7','Ogre Maul'],
-['7gm','Thunder Maul'],['7ss','Falcata'],['7sm','Ataghan'],['7sb','Elegant Blade'],['7fc','Hydra Edge'],
-['7cr','Phase Blade'],['7bs','Conquest Sword'],['7ls','Cryptic Sword'],['7wd','Mythical Sword'],['72h','Legend Sword'],
-['7cm','Highland Blade'],['7gs','Balrog Blade'],['7b7','Champion Sword'],['7fb','Colossal Sword'],['7gd','Colossus Blade'],
-['7dg','Bone Knife'],['7di','Mithral Point'],['7kr','Fanged Knife'],['7bl','Legend Spike'],['7tk','Flying Knife'],
-['7ta','Flying Axe'],['7bk','Winged Knife'],['7b8','Winged Axe'],['7ja','Hyperion Javelin'],['7pi','Stygian Pilum'],
-['7s7','Balrog Spear'],['7gl','Ghost Glaive'],['7ts','Winged Harpoon'],['7sr','Hyperion Spear'],['7tr','Stygian Pike'],
-['7br','Mancatcher'],['7st','Ghost Spear'],['7p7','War Pike'],['7o7','Ogre Axe'],['7vo','Colossus Voulge'],
-['7s8','Thresher'],['7pa','Cryptic Axe'],['7h7','Great Poleaxe'],['7wc','Giant Thresher'],['6ss','Walking Stick'],
-['6ls','Stalagmite'],['6cs','Elder Staff'],['6bs','Shillelagh'],['6ws','Archon Staff'],['6sb','Spider Bow'],
-['6hb','Blade Bow'],['6lb','Shadow Bow'],['6cb','Great Bow'],['6s7','Diamond Bow'],['6l7','Crusader Bow'],
-['6sw','Ward Bow'],['6lw','Hydra Bow'],['6lx','Pellet Bow'],['6mx','Gorgon Crossbow'],['6hx','Colossus Crossbow'],
-['6rx','Demon Crossbow'],['ob1','Eagle Orb'],['ob2','Sacred Globe'],['ob3','Smoked Sphere'],['ob4','Clasped Orb'],
-['ob5',"Jared's Stone"],['am1','Stag Bow'],['am2','Reflex Bow'],['am3','Maiden Spear'],['am4','Maiden Pike'],
-['am5','Maiden Javelin'],['ob6','Glowing Orb'],['ob7','Crystalline Globe'],['ob8','Cloudy Sphere'],['ob9','Sparkling Ball'],
-['oba','Swirling Crystal'],['am6','Ashwood Bow'],['am7','Ceremonial Bow'],['am8','Ceremonial Spear'],['am9','Ceremonial Pike'],
-['ama','Ceremonial Javelin'],['obb','Heavenly Stone'],['obc','Eldritch Orb'],['obd','Demon Heart'],['obe','Vortex Orb'],
-['obf','Dimensional Shard'],['amb','Matriarchal Bow'],['amc','Grand Matron Bow'],['amd','Matriarchal Spear'],['ame','Matriarchal Pike'],
-['amf','Matriarchal Javelin'],
-// Armor (306+)
-['cap','Cap'],['skp','Skull Cap'],['hlm','Helm'],['fhl','Full Helm'],['ghm','Great Helm'],
-['crn','Crown'],['msk','Mask'],['qui','Quilted Armor'],['lea','Leather Armor'],['hla','Hard Leather Armor'],
-['stu','Studded Leather'],['rng','Ring Mail'],['scl','Scale Mail'],['chn','Chain Mail'],['brs','Breast Plate'],
-['spl','Splint Mail'],['plt','Plate Mail'],['fld','Field Plate'],['gth','Gothic Plate'],['ful','Full Plate Mail'],
-['aar','Ancient Armor'],['ltp','Light Plate'],['buc','Buckler'],['sml','Small Shield'],['lrg','Large Shield'],
-['kit','Kite Shield'],['tow','Tower Shield'],['gts','Gothic Shield'],['lgl','Leather Gloves'],['vgl','Heavy Gloves'],
-['mgl','Chain Gloves'],['tgl','Light Gauntlets'],['hgl','Gauntlets'],['lbt','Boots'],['vbt','Heavy Boots'],
-['mbt','Chain Boots'],['tbt','Light Plated Boots'],['hbt','Greaves'],['lbl','Sash'],['vbl','Light Belt'],
-['mbl','Belt'],['tbl','Heavy Belt'],['hbl','Plated Belt'],['bhm','Bone Helm'],['bsh','Bone Shield'],
-['spk','Spiked Shield'],['xap','War Hat'],['xkp','Sallet'],['xlm','Casque'],['xhl','Basinet'],
-['xhm','Winged Helm'],['xrn','Grand Crown'],['xsk','Death Mask'],['xui','Ghost Armor'],['xea','Serpentskin Armor'],
-['xla','Demonhide Armor'],['xtu','Trellised Armor'],['xng','Linked Mail'],['xcl','Tigulated Mail'],['xhn','Mesh Armor'],
-['xrs','Cuirass'],['xpl','Russet Armor'],['xlt','Templar Coat'],['xld','Sharktooth Armor'],['xth','Embossed Plate'],
-['xul','Chaos Armor'],['xar','Ornate Armor'],['xtp','Mage Plate'],['xuc','Defender'],['xml','Round Shield'],
-['xrg','Scutum'],['xit','Dragon Shield'],['xow','Pavise'],['xts','Ancient Shield'],['xlg','Demonhide Gloves'],
-['xvg','Sharkskin Gloves'],['xmg','Heavy Bracers'],['xtg','Battle Gauntlets'],['xhg','War Gauntlets'],['xlb','Demonhide Boots'],
-['xvb','Sharkskin Boots'],['xmb','Mesh Boots'],['xtb','Battle Boots'],['xhb','War Boots'],['zlb','Demonhide Sash'],
-['zvb','Sharkskin Belt'],['zmb','Mesh Belt'],['ztb','Battle Belt'],['zhb','War Belt'],['xh9','Grim Helm'],
-['xsh','Grim Shield'],['xpk','Barbed Shield'],['dr1','Wolf Head'],['dr2','Hawk Helm'],['dr3','Antlers'],
-['dr4','Falcon Mask'],['dr5','Spirit Mask'],['ba1','Jawbone Cap'],['ba2','Fanged Helm'],['ba3','Horned Helm'],
-['ba4','Assault Helmet'],['ba5','Avenger Guard'],['pa1','Targe'],['pa2','Rondache'],['pa3','Heraldic Shield'],
-['pa4','Aerin Shield'],['pa5','Crown Shield'],['ne1','Preserved Head'],['ne2','Zombie Head'],['ne3','Unraveller Head'],
-['ne4','Gargoyle Head'],['ne5','Demon Head'],['ci0','Circlet'],['ci1','Coronet'],['ci2','Tiara'],
-['ci3','Diadem'],['uap','Shako'],['ukp','Hydraskull'],['ulm','Armet'],['uhl','Giant Conch'],
-['uhm','Spired Helm'],['urn','Corona'],['usk','Demonhead'],['uui','Dusk Shroud'],['uea','Wyrmhide'],
-['ula','Scarab Husk'],['utu','Wire Fleece'],['ung','Diamond Mail'],['ucl','Loricated Mail'],['uhn','Boneweave'],
-['urs','Great Hauberk'],['upl','Balrog Skin'],['ult','Hellforge Plate'],['uld','Kraken Shell'],['uth','Lacquered Plate'],
-['uul','Shadow Plate'],['uar','Sacred Armor'],['utp','Archon Plate'],['uuc','Heater'],['uml','Luna'],
-['urg','Hyperion'],['uit','Monarch'],['uow','Aegis'],['uts','Ward'],['ulg','Bramble Mitts'],
-['uvg','Vampirebone Gloves'],['umg','Vambraces'],['utg','Crusader Gauntlets'],['uhg','Ogre Gauntlets'],['ulb','Wyrmhide Boots'],
-['uvb','Scarabshell Boots'],['umb','Boneweave Boots'],['utb','Mirrored Boots'],['uhb','Myrmidon Greaves'],['ulc','Spiderweb Sash'],
-['uvc','Vampirefang Belt'],['umc','Mithril Coil'],['utc','Troll Belt'],['uhc','Colossus Girdle'],['uh9','Bone Visage'],
-['ush','Troll Nest'],['upk','Blade Barrier'],['dr6','Alpha Helm'],['dr7','Griffon Headress'],['dr8',"Hunter's Guise"],
-['dr9','Sacred Feathers'],['dra','Totemic Mask'],['ba6','Jawbone Visor'],['ba7','Lion Helm'],['ba8','Rage Mask'],
-['ba9','Savage Helmet'],['baa','Slayer Guard'],['pa6','Akaran Targe'],['pa7','Akaran Rondache'],['pa8','Protector Shield'],
-['pa9','Gilded Shield'],['paa','Royal Shield'],['ne6','Mummified Trophy'],['ne7','Fetish Trophy'],['ne8','Sexton Trophy'],
-['ne9','Cantor Trophy'],['nea','Heirophant Trophy'],['drb','Blood Spirit'],['drc','Sun Spirit'],['drd','Earth Spirit'],
-['dre','Sky Spirit'],['drf','Dream Spirit'],['bab','Carnage Helm'],['bac','Fury Visor'],['bad','Destroyer Helm'],
-['bae','Conqueror Crown'],['baf','Guardian Crown'],['pab','Sacred Targe'],['pac','Sacred Rondache'],['pad','Ancient Shield'],
-['pae','Zakarum Shield'],['paf','Vortex Shield'],['neb','Minion Skull'],['neg','Hellspawn Skull'],['ned','Overseer Skull'],
-['nee','Succubus Skull'],['nef','Bloodlord Skull'],['wa1','Old Book'],['wa2','Tome'],['wa3','Codex'],
-['wa4','Compendium'],['wa5','Grimoire'],['wa6','Burnt Text'],['wa7','Dark Tome'],['wa8','Dark Codex'],
-['wa9','Possessed Compendium'],['waa','Possessed Grimoire'],['wab','Forgotten Volume'],['wac','Occult Tome'],['wad','Occult Codex'],
-['wae','Blasphemous Compendium'],['waf','Blasphemous Grimoire'],
-// Misc (523+)
-['elx','Elixir'],['hpo','Healing Potion'],['mpo','Mana Potion'],['hpf','Full Healing Potion'],['mpf','Full Mana Potion'],
-['vps','Stamina Potion'],['yps','Antidote Potion'],['rvs','Rejuvenation Potion'],['rvl','Full Rejuvenation Potion'],['wms','Thawing Potion'],
-['tbk','Tome of Town Portal'],['ibk','Tome of Identify'],['amu','Amulet'],['vip','Amulet of the Viper'],['rin','Ring'],
-['gld','Gold'],['bks','Scroll of Inifuss'],['bkd','Key to the Cairn Stones'],['aqv','Arrows'],['tch','Torch'],
-['cqv','Bolts'],['tsc','Scroll of Town Portal'],['isc','Scroll of Identify'],['hrt','Heart'],['brz','Brain'],
-['jaw','Jawbone'],['eyz','Eye'],['hrn','Horn'],['tal','Tail'],['flg','Flag'],
-['fng','Fang'],['qll','Quill'],['sol','Soul'],['scz','Scalp'],['spe','Spleen'],
-['key','Key'],['luv','The Black Tower Key'],['xyz','Potion of Life'],['j34','A Jade Figurine'],['g34','The Golden Bird'],
-['bbb',"Lam Esen's Tome"],['box','Horadric Cube'],['tr1','Horadric Scroll'],['mss',"Mephisto's Soulstone"],['ass','Book of Skill'],
-['qey',"Khalim's Eye"],['qhr',"Khalim's Heart"],['qbr',"Khalim's Brain"],['ear','Ear'],['gcv','Chipped Amethyst'],
-['gfv','Flawed Amethyst'],['gsv','Amethyst'],['gzv','Flawless Amethyst'],['gpv','Perfect Amethyst'],['gcy','Chipped Topaz'],
-['gfy','Flawed Topaz'],['gsy','Topaz'],['gly','Flawless Topaz'],['gpy','Perfect Topaz'],['gcb','Chipped Sapphire'],
-['gfb','Flawed Sapphire'],['gsb','Sapphire'],['glb','Flawless Sapphire'],['gpb','Perfect Sapphire'],['gcg','Chipped Emerald'],
-['gfg','Flawed Emerald'],['gsg','Emerald'],['glg','Flawless Emerald'],['gpg','Perfect Emerald'],['gcr','Chipped Ruby'],
-['gfr','Flawed Ruby'],['gsr','Ruby'],['glr','Flawless Ruby'],['gpr','Perfect Ruby'],['gcw','Chipped Diamond'],
-['gfw','Flawed Diamond'],['gsw','Diamond'],['glw','Flawless Diamond'],['gpw','Perfect Diamond'],['hp1','Minor Healing Potion'],
-['hp2','Light Healing Potion'],['hp3','Healing Potion'],['hp4','Greater Healing Potion'],['hp5','Super Healing Potion'],['mp1','Minor Mana Potion'],
-['mp2','Light Mana Potion'],['mp3','Mana Potion'],['mp4','Greater Mana Potion'],['mp5','Super Mana Potion'],['skc','Chipped Skull'],
-['skf','Flawed Skull'],['sku','Skull'],['skl','Flawless Skull'],['skz','Perfect Skull'],['hrb','Herb'],
-['cm1','Small Charm'],['cm2','Large Charm'],['cm3','Grand Charm'],['rps','Small Red Potion'],['rpl','Large Red Potion'],
-['bps','Small Blue Potion'],['bpl','Large Blue Potion'],['r01','El Rune'],['r02','Eld Rune'],['r03','Tir Rune'],
-['r04','Nef Rune'],['r05','Eth Rune'],['r06','Ith Rune'],['r07','Tal Rune'],['r08','Ral Rune'],
-['r09','Ort Rune'],['r10','Thul Rune'],['r11','Amn Rune'],['r12','Sol Rune'],['r13','Shael Rune'],
-['r14','Dol Rune'],['r15','Hel Rune'],['r16','Io Rune'],['r17','Lum Rune'],['r18','Ko Rune'],
-['r19','Fal Rune'],['r20','Lem Rune'],['r21','Pul Rune'],['r22','Um Rune'],['r23','Mal Rune'],
-['r24','Ist Rune'],['r25','Gul Rune'],['r26','Vex Rune'],['r27','Ohm Rune'],['r28','Lo Rune'],
-['r29','Sur Rune'],['r30','Ber Rune'],['r31','Jah Rune'],['r32','Cham Rune'],['r33','Zod Rune'],
-['jew','Jewel'],['ice',"Malah's Potion"],['0sc','Scroll of Knowledge'],['tr2','Scroll of Resistance'],['pk1','Key of Terror'],
-['pk2','Key of Hate'],['pk3','Key of Destruction'],['dhn',"Diablo's Horn"],['bey',"Baal's Eye"],['mbr',"Mephisto's Brain"],
-['toa','Token of Absolution'],['tes','Twisted Essence of Suffering'],['ceh','Charged Essense of Hatred'],['bet','Burning Essence of Terror'],['fed','Festering Essence of Destruction'],
-['std','Standard of Heroes'],['xa1','Western Worldstone Shard'],['xa2','Eastern Worldstone Shard'],['xa3','Southern Worldstone Shard'],['xa4','Deep Worldstone Shard'],
-['xa5','Northern Worldstone Shard'],['ua1','Uber Ancient Material 1'],['ua2','Uber Ancient Material 2'],['ua3','Uber Ancient Material 3'],['ua4','Uber Ancient Material 4'],
-['ua5','Uber Ancient Material 5'],['um1','Upgrade Material Fire'],['um2','Upgrade Material Poison'],['um3','Upgrade Material Cold'],['um4','Upgrade Material Physical'],
-['um5','Upgrade Material Lightning'],['um6','Upgrade Material Magic'],['cjw','Colossal Jewel'],['cs2','Crafted Sunder Charm'],['gmm','Amethyst'],
-['1am','Amethyst Stack'],['gmt','Topaz'],['1tp','Topaz Stack'],['gms','Sapphire'],['1sa','Sapphire Stack'],
-['gme','Emerald'],['1em','Emerald Stack'],['gmr','Ruby'],['1rb','Ruby Stack'],['gmd','Diamond'],
-['1di','Diamond Stack'],['gmk','Skull'],['1sk','Skull Stack'],['cm4','Splash Charm T1'],['cm5','Splash Charm T9'],
-['s01','El Rune Stack'],['s02','Eld Rune Stack'],['s03','Tir Rune Stack'],['s04','Nef Rune Stack'],['s05','Eth Rune Stack'],
-['s06','Ith Rune Stack'],['s07','Tal Rune Stack'],['s08','Ral Rune Stack'],['s09','Ort Rune Stack'],['s10','Thul Rune Stack'],
-['s11','Amn Rune Stack'],['s12','Sol Rune Stack'],['s13','Shael Rune Stack'],['s14','Dol Rune Stack'],['s15','Hel Rune Stack'],
-['s16','Io Rune Stack'],['s17','Lum Rune Stack'],['s18','Ko Rune Stack'],['s19','Fal Rune Stack'],['s20','Lem Rune Stack'],
-['s21','Pul Rune Stack'],['s22','Um Rune Stack'],['s23','Mal Rune Stack'],['s24','Ist Rune Stack'],['s25','Gul Rune Stack'],
-['s26','Vex Rune Stack'],['s27','Ohm Rune Stack'],['s28','Lo Rune Stack'],['s29','Sur Rune Stack'],['s30','Ber Rune Stack'],
-['s31','Jah Rune Stack'],['s32','Cham Rune Stack'],['s33','Zod Rune Stack'],['z01','Magic Arrows'],['z02','Magic Bolts'],
-['tws',"Treehead Woodfist's Soul"],['scs',"Snapchip's Soul"],['kch','Keychain'],['bag','Gem Bag'],['stt','Take Item'],
-['agr','Amethyst Grabber'],['tgr','Topaz Grabber'],['sgr','Sapphire Grabber'],['egr','Emerald Grabber'],['rgr','Ruby Grabber'],
-['mgr','Diamond Grabber'],['kgr','Skull Grabber'],['ogr','Chaos Onyx Grabber'],['tkg','Terror Key Grabber'],['hkg','Hate Key Grabber'],
-['dkg','Destruction Key Grabber'],['ka3','Orb of Corruption'],['1ka','Orb of Corruption Stack'],['oos','Orb of Socketing'],['1os','Orb of Socketing Stack'],
-['ooc','Orb of Conversion'],['1oc','Orb of Conversion Stack'],['ooa','Orb of Assemblage'],['1oa','Orb of Assemblage Stack'],['ooi','Orb of Infusion'],
-['1oi','Orb of Infusion Stack'],['ooe','Orb of Shadows'],['1oe','Orb of Shadows Stack'],['mfp','Magic Find Potion'],['xpp','Experience Potion'],
-['fsp','Fire Sunder Potion'],['csp','Cold Sunder Potion'],['lsp','Lightning Sunder Potion'],['psp','Poison Sunder Potion'],['msp','Magic Sunder Potion'],
-['php','Physical Sunder Potion'],['mpa',"Mephisto's Animus"],['blc',"Baal's Calamity"],['dia',"Diablo's Ire"],['rup','Rune Pliers'],
-['jwp','Jewel Pliers'],['dwd','White Dye'],['abd','Black Dye'],['bdd','Blue Dye'],['ird','Red Dye'],
-['ngd','Green Dye'],['cyd','Yellow Dye'],['ryd','Purple Dye'],['hod','Orange Dye'],['drm','Dye Remover'],
-['1gc','Gem Cluster'],['gmo','Chaos Onyx'],['1so','Chaos Onyx Stack'],['cs1','Latent Sunder Charm'],['oor','Orb of Renewal'],
-['1or','Orb of Renewal Stack'],
-];
+// Populated at startup from base/item_meta.json (see loadEditorData()).
+let ITEM_INDEX = [];
 
 // Item inventory sizes [w, h] matching ITEM_INDEX order (from invwidth/invheight columns)
-const ITEM_SIZES=[[1,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,4],[2,3],[1,2],[1,2],[1,2],[1,2],[1,3],[1,3],[1,3],[2,3],[1,3],[1,3],[1,3],[2,3],[2,3],[2,4],[2,3],[1,3],[1,3],[1,3],[1,3],[2,3],[2,3],[2,3],[1,3],[1,4],[1,4],[1,4],[1,4],[2,4],[2,4],[1,2],[1,2],[1,3],[1,3],[1,2],[1,2],[1,2],[2,3],[1,3],[1,3],[1,3],[1,4],[1,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[1,3],[1,4],[1,4],[1,4],[2,4],[2,3],[2,3],[2,4],[2,3],[2,3],[2,4],[2,3],[2,4],[2,3],[2,3],[2,4],[2,3],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,2],[1,2],[1,3],[1,2],[2,3],[1,4],[1,3],[1,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,4],[2,3],[1,2],[1,2],[1,2],[1,2],[1,3],[1,3],[1,3],[2,3],[1,3],[1,3],[1,3],[2,3],[2,3],[2,4],[2,3],[1,3],[1,3],[1,3],[1,3],[2,3],[2,3],[2,3],[1,3],[1,4],[1,4],[1,4],[1,4],[2,4],[2,4],[1,2],[1,2],[1,3],[1,3],[1,2],[1,2],[1,2],[2,3],[1,3],[1,3],[1,3],[1,4],[1,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[1,3],[1,4],[1,4],[1,4],[2,4],[2,3],[2,3],[2,4],[2,3],[2,3],[2,4],[2,3],[2,4],[2,3],[2,3],[2,4],[2,3],[2,3],[2,3],[1,3],[1,3],[1,3],[1,3],[1,3],[1,3],[1,3],[1,3],[1,3],[1,3],[1,3],[1,3],[1,3],[1,3],[1,3],[1,3],[1,3],[1,3],[1,3],[1,3],[1,3],[1,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,4],[2,3],[1,2],[1,2],[1,2],[1,2],[1,3],[1,3],[1,3],[2,3],[1,3],[1,3],[1,3],[2,3],[2,3],[2,4],[2,3],[1,3],[1,3],[1,3],[1,3],[2,3],[2,3],[2,3],[1,3],[1,4],[1,4],[1,4],[1,4],[2,4],[2,4],[1,2],[1,2],[1,3],[1,3],[1,2],[1,2],[1,2],[2,3],[1,3],[1,3],[1,3],[1,4],[1,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[1,3],[1,4],[1,4],[1,4],[2,4],[2,3],[2,3],[2,4],[2,3],[2,3],[2,4],[2,3],[2,4],[2,3],[2,3],[2,4],[2,3],[1,2],[1,2],[1,2],[1,2],[1,3],[2,4],[2,4],[2,4],[2,4],[1,3],[1,2],[1,2],[1,2],[1,2],[1,3],[2,4],[2,4],[2,4],[2,4],[1,3],[1,2],[1,2],[1,2],[1,2],[1,3],[2,4],[2,4],[2,4],[2,4],[1,3],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,2],[2,2],[2,3],[2,3],[2,3],[2,4],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,1],[2,1],[2,1],[2,1],[2,1],[2,2],[2,3],[2,3],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,2],[2,2],[2,3],[2,3],[2,3],[2,4],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,1],[2,1],[2,1],[2,1],[2,1],[2,2],[2,3],[2,3],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,4],[2,4],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,2],[2,2],[2,3],[2,3],[2,3],[2,4],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,1],[2,1],[2,1],[2,1],[2,1],[2,2],[2,3],[2,3],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,4],[2,4],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,4],[2,4],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[2,2],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,2],[1,2],[1,1],[1,1],[1,1],[1,1],[2,2],[2,2],[1,3],[1,2],[1,3],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,2],[1,1],[1,2],[1,2],[2,2],[2,2],[2,2],[1,1],[2,2],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,2],[1,3],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[2,2],[1,2],[1,2],[1,2],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,2],[1,2],[1,2],[1,2],[1,2],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,3],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,3],[1,3],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,1],[1,3],[1,1],[1,1]];
+let ITEM_SIZES = [];
 
 // Unique item names indexed by unique-id (quality=7 items carry a 12-bit ID after quality bits)
 // Trimmed to first 400 for common items; full list available from uniqueitems.txt
