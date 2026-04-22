@@ -162,6 +162,53 @@
   .stat-input:focus { border-color: var(--d2-gold); }
   .stat-input.modified { border-color: #c8a030; color: #f0cc6e; }
 
+  /* ── Search input (Grail + Vault) ── */
+  .search-input {
+    background: var(--d2-surface2);
+    border: 1px solid var(--d2-border);
+    border-radius: 2px;
+    color: var(--d2-text);
+    font-family: 'Crimson Text', serif;
+    font-size: 13px;
+    padding: 6px 10px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .search-input:focus { border-color: var(--d2-gold-dim); }
+  .search-input::placeholder { color: var(--d2-text-dim); font-style: italic; }
+
+  /* ── Vault search results panel ── */
+  .vault-search-results {
+    max-height: 180px;
+    overflow-y: auto;
+    background: var(--d2-surface2);
+    border: 1px solid var(--d2-border);
+    border-radius: 2px;
+    margin-top: 8px;
+  }
+  .vault-search-hit {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--d2-border);
+    cursor: pointer;
+    font-size: 11px;
+    transition: background 0.1s;
+  }
+  .vault-search-hit:last-child { border-bottom: none; }
+  .vault-search-hit:hover { background: rgba(200,168,75,0.08); }
+  .vault-search-hit-name { flex: 1; color: var(--d2-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vault-search-hit-loc  { color: var(--d2-gold-dim); font-family: 'Cinzel', serif; letter-spacing: 1px; font-size: 10px; white-space: nowrap; }
+
+  /* One-shot pulse applied to an item you jump to from a vault search result. */
+  @keyframes vaultHitPulse {
+    0%   { box-shadow: 0 0 0 0 rgba(200,168,75,0.9),   0 0 0 0 rgba(200,168,75,0.6); }
+    50%  { box-shadow: 0 0 0 4px rgba(200,168,75,0.0), 0 0 10px 2px rgba(200,168,75,0.7); }
+    100% { box-shadow: 0 0 0 0 rgba(200,168,75,0.0),   0 0 0 0 rgba(200,168,75,0.0); }
+  }
+  .inv-item.vault-hit { animation: vaultHitPulse 1.2s ease-out 3; }
+
   .skill-list { display: flex; flex-direction: column; gap: 5px; margin-bottom: 16px; }
   .skill-row { display: flex; align-items: center; gap: 10px; background: var(--d2-surface2); border: 1px solid var(--d2-border); padding: 7px 12px; border-radius: 1px; }
   .skill-name { flex: 1; font-size: 14px; color: var(--d2-text); }
@@ -1626,7 +1673,20 @@ async function loadEditorData(timeout) {
   }
 
   // sprites.json → CLASS_SPRITES + CF_W + CF_H + QUEST_SPRITES + QUEST_PAL
-  const sprites = await _fetchEditorJson('sprites.json', timeout);
+  // The remote copy on GitHub main may be older than our local file (new
+  // fields added in this branch). If we got remote data but it's missing a
+  // field we know is in local, retry the local file directly.
+  let sprites = await _fetchEditorJson('sprites.json', timeout);
+  if (sprites && !sprites.questSprites && !usingFallback) {
+    try {
+      const res = await fetchTimed(BASE_FALLBACK_URL + 'sprites.json', timeout);
+      const localSprites = JSON.parse(await res.text());
+      if (localSprites && localSprites.questSprites) {
+        sprites = localSprites;
+        addLog('ok', '✓ sprites.json (local — remote lacks questSprites)');
+      }
+    } catch (e) { /* keep remote version */ }
+  }
   if (sprites && Array.isArray(sprites.sprites)) {
     CLASS_SPRITES = sprites.sprites;
     if (typeof sprites.cfW === 'number') CF_W = sprites.cfW;
@@ -11485,6 +11545,23 @@ let grailParsed = null;    // { tabs:[{jmOff, count, items:[]}] }
 let grailItems = [];       // flat array of all items in the grail d2i
 let grailFound = new Set();       // set of "u_<uniqueId>" or "s_<setId>" keys found in grail
 let grailFoundItems = new Map();  // key -> item object (for stash grid display)
+// Free-text search state for the Grail and Vault tabs. Empty string = no filter.
+let _grailSearchQuery = '';
+let _vaultSearchQuery = '';
+// One-shot highlight: when a user clicks a vault search result, we nav to that
+// page and pulse the matching item's cell. The grid renderer reads this and
+// clears it after applying.
+let _vaultHighlightOffset = null;
+
+// Case-insensitive substring match against a display name + type code.
+// Tight hot-path — inlined in the grail/vault filters.
+function _matchesSearchQuery(name, code, q) {
+  if (!q) return true;
+  const ql = q.toLowerCase();
+  if (name && name.toLowerCase().includes(ql)) return true;
+  if (code && code.toLowerCase().includes(ql)) return true;
+  return false;
+}
 
 // `name` is the stable internal identifier (used as Map key for grouping); never localize it.
 // `key` is the localization string-table key; rendering uses `grailCatLabel(name)` to look it up.
@@ -12018,14 +12095,32 @@ let _grailGridOpen = new Set(); // track which sections have grid view open
 let _grailGridPage = {};       // sectionId -> current page index
 
 function renderGrail(c) {
-  const { checklist, setGroups } = buildGrailChecklist();
+  let { checklist, setGroups } = buildGrailChecklist();
 
+  // ── Progress calc (unfiltered — always shows full grail totals) ──
   let totalFound = 0, totalItems = 0;
   for (const [, list] of checklist) { totalFound += list.filter(i => i.found).length; totalItems += list.length; }
   for (const [, items] of setGroups) { totalFound += items.filter(i => i.found).length; totalItems += items.length; }
-
   const pct = totalItems > 0 ? (totalFound / totalItems * 100).toFixed(1) : 0;
   const barWidth = totalItems > 0 ? (totalFound / totalItems * 100) : 0;
+
+  // ── Search filter (applied before render) ──
+  let searchHitCount = 0;
+  if (_grailSearchQuery) {
+    const q = _grailSearchQuery.toLowerCase();
+    const filteredCl = new Map();
+    for (const [cat, items] of checklist) {
+      const hits = items.filter(it => _matchesSearchQuery(it.name, it.code, q));
+      if (hits.length) { filteredCl.set(cat, hits); searchHitCount += hits.length; }
+    }
+    const filteredSg = new Map();
+    for (const [group, items] of setGroups) {
+      const hits = items.filter(it => _matchesSearchQuery(it.name, it.code, q));
+      if (hits.length) { filteredSg.set(group, hits); searchHitCount += hits.length; }
+    }
+    checklist = filteredCl;
+    setGroups = filteredSg;
+  }
 
   let html = `<div style="padding:20px;max-width:800px;margin:0 auto">
     <h2 style="color:var(--d2-gold);font-family:'Cinzel',serif;margin:0 0 16px">${esc(L('ui_grail_heading','Holy Grail'))}</h2>
@@ -12039,6 +12134,21 @@ function renderGrail(c) {
     </div>
     <div style="margin-bottom:16px">
       <button class="btn" onclick="saveGrailFile()" ${grailD2i ? '' : 'disabled'}>${esc(L('ui_grail_save_btn','Save Grail .d2i'))}</button>
+    </div>
+
+    <!-- ── Search input ── -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+      <input type="text" class="search-input" id="grailSearchInput"
+             value="${esc(_grailSearchQuery)}"
+             placeholder="${esc(L('ui_search_placeholder','Search items by name or code…'))}"
+             oninput="onGrailSearchInput(this.value)"
+             style="flex:1;min-width:240px">
+      ${_grailSearchQuery
+        ? `<span style="font-size:11px;color:var(--d2-text-dim);font-family:'Cinzel',serif;letter-spacing:1px">
+             ${Lfmt('ui_search_hits','{n} match{plural}',{ n: searchHitCount, plural: searchHitCount === 1 ? '' : 'es' })}
+           </span>
+           <button class="btn" style="padding:4px 10px;font-size:10px" onclick="onGrailSearchInput('')">${esc(L('ui_search_clear','Clear'))}</button>`
+        : ''}
     </div>
 
     <div style="margin-bottom:20px">
@@ -12119,6 +12229,33 @@ window.toggleGrailGrid = function(sectionId) {
   if (_grailGridOpen.has(sectionId)) _grailGridOpen.delete(sectionId);
   else _grailGridOpen.add(sectionId);
   renderGrail(document.getElementById('tabContent'));
+};
+
+// Grail search — updates the module state and auto-expands the list view on
+// every category that has a matching item so hits are visible immediately.
+window.onGrailSearchInput = function(value) {
+  _grailSearchQuery = (value || '').trim();
+  if (_grailSearchQuery) {
+    const q = _grailSearchQuery.toLowerCase();
+    const { checklist, setGroups } = buildGrailChecklist();
+    const classCatNames = new Set(GRAIL_CATEGORIES.filter(c => c.group === 'class').map(c => c.name));
+    for (const [cat, items] of checklist) {
+      if (!items.some(it => _matchesSearchQuery(it.name, it.code, q))) continue;
+      const prefix = classCatNames.has(cat) ? 'uc' : 'u';
+      _grailGridOpen.add(prefix + '_' + cat.replace(/\W/g, '_') + '_list');
+      // Make sure the Class Items container is also open when a class cat matches
+      if (prefix === 'uc') _grailGridOpen.add('u_class_group');
+    }
+    for (const [group, items] of setGroups) {
+      if (!items.some(it => _matchesSearchQuery(it.name, it.code, q))) continue;
+      _grailGridOpen.add('s_' + group.replace(/\W/g, '_') + '_list');
+    }
+  }
+  // Preserve the input's focus + caret position across the re-render so
+  // typing stays smooth (renderGrail rebuilds the DOM wholesale).
+  renderGrail(document.getElementById('tabContent'));
+  const inp = document.getElementById('grailSearchInput');
+  if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
 };
 
 window.grailGridPageNav = function(sectionId, delta) {
@@ -13413,7 +13550,11 @@ function buildVaultPageGrid(pageId, cellPx) {
         const { name, cls } = itemDisplayName(entry.item);
         const borderCls = itemQualityCls(entry.item);
         const displayName = abbreviateItemName(name, entry.w, entry.h);
-        html += `<div class="inv-item ${borderCls}"
+        // Apply the one-shot search-hit highlight if this is the item we just
+        // jumped to. _vaultHighlightOffset is cleared after this grid render.
+        const hitCls = (entry.item.byteOffset === _vaultHighlightOffset) ? ' vault-hit' : '';
+        const hitAttr = (entry.item.byteOffset === _vaultHighlightOffset) ? ` data-vault-hit-offset="${entry.item.byteOffset}"` : '';
+        html += `<div class="inv-item ${borderCls}${hitCls}"${hitAttr}
           draggable="true"
           ondragstart="vaultDragStart(event, ${entry.item.byteOffset}, 'vault', ${entry.w}, ${entry.h})"
           ondragend="vaultDragEnd()"
@@ -13498,7 +13639,9 @@ function buildVaultQuadGrid(quad, cellPx) {
         const { name, cls } = itemDisplayName(entry.item);
         const borderCls = itemQualityCls(entry.item);
         const displayName = abbreviateItemName(name, entry.w, entry.h);
-        html += `<div class="inv-item ${borderCls}"
+        const hitCls = (entry.item.byteOffset === _vaultHighlightOffset) ? ' vault-hit' : '';
+        const hitAttr = (entry.item.byteOffset === _vaultHighlightOffset) ? ` data-vault-hit-offset="${entry.item.byteOffset}"` : '';
+        html += `<div class="inv-item ${borderCls}${hitCls}"${hitAttr}
           draggable="true"
           ondragstart="vaultDragStart(event, ${entry.item.byteOffset}, 'vault', ${entry.w}, ${entry.h})"
           ondragend="vaultDragEnd()"
@@ -14468,6 +14611,19 @@ function renderVault(c) {
         </button>
       </div>
 
+      <!-- ── Vault search — scans every item on every page by display name + type code ── -->
+      ${loaded ? `<div style="margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <input type="text" class="search-input" id="vaultSearchInput"
+                 value="${esc(_vaultSearchQuery)}"
+                 placeholder="${esc(L('ui_search_placeholder','Search items by name or code…'))}"
+                 oninput="onVaultSearchInput(this.value)"
+                 style="flex:1;min-width:240px">
+          ${_vaultSearchQuery ? `<button class="btn" style="padding:4px 10px;font-size:10px" onclick="onVaultSearchInput('')">${esc(L('ui_search_clear','Clear'))}</button>` : ''}
+        </div>
+        ${_vaultSearchQuery ? _buildVaultSearchResultsHtml() : ''}
+      </div>` : ''}
+
       <!-- In single-page mode the source panel and the 16×13 vault grid sit
            side-by-side comfortably. In quad mode the 32×26 grid is too wide
            to share the row with a 500px source panel within the 1300px editor
@@ -14542,12 +14698,90 @@ function renderVault(c) {
       </div>
     </div>
   `;
+  // Clear the one-shot search-jump highlight — CSS animation will still play
+  // on the element we just rendered, but re-renders won't re-trigger it.
+  _vaultHighlightOffset = null;
 }
 
 window.vaultGoToPage = function(pageIdx) {
   const idx = Math.max(0, Math.min(VAULT_PAGE_COUNT - 1, parseInt(pageIdx, 10) || 0));
   vaultActivePage = idx;
   if (activeTab === 'vault') renderVault(document.getElementById('tabContent'));
+};
+
+// ── Vault search ──────────────────────────────────────────
+
+window.onVaultSearchInput = function(value) {
+  _vaultSearchQuery = (value || '').trim();
+  renderVault(document.getElementById('tabContent'));
+  // Keep focus + caret position since we just rebuilt the DOM wholesale.
+  const inp = document.getElementById('vaultSearchInput');
+  if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+};
+
+// Iterate every top-level vault item, decode its display name, and collect hits.
+// Returns an array of { offset, name, code, pageId, pageLabel } sorted by page.
+function _findVaultSearchHits(query) {
+  if (!query) return [];
+  const q = query.toLowerCase();
+  const hits = [];
+  for (const it of vaultItems) {
+    if (!_vaultItemIsTopLevel(it)) continue; // skip socketed children
+    try { ensureItemProps(it); } catch (e) { _logCaught('vaultSearch.ensureItemProps', e); continue; }
+    const disp = itemDisplayName(it);
+    const name = (disp && disp.name) || it.typeCode || '';
+    if (!_matchesSearchQuery(name, it.typeCode, q)) continue;
+    // Prefer the quad label when the item's page is part of a quad, so the
+    // user sees where they'll land after jumping.
+    const quadEntry = findQuadForPage(it.pageId);
+    const pageLabel = quadEntry
+      ? (quadEntry.quad.name || L('ui_vault_quad_default_name','Quad Tab'))
+      : vaultPageLabel(it.pageId);
+    hits.push({ offset: it.byteOffset, name, code: it.typeCode, pageId: it.pageId, pageLabel });
+  }
+  // Sort by page then name — gives a predictable list the user can scan.
+  hits.sort((a, b) => a.pageId - b.pageId || a.name.localeCompare(b.name));
+  return hits;
+}
+
+function _buildVaultSearchResultsHtml() {
+  const hits = _findVaultSearchHits(_vaultSearchQuery);
+  if (!hits.length) {
+    return `<div style="margin-top:8px;padding:8px 12px;color:var(--d2-text-dim);font-size:11px;font-style:italic">
+      ${esc(L('ui_search_no_hits','No items match.'))}
+    </div>`;
+  }
+  const header = `<div style="margin-top:8px;padding:4px 10px;font-family:'Cinzel',serif;font-size:10px;letter-spacing:1px;color:var(--d2-gold);background:var(--d2-surface3);border:1px solid var(--d2-border);border-bottom:none;border-radius:2px 2px 0 0">
+    ${esc(Lfmt('ui_search_hits','{n} match{plural}',{ n: hits.length, plural: hits.length === 1 ? '' : 'es' }))}
+  </div>`;
+  const rows = hits.slice(0, 80).map(h =>
+    `<div class="vault-search-hit" onclick="vaultJumpToHit(${h.offset}, ${h.pageId})">
+      <span class="vault-search-hit-name" title="${esc(h.name)}">${esc(h.name)}</span>
+      <span class="vault-search-hit-loc">${esc(h.pageLabel)}</span>
+    </div>`
+  ).join('');
+  const overflowNote = hits.length > 80
+    ? `<div style="padding:4px 10px;font-size:10px;color:var(--d2-text-dim);font-style:italic;border-top:1px solid var(--d2-border)">
+         ${esc(Lfmt('ui_search_more','…and {n} more. Narrow the search to see them.',{ n: hits.length - 80 }))}
+       </div>`
+    : '';
+  return header + `<div class="vault-search-results">${rows}${overflowNote}</div>`;
+}
+
+// Jump to the page holding a search hit. Quad-aware: if the item is inside a
+// quad, navigate to the quad's first page (which makes the quad view render).
+// Also schedules a one-shot highlight pulse on the target item.
+window.vaultJumpToHit = function(byteOffset, pageId) {
+  const quadEntry = findQuadForPage(pageId);
+  const target = quadEntry ? Math.min.apply(null, quadEntry.quad.pages) : pageId;
+  _vaultHighlightOffset = byteOffset;
+  vaultActivePage = target;
+  renderVault(document.getElementById('tabContent'));
+  // After the render, scroll the item into view smoothly.
+  setTimeout(() => {
+    const el = document.querySelector(`[data-vault-hit-offset="${byteOffset}"]`);
+    if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 30);
 };
 
 // Navigation treats a quad as a single logical page — ◄/► jump over all 16

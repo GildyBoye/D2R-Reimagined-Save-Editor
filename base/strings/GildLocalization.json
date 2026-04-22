@@ -2315,5 +2315,25 @@
     {
         "Key": "ui_vault_rename_quad_note",
         "enUS": "Leave blank to restore the default \"Quad Tab\" name."
+    },
+    {
+        "Key": "ui_search_placeholder",
+        "enUS": "Search items by name or code…"
+    },
+    {
+        "Key": "ui_search_clear",
+        "enUS": "Clear"
+    },
+    {
+        "Key": "ui_search_hits",
+        "enUS": "{n} match{plural}"
+    },
+    {
+        "Key": "ui_search_no_hits",
+        "enUS": "No items match."
+    },
+    {
+        "Key": "ui_search_more",
+        "enUS": "…and {n} more. Narrow the search to see them."
     }
 ]
