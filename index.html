@@ -707,9 +707,9 @@
     overflow: hidden;
     position: relative;
   }
-  .quest-card-icon canvas { image-rendering: pixelated; }
+  .quest-card-icon img { width: 100%; height: 100%; object-fit: cover; }
   .quest-card-icon .quest-card-fallback {
-    /* Shown only when the sprite canvas can't be painted (sprites.json missing). */
+    /* Shown only when the image file is missing (onerror swaps it in). */
     display: none;
     font-size: 22px; color: var(--d2-gold-dim); opacity: 0.75;
   }
@@ -1672,29 +1672,12 @@ async function loadEditorData(timeout) {
     _CLASS_TEMPLATES = templates;
   }
 
-  // sprites.json → CLASS_SPRITES + CF_W + CF_H + QUEST_SPRITES + QUEST_PAL
-  // The remote copy on GitHub main may be older than our local file (new
-  // fields added in this branch). If we got remote data but it's missing a
-  // field we know is in local, retry the local file directly.
-  let sprites = await _fetchEditorJson('sprites.json', timeout);
-  if (sprites && !sprites.questSprites && !usingFallback) {
-    try {
-      const res = await fetchTimed(BASE_FALLBACK_URL + 'sprites.json', timeout);
-      const localSprites = JSON.parse(await res.text());
-      if (localSprites && localSprites.questSprites) {
-        sprites = localSprites;
-        addLog('ok', '✓ sprites.json (local — remote lacks questSprites)');
-      }
-    } catch (e) { /* keep remote version */ }
-  }
+  // sprites.json → CLASS_SPRITES + CF_W + CF_H
+  const sprites = await _fetchEditorJson('sprites.json', timeout);
   if (sprites && Array.isArray(sprites.sprites)) {
     CLASS_SPRITES = sprites.sprites;
     if (typeof sprites.cfW === 'number') CF_W = sprites.cfW;
     if (typeof sprites.cfH === 'number') CF_H = sprites.cfH;
-  }
-  if (sprites && sprites.questSprites && Array.isArray(sprites.questPal)) {
-    QUEST_SPRITES = sprites.questSprites;
-    QUEST_PAL     = sprites.questPal;
   }
 
   // wheel.json → _WHEEL_CHALLENGES + exclusion groups + pair conflicts + tree bans
@@ -4285,10 +4268,6 @@ let _CLASS_TEMPLATES = {};
 // ── 8-bit character sprites for campfire scene ──
 // Populated at startup from base/sprites.json (see loadEditorData()).
 let CLASS_SPRITES = [];
-// Quest icons (8-bit pixel art), shared across multiple quests by theme.
-// Keyed by name: QUEST_SPRITES['cave'], etc. Matches entries in QUEST_ICON_KEYS.
-let QUEST_SPRITES = {};
-let QUEST_PAL     = [];
 
 function _renderSprite(canvas, sprite) {
   const rows = sprite.rows, pal = sprite.pal;
@@ -4312,14 +4291,6 @@ function _renderSprite(canvas, sprite) {
   ctx.putImageData(img, 0, 0);
 }
 
-// Render a quest sprite by key (e.g. 'cave', 'demon') into the given canvas
-// using the shared QUEST_PAL. Returns false if the sprite isn't loaded yet.
-function _renderQuestSprite(canvas, key) {
-  const rows = QUEST_SPRITES[key];
-  if (!rows || !rows.length || !QUEST_PAL.length) return false;
-  _renderSprite(canvas, { rows, pal: QUEST_PAL });
-  return true;
-}
 
 // Campfire fire (doom-fire algorithm, same palette as side fires)
 const _cfPal = [];
@@ -11197,15 +11168,18 @@ const QUEST_DEFS = [
   {act:'Act V',   name:"Eve of Destruction"},
 ];
 
-// Quest icon → 8-bit sprite mapping. Each index aligns with QUEST_DEFS.
-// Sprite data lives in base/sprites.json under questSprites/questPal, loaded
-// at startup into QUEST_SPRITES / QUEST_PAL below.
-const QUEST_ICON_KEYS = [
-  'cave',     'grave',    'anvil',    'book',     'tower',    'demon',    // Act I
-  'grave',    'staff',    'sun',      'tower',    'demon',    'grave',    // Act II
-  'book',     'book',     'sword',    'bird',     'tower',    'demon',    // Act III
-  'angel',    'demon',    'anvil',                                        // Act IV
-  'castle',   'mountain', 'ice',      'demon',    'castle',   'demon',    // Act V
+// Quest icon image filenames (indices match QUEST_DEFS). Files live in
+// base/images/ — the render just emits an <img> tag per quest card.
+const QUEST_ICON_FILES = [
+  'DenOfEvil.jpg',          'SistersBurialGround.jpg', 'ToolsOfTheTrade.jpg',
+  'SearchForCain.jpg',      'ForgottenTower.jpg',      'SistersSlaughter.jpg',
+  'RadamentsLair.jpg',      'HoradricStaff.jpg',       'TaintedSun.jpg',
+  'ArcaneSanctuary.jpg',    'Summoner.jpg',            'SevenTombs.jpg',
+  'LamEsensTome.jpg',       'KhalimsWill.jpg',         'BladeOfTheOldReligion.jpg',
+  'GoldenBird.jpg',         'BlackenedTemple.jpg',     'Guardian.jpg',
+  'FallenAngel.jpg',        'TerrorsEnd.jpg',          'HellsForge.jpg',
+  'SiegeOnHarrogath.jpg',   'RescueOnMount.jpg',       'PrisonOfIce.jpg',
+  'BetrayalOfHarrogath.jpg','RiteOfPassage.jpg',       'EveOfDestruction.jpg',
 ];
 
 let questActiveDiff = 0;
@@ -12642,11 +12616,11 @@ function renderQuests(c) {
       const rewardTag = qd.rewardDesc ? `<div class="quest-card-reward">${esc(qd.rewardDesc)}</div>` : '';
       const disabledAttr = (q.done && lockedOnLoad) ? 'disabled title="Was completed when file was loaded — cannot reset"' : '';
       const cardCls = q.done ? 'quest-card done' : q.started ? 'quest-card started' : 'quest-card';
-      const iconKey = QUEST_ICON_KEYS[q.index] || 'book';
-      // Canvas populated after innerHTML is set (see pass below). Fallback
-      // glyph behind the canvas is visible until the sprite paints.
-      const iconHtml = `<canvas class="quest-card-canvas" data-quest-icon="${iconKey}"
-                               style="display:block;width:100%;height:100%"></canvas>
+      const iconFile = QUEST_ICON_FILES[q.index];
+      // Fallback span (scroll glyph) is hidden by default; the <img>'s onerror
+      // swaps it in if the file is missing.
+      const iconHtml = `<img src="base/images/${esc(iconFile)}" alt=""
+        onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
         <span class="quest-card-fallback">&#128220;</span>`;
       html += `<div class="${cardCls}">
         <div class="quest-card-icon">${iconHtml}</div>
@@ -12666,19 +12640,6 @@ function renderQuests(c) {
   });
 
   c.innerHTML = html;
-
-  // Paint quest sprites into each card's canvas. If a sprite key is missing
-  // (e.g. sprites.json failed to load), hide the canvas so the fallback
-  // glyph underneath stays visible.
-  const canvases = c.querySelectorAll('canvas.quest-card-canvas');
-  for (const cv of canvases) {
-    const key = cv.dataset.questIcon;
-    if (!_renderQuestSprite(cv, key)) {
-      cv.style.display = 'none';
-      const fb = cv.nextElementSibling;
-      if (fb) fb.style.display = 'flex';
-    }
-  }
 }
 
 window.setQuestDiff = function(d) {
