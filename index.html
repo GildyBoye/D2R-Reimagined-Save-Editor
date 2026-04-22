@@ -631,6 +631,54 @@
   .quest-check { width: 16px; height: 16px; accent-color: var(--d2-gold); cursor: pointer; flex-shrink: 0; }
   .quest-name { flex: 1; font-size: 14px; color: var(--d2-text); min-width: 160px; }
 
+  /* ── Quest tab: per-act 3-column card grid ── */
+  .quest-act-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  .quest-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--d2-surface2);
+    border: 1px solid var(--d2-border);
+    border-radius: 2px;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .quest-card.done    { border-color: var(--d2-green); background: rgba(42,90,42,0.08); }
+  .quest-card.started { border-color: #c8a030; background: rgba(200,160,48,0.06); }
+  .quest-card-icon {
+    flex: 0 0 auto;
+    width: 48px; height: 48px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--d2-bg);
+    border: 1px solid var(--d2-border);
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+  }
+  .quest-card-icon canvas { image-rendering: pixelated; }
+  .quest-card-icon .quest-card-fallback {
+    /* Shown only when the sprite canvas can't be painted (sprites.json missing). */
+    display: none;
+    font-size: 22px; color: var(--d2-gold-dim); opacity: 0.75;
+  }
+  .quest-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .quest-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .quest-card-head .quest-check { margin: 0; }
+  .quest-card-name {
+    font-family: 'Cinzel', serif;
+    font-size: 12px; letter-spacing: 0.5px;
+    color: var(--d2-text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    flex: 1;
+  }
+  .quest-card-reward { font-size: 10px; color: var(--d2-gold); opacity: 0.85; }
+  .quest-card-status { font-size: 10px; font-family: 'Cinzel', serif; letter-spacing: 1px; }
+
   .wp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 6px; margin-bottom: 16px; }
   .wp-btn { padding: 7px 10px; background: var(--d2-surface2); border: 1px solid var(--d2-border); border-radius: 1px; color: var(--d2-text-dim); font-size: 12px; font-family: 'Cinzel', serif; letter-spacing: 0.5px; cursor: pointer; text-align: left; transition: all 0.12s; }
   .wp-btn:hover { border-color: var(--d2-gold-dim); color: var(--d2-text); }
@@ -1577,12 +1625,16 @@ async function loadEditorData(timeout) {
     _CLASS_TEMPLATES = templates;
   }
 
-  // sprites.json → CLASS_SPRITES + CF_W + CF_H
+  // sprites.json → CLASS_SPRITES + CF_W + CF_H + QUEST_SPRITES + QUEST_PAL
   const sprites = await _fetchEditorJson('sprites.json', timeout);
   if (sprites && Array.isArray(sprites.sprites)) {
     CLASS_SPRITES = sprites.sprites;
     if (typeof sprites.cfW === 'number') CF_W = sprites.cfW;
     if (typeof sprites.cfH === 'number') CF_H = sprites.cfH;
+  }
+  if (sprites && sprites.questSprites && Array.isArray(sprites.questPal)) {
+    QUEST_SPRITES = sprites.questSprites;
+    QUEST_PAL     = sprites.questPal;
   }
 
   // wheel.json → _WHEEL_CHALLENGES + exclusion groups + pair conflicts + tree bans
@@ -4173,6 +4225,10 @@ let _CLASS_TEMPLATES = {};
 // ── 8-bit character sprites for campfire scene ──
 // Populated at startup from base/sprites.json (see loadEditorData()).
 let CLASS_SPRITES = [];
+// Quest icons (8-bit pixel art), shared across multiple quests by theme.
+// Keyed by name: QUEST_SPRITES['cave'], etc. Matches entries in QUEST_ICON_KEYS.
+let QUEST_SPRITES = {};
+let QUEST_PAL     = [];
 
 function _renderSprite(canvas, sprite) {
   const rows = sprite.rows, pal = sprite.pal;
@@ -4194,6 +4250,15 @@ function _renderSprite(canvas, sprite) {
     }
   }
   ctx.putImageData(img, 0, 0);
+}
+
+// Render a quest sprite by key (e.g. 'cave', 'demon') into the given canvas
+// using the shared QUEST_PAL. Returns false if the sprite isn't loaded yet.
+function _renderQuestSprite(canvas, key) {
+  const rows = QUEST_SPRITES[key];
+  if (!rows || !rows.length || !QUEST_PAL.length) return false;
+  _renderSprite(canvas, { rows, pal: QUEST_PAL });
+  return true;
 }
 
 // Campfire fire (doom-fire algorithm, same palette as side fires)
@@ -4660,6 +4725,7 @@ function _doReset() {
   vaultActivePage = 0;
   vaultDirty = false;
   vaultFileName = null;
+  vaultQuads = [];
 
   grailD2i = null;
   grailFileName = null;
@@ -5489,6 +5555,7 @@ function restoreUndoSnapshot() {
     try {
       const hdr = decodeVaultHeader(vaultD2i);
       vaultPageNames = hdr.pageNames;
+      vaultQuads = hdr.quads || [];
       vaultItems = parseVaultItems(vaultD2i, hdr.jmOffset, hdr.itemPageIds);
     } catch (e) { _logCaught('undo.vaultDecode', e); }
     vaultDirty = false;
@@ -6341,6 +6408,7 @@ async function _reloadKindFromFile(kind, file) {
       try {
         const hdr = decodeVaultHeader(vaultD2i);
         vaultPageNames = hdr.pageNames;
+        vaultQuads = hdr.quads || [];
         vaultItems = parseVaultItems(vaultD2i, hdr.jmOffset, hdr.itemPageIds);
       } catch (e) { _logCaught('reload.vaultDecode', e); }
       vaultDirty = false;
@@ -11069,6 +11137,17 @@ const QUEST_DEFS = [
   {act:'Act V',   name:"Eve of Destruction"},
 ];
 
+// Quest icon → 8-bit sprite mapping. Each index aligns with QUEST_DEFS.
+// Sprite data lives in base/sprites.json under questSprites/questPal, loaded
+// at startup into QUEST_SPRITES / QUEST_PAL below.
+const QUEST_ICON_KEYS = [
+  'cave',     'grave',    'anvil',    'book',     'tower',    'demon',    // Act I
+  'grave',    'staff',    'sun',      'tower',    'demon',    'grave',    // Act II
+  'book',     'book',     'sword',    'bird',     'tower',    'demon',    // Act III
+  'angel',    'demon',    'anvil',                                        // Act IV
+  'castle',   'mountain', 'ice',      'demon',    'castle',   'demon',    // Act V
+];
+
 let questActiveDiff = 0;
 // Track which quests were completed when the file was loaded — per difficulty [diff][questIndex] = true/false
 let _questsCompletedOnLoad = [[],[],[]];
@@ -12417,26 +12496,52 @@ function renderQuests(c) {
   }
 
   acts.forEach(act => {
-    html += h2(act) + '<div class="quest-grid">';
+    html += h2(act) + '<div class="quest-act-grid">';
     byAct[act].forEach(q => {
       const lockedOnLoad = _questsCompletedOnLoad[diff]?.[q.index];
       const statusColor = q.done ? 'var(--d2-green-bright)' : q.started ? '#c8a030' : 'var(--d2-text-dim)';
       const statusLabel = q.done ? (lockedOnLoad ? 'Complete' : 'Complete ✦') : q.started ? 'Started' : 'Incomplete';
       const qd = QUEST_DEFS[q.index];
-      const rewardTag = qd.rewardDesc ? `<span style="font-size:10px;color:var(--d2-gold);opacity:0.7;margin-left:4px">${qd.rewardDesc}</span>` : '';
+      const rewardTag = qd.rewardDesc ? `<div class="quest-card-reward">${esc(qd.rewardDesc)}</div>` : '';
       const disabledAttr = (q.done && lockedOnLoad) ? 'disabled title="Was completed when file was loaded — cannot reset"' : '';
-      html += `<div class="quest-row">
-        <input type="checkbox" class="quest-check"
-          ${q.done?'checked':''} ${disabledAttr}
-          onchange="toggleQuest(${diff},${q.index},this.checked)">
-        <span class="quest-name">${esc(L('q_'+q.name.replace(/[^a-zA-Z0-9]/g,'_'), q.name))}${rewardTag}</span>
-        <span style="font-size:11px;font-family:'Cinzel',serif;color:${statusColor};letter-spacing:1px;white-space:nowrap">${statusLabel}</span>
+      const cardCls = q.done ? 'quest-card done' : q.started ? 'quest-card started' : 'quest-card';
+      const iconKey = QUEST_ICON_KEYS[q.index] || 'book';
+      // Canvas populated after innerHTML is set (see pass below). Fallback
+      // glyph behind the canvas is visible until the sprite paints.
+      const iconHtml = `<canvas class="quest-card-canvas" data-quest-icon="${iconKey}"
+                               style="display:block;width:100%;height:100%"></canvas>
+        <span class="quest-card-fallback">&#128220;</span>`;
+      html += `<div class="${cardCls}">
+        <div class="quest-card-icon">${iconHtml}</div>
+        <div class="quest-card-body">
+          <div class="quest-card-head">
+            <input type="checkbox" class="quest-check"
+              ${q.done?'checked':''} ${disabledAttr}
+              onchange="toggleQuest(${diff},${q.index},this.checked)">
+            <span class="quest-card-name" title="${esc(L('q_'+q.name.replace(/[^a-zA-Z0-9]/g,'_'), q.name))}">${esc(L('q_'+q.name.replace(/[^a-zA-Z0-9]/g,'_'), q.name))}</span>
+          </div>
+          ${rewardTag}
+          <div class="quest-card-status" style="color:${statusColor}">${statusLabel}</div>
+        </div>
       </div>`;
     });
     html += '</div>';
   });
 
   c.innerHTML = html;
+
+  // Paint quest sprites into each card's canvas. If a sprite key is missing
+  // (e.g. sprites.json failed to load), hide the canvas so the fallback
+  // glyph underneath stays visible.
+  const canvases = c.querySelectorAll('canvas.quest-card-canvas');
+  for (const cv of canvases) {
+    const key = cv.dataset.questIcon;
+    if (!_renderQuestSprite(cv, key)) {
+      cv.style.display = 'none';
+      const fb = cv.nextElementSibling;
+      if (fb) fb.style.display = 'flex';
+    }
+  }
 }
 
 window.setQuestDiff = function(d) {
@@ -12840,7 +12945,12 @@ const VAULT_PAGE_TYPE  = 99;
 const VAULT_GRID_W     = 16;
 const VAULT_GRID_H     = 13;
 const VAULT_PAGE_COUNT = 100;
-const VAULT_FORMAT_TAG = 'VLT1';  // ASCII at offset 0x40 when present
+// Quad = 4 pages displayed as one 32×26 grid (2×2 arrangement, row-major).
+const VAULT_QUAD_COLS  = 2;
+const VAULT_QUAD_ROWS  = 2;
+const VAULT_QUAD_SIZE  = VAULT_QUAD_COLS * VAULT_QUAD_ROWS;  // 4 pages per quad
+const VAULT_QUAD_W     = VAULT_GRID_W * VAULT_QUAD_COLS;     // 32 cells wide
+const VAULT_QUAD_H     = VAULT_GRID_H * VAULT_QUAD_ROWS;     // 26 cells tall
 
 let vaultD2i        = null;     // raw Uint8Array (when loaded from disk)
 let vaultFileName   = null;     // for the save-download filename
@@ -12848,11 +12958,70 @@ let vaultItems      = [];       // decoded items (same shape as stash items)
 let vaultPageNames  = {};       // { [pageId:number]: displayName:string }
 let vaultActivePage = 0;        // 0..99
 let vaultDirty      = false;    // set on any move/rename/delete
+// Array of { name:string, pages:[16 pageIds in row-major 4×4 order] }.
+// Items stay on their individual pages — the quad is purely a render/layout
+// overlay. Persisted as a VLT2 section in the vault file.
+let vaultQuads      = [];
 
 function vaultPageLabel(pageId) {
   const custom = vaultPageNames[pageId];
   if (custom && custom.length) return custom;
   return `Page ${pageId + 1}`;
+}
+
+// ── Quad helpers ───────────────────────────────────────────
+// Return { quad, quadIndex, slotIndex } if the page is part of a quad,
+// otherwise null. slotIndex is the 0..15 position within the quad (row-major).
+function findQuadForPage(pageId) {
+  for (let q = 0; q < vaultQuads.length; q++) {
+    const slot = vaultQuads[q].pages.indexOf(pageId);
+    if (slot >= 0) return { quad: vaultQuads[q], quadIndex: q, slotIndex: slot };
+  }
+  return null;
+}
+function isPageInQuad(pageId) { return findQuadForPage(pageId) !== null; }
+// Resolve a (col, row) cell inside the 32×26 quad view → pageId + local coords.
+function quadCellToSubpage(quad, col, row) {
+  const slotCol = Math.floor(col / VAULT_GRID_W);
+  const slotRow = Math.floor(row / VAULT_GRID_H);
+  const slotIndex = slotRow * VAULT_QUAD_COLS + slotCol;
+  return {
+    pageId:  quad.pages[slotIndex],
+    localX:  col - slotCol * VAULT_GRID_W,
+    localY:  row - slotRow * VAULT_GRID_H,
+    slotCol, slotRow, slotIndex,
+  };
+}
+// An item at (col, row) with (w, h) spans a quad boundary if its footprint
+// crosses into a second quadrant on either axis. Used to reject placements.
+function quadItemStraddles(col, row, w, h) {
+  const lastCol = col + w - 1, lastRow = row + h - 1;
+  if (Math.floor(col / VAULT_GRID_W) !== Math.floor(lastCol / VAULT_GRID_W)) return true;
+  if (Math.floor(row / VAULT_GRID_H) !== Math.floor(lastRow / VAULT_GRID_H)) return true;
+  return false;
+}
+// Build the set of cells occupied by all items on pages that make up a quad.
+// Cells are in quad coordinates (0..63, 0..51).
+function quadOccupancy(quad, excludeByteOffset) {
+  const occ = new Set();
+  // Pre-index slot for each source pageId so we know where to translate items to.
+  const slotByPage = {};
+  for (let i = 0; i < quad.pages.length; i++) slotByPage[quad.pages[i]] = i;
+  for (const it of vaultItems) {
+    const slot = slotByPage[it.pageId];
+    if (slot === undefined) continue;
+    if (excludeByteOffset !== undefined && it.byteOffset === excludeByteOffset) continue;
+    if (!_vaultItemIsTopLevel(it)) continue; // socketed children don't occupy cells
+    const slotCol = slot % VAULT_QUAD_COLS;
+    const slotRow = Math.floor(slot / VAULT_QUAD_COLS);
+    const baseX = slotCol * VAULT_GRID_W;
+    const baseY = slotRow * VAULT_GRID_H;
+    const { w, h } = getItemSize(it.typeCode);
+    for (let dy = 0; dy < h; dy++)
+      for (let dx = 0; dx < w; dx++)
+        occ.add(`${baseX + it.x + dx},${baseY + it.y + dy}`);
+  }
+  return occ;
 }
 
 // ── Encoder ─────────────────────────────────────────────────
@@ -12886,8 +13055,16 @@ function encodeVault(items, pageNames) {
       pageId: parseInt(pageId, 10) & 0xFF,
       bytes:  new TextEncoder().encode(name),
     }));
-  const metaSize = 4 /* "VLT1" */ + 2 /* gridW */ + 2 /* gridH */ + 2 /* pageCount */ + 2 /* nameCount */
+  // Quad entries: 16 pageIds + u16 nameLen + name bytes each.
+  const quadEntries = vaultQuads.map(q => ({
+    pages: (q.pages || []).slice(0, VAULT_QUAD_SIZE).map(p => Math.max(0, Math.min(VAULT_PAGE_COUNT - 1, p | 0))),
+    bytes: new TextEncoder().encode(q.name || ''),
+  })).filter(e => e.pages.length === VAULT_QUAD_SIZE);
+  const useVlt2 = quadEntries.length > 0;
+  const magicSize = 4;
+  const metaSize = magicSize + 2 /* gridW */ + 2 /* gridH */ + 2 /* pageCount */ + 2 /* nameCount */
                  + nameEntries.reduce((s, e) => s + 1 + 2 + e.bytes.length, 0)
+                 + (useVlt2 ? 2 /* quadCount */ + quadEntries.reduce((s, e) => s + VAULT_QUAD_SIZE + 2 + e.bytes.length, 0) : 0)
                  + 2 /* itemPageIdCount */ + itemPageIds.length;
 
   // 3. Total file size
@@ -12904,9 +13081,10 @@ function encodeVault(items, pageNames) {
   writeU32LE(buf, 16, totalSize);
   // 0x14..0x3F already zero
 
-  // VLT1 metadata
+  // VLT1 (no quads) or VLT2 (with quads) metadata
   let pos = 0x40;
-  buf[pos++] = 0x56; buf[pos++] = 0x4C; buf[pos++] = 0x54; buf[pos++] = 0x31;  // "VLT1"
+  buf[pos++] = 0x56; buf[pos++] = 0x4C; buf[pos++] = 0x54;                      // "VLT"
+  buf[pos++] = useVlt2 ? 0x32 : 0x31;                                           // "2" or "1"
   buf[pos++] = VAULT_GRID_W & 0xFF;     buf[pos++] = (VAULT_GRID_W >> 8) & 0xFF;
   buf[pos++] = VAULT_GRID_H & 0xFF;     buf[pos++] = (VAULT_GRID_H >> 8) & 0xFF;
   buf[pos++] = VAULT_PAGE_COUNT & 0xFF; buf[pos++] = (VAULT_PAGE_COUNT >> 8) & 0xFF;
@@ -12915,6 +13093,17 @@ function encodeVault(items, pageNames) {
     buf[pos++] = e.pageId;
     buf[pos++] = e.bytes.length & 0xFF; buf[pos++] = (e.bytes.length >> 8) & 0xFF;
     buf.set(e.bytes, pos); pos += e.bytes.length;
+  }
+
+  // VLT2: quad section (after names, before itemPageIds)
+  if (useVlt2) {
+    buf[pos++] = quadEntries.length & 0xFF;
+    buf[pos++] = (quadEntries.length >> 8) & 0xFF;
+    for (const q of quadEntries) {
+      for (const pid of q.pages) buf[pos++] = pid;
+      buf[pos++] = q.bytes.length & 0xFF; buf[pos++] = (q.bytes.length >> 8) & 0xFF;
+      buf.set(q.bytes, pos); pos += q.bytes.length;
+    }
   }
 
   // Per-item pageId array
@@ -12941,12 +13130,14 @@ function decodeVaultHeader(buf) {
     throw new Error('Not a valid .d2i file (missing 0x55AA55AA magic)');
   }
 
-  const hasVlt1 = buf[0x40] === 0x56 && buf[0x41] === 0x4C
-               && buf[0x42] === 0x54 && buf[0x43] === 0x31;
+  const tagIsVlt = buf[0x40] === 0x56 && buf[0x41] === 0x4C && buf[0x42] === 0x54;
+  const ver      = buf[0x43];
+  const isVlt1   = tagIsVlt && ver === 0x31;
+  const isVlt2   = tagIsVlt && ver === 0x32;
 
-  if (!hasVlt1) {
+  if (!isVlt1 && !isVlt2) {
     // Legacy / plain .d2i — JM expected right at 0x40; items default to pageId=0
-    return { pageNames: {}, gridW: VAULT_GRID_W, gridH: VAULT_GRID_H, jmOffset: 0x40, itemPageIds: [] };
+    return { pageNames: {}, quads: [], gridW: VAULT_GRID_W, gridH: VAULT_GRID_H, jmOffset: 0x40, itemPageIds: [] };
   }
 
   let pos = 0x44;
@@ -12965,6 +13156,23 @@ function decodeVaultHeader(buf) {
     pos += nameLen;
   }
 
+  // VLT2 adds a quads section between names and itemPageIds
+  const quads = [];
+  if (isVlt2) {
+    if (pos + 2 > buf.length) throw new Error('Truncated vault quadCount at ' + pos);
+    const quadCount = buf[pos] | (buf[pos+1] << 8); pos += 2;
+    for (let i = 0; i < quadCount; i++) {
+      if (pos + VAULT_QUAD_SIZE + 2 > buf.length) throw new Error('Truncated vault quad entry at ' + pos);
+      const pages = Array.from(buf.subarray(pos, pos + VAULT_QUAD_SIZE));
+      pos += VAULT_QUAD_SIZE;
+      const nameLen = buf[pos] | (buf[pos+1] << 8); pos += 2;
+      if (pos + nameLen > buf.length) throw new Error('Truncated vault quad name at ' + pos);
+      const name = new TextDecoder().decode(buf.subarray(pos, pos + nameLen));
+      pos += nameLen;
+      quads.push({ pages, name });
+    }
+  }
+
   // Per-item pageId array
   if (pos + 2 > buf.length) throw new Error('Truncated vault itemPageIdCount at ' + pos);
   const itemPageIdCount = buf[pos] | (buf[pos+1] << 8); pos += 2;
@@ -12972,7 +13180,7 @@ function decodeVaultHeader(buf) {
   const itemPageIds = Array.from(buf.subarray(pos, pos + itemPageIdCount));
   pos += itemPageIdCount;
 
-  return { pageNames, gridW, gridH, jmOffset: pos, itemPageIds };
+  return { pageNames, quads, gridW, gridH, jmOffset: pos, itemPageIds };
 }
 
 // ── Load / Save ─────────────────────────────────────────────
@@ -13086,6 +13294,7 @@ window.loadVaultFile = function(file) {
       vaultFileName  = file.name;
       vaultItems     = items;
       vaultPageNames = hdr.pageNames;
+      vaultQuads     = hdr.quads || [];
       vaultDirty     = false;
       vaultActivePage = 0;
       if (activeTab === 'vault') renderVault(document.getElementById('tabContent'));
@@ -13222,6 +13431,91 @@ function buildVaultPageGrid(pageId, cellPx) {
   }
   html += `</div>`;
   return { html, itemsOnPage: onPage.length, overlaps };
+}
+
+// Build a 32×26 quad view — 4 pages arranged 2×2 row-major. Items render at
+// their (x, y) within their source page, offset by the page's slot position.
+function buildVaultQuadGrid(quad, cellPx) {
+  const gridW = VAULT_QUAD_W, gridH = VAULT_QUAD_H;
+  // Build a slot lookup so each item gets the right row/col offset.
+  const slotByPage = {};
+  for (let i = 0; i < quad.pages.length; i++) slotByPage[quad.pages[i]] = i;
+
+  // Items whose pageId is part of this quad
+  const onQuad = vaultItems.filter(it => slotByPage[it.pageId] !== undefined);
+  for (const it of onQuad) { try { ensureItemProps(it); } catch(_) {} }
+
+  const cellMap = new Map();
+  const cellOccupied = new Set();
+  const overlaps = [];
+  // Boundaries between quad pages — rendered as gold divider lines
+  const dividerH = new Set(); // rows (0..3) where horizontal divider appears above
+  const dividerV = new Set(); // cols (0..3) where vertical divider appears to the left
+  for (let i = 1; i < VAULT_QUAD_COLS; i++) dividerV.add(i * VAULT_GRID_W);
+  for (let i = 1; i < VAULT_QUAD_ROWS; i++) dividerH.add(i * VAULT_GRID_H);
+
+  for (const it of onQuad) {
+    if (!_vaultItemIsTopLevel(it)) continue; // socketed children aren't grid-placed
+    const slot = slotByPage[it.pageId];
+    const slotCol = slot % VAULT_QUAD_COLS;
+    const slotRow = Math.floor(slot / VAULT_QUAD_COLS);
+    const { w, h } = getItemSize(it.typeCode);
+    const x = slotCol * VAULT_GRID_W + Math.max(0, Math.min(VAULT_GRID_W - w, it.x | 0));
+    const y = slotRow * VAULT_GRID_H + Math.max(0, Math.min(VAULT_GRID_H - h, it.y | 0));
+    let collides = false;
+    for (let dy = 0; dy < h && !collides; dy++)
+      for (let dx = 0; dx < w && !collides; dx++)
+        if (cellOccupied.has(`${x + dx},${y + dy}`)) collides = true;
+    if (collides) { overlaps.push(it); continue; }
+    cellMap.set(`${x},${y}`, { item: it, x, y, w, h });
+    for (let dy = 0; dy < h; dy++)
+      for (let dx = 0; dx < w; dx++)
+        cellOccupied.add(`${x + dx},${y + dy}`);
+  }
+
+  let html = `<div class="inv-grid-wrap vault-grid-drop vault-grid-quad"
+    data-grid-w="${gridW}" data-grid-h="${gridH}" data-cell-px="${cellPx}"
+    data-quad="1"
+    ondragover="vaultDragOver(event)"
+    ondrop="vaultDropOnVault(event)"
+    ondragleave="vaultDragLeave(event)"
+    style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${gridH},${cellPx}px);gap:1px;background:rgba(60,46,22,0.4);border:1px solid rgba(60,46,22,0.5);padding:0;position:relative;width:max-content">`;
+  const rendered = new Set();
+  for (let row = 0; row < gridH; row++) {
+    for (let col = 0; col < gridW; col++) {
+      const key = `${col},${row}`;
+      if (rendered.has(key)) continue;
+      // Visually hint at quadrant boundaries with a subtle gold border on the
+      // inside edges of cells that sit next to a page divider.
+      let extraStyle = '';
+      if (dividerV.has(col))        extraStyle += 'border-left:1px solid rgba(200,168,75,0.35);';
+      if (dividerH.has(row))        extraStyle += 'border-top:1px solid rgba(200,168,75,0.35);';
+      const entry = cellMap.get(key);
+      if (entry) {
+        for (let dy = 0; dy < entry.h; dy++)
+          for (let dx = 0; dx < entry.w; dx++)
+            rendered.add(`${col + dx},${row + dy}`);
+        const { name, cls } = itemDisplayName(entry.item);
+        const borderCls = itemQualityCls(entry.item);
+        const displayName = abbreviateItemName(name, entry.w, entry.h);
+        html += `<div class="inv-item ${borderCls}"
+          draggable="true"
+          ondragstart="vaultDragStart(event, ${entry.item.byteOffset}, 'vault', ${entry.w}, ${entry.h})"
+          ondragend="vaultDragEnd()"
+          style="grid-column:${col + 1}/span ${entry.w};grid-row:${row + 1}/span ${entry.h};position:relative;cursor:grab;${extraStyle}"
+          onclick="showVaultItemDetail([${entry.item.byteOffset}],this);pinTooltip()"
+          onmouseenter="showVaultItemDetail([${entry.item.byteOffset}],this,true)"
+          onmouseleave="closeTooltip(false)"
+          title="${esc(name)}">
+          <div class="inv-item-name ${cls}">${esc(displayName)}</div>
+        </div>`;
+      } else if (!cellOccupied.has(key)) {
+        html += `<div class="inv-cell-empty" style="${extraStyle}"></div>`;
+      }
+    }
+  }
+  html += `</div>`;
+  return { html, itemsOnPage: onQuad.length, overlaps };
 }
 
 // ── Source panel state ──────────────────────────────────────
@@ -13484,9 +13778,11 @@ function _showVaultDragIndicator(gridEl, ev) {
   row = Math.max(0, Math.min(row, gridH - h));
 
   // Red tint if target cells are occupied by something other than the item
-  // being dragged (cheap intent preview — not authoritative, drop handler
-  // still re-validates and may reject with a popup).
-  const isInvalid = _isVaultCellOccupied(gridEl, col, row, w, h, state);
+  // being dragged OR (in a quad view) the item would straddle a page boundary.
+  let isInvalid = _isVaultCellOccupied(gridEl, col, row, w, h, state);
+  if (!isInvalid && gridEl.dataset.quad === '1' && quadItemStraddles(col, row, w, h)) {
+    isInvalid = true;
+  }
   _vaultDragIndicatorEl.style.border     = isInvalid ? '2px solid #c74040' : '2px solid #4a9a4a';
   _vaultDragIndicatorEl.style.background = isInvalid ? 'rgba(199,64,64,0.25)' : 'rgba(74,154,74,0.25)';
 
@@ -13507,6 +13803,18 @@ function _isVaultCellOccupied(gridEl, col, row, w, h, state) {
   if (!gridEl.classList.contains('vault-grid-drop')) return false;
   const movingSelf = state.origin === 'vault';
   const movingItem = movingSelf ? findVaultItem(state.byteOffset) : null;
+  if (gridEl.dataset.quad === '1') {
+    // Quad view — check occupancy across all 4 pages, translating each item
+    // to its quad-local coordinates via its slot within the quad.
+    const quadEntry = findQuadForPage(vaultActivePage);
+    if (!quadEntry) return false;
+    const occ = quadOccupancy(quadEntry.quad, movingItem ? movingItem.byteOffset : undefined);
+    for (let dy = 0; dy < h; dy++)
+      for (let dx = 0; dx < w; dx++)
+        if (occ.has(`${col + dx},${row + dy}`)) return true;
+    return false;
+  }
+  // Single-page view (existing behavior)
   for (const it of vaultItems) {
     if (it.pageId !== vaultActivePage) continue;
     if (!_vaultItemIsTopLevel(it)) continue;
@@ -13536,8 +13844,11 @@ function _vaultDropCell(ev, gridEl) {
   const ox = ev.clientX - rect.left - 1;
   const oy = ev.clientY - rect.top  - 1;
   if (ox < 0 || oy < 0) return null;
-  const col = Math.floor(ox / VAULT_CELL_STEP);
-  const row = Math.floor(oy / VAULT_CELL_STEP);
+  // Use the grid's own cell size when present (quads use 18px, single pages 29px).
+  const cellPx = parseInt(gridEl.dataset.cellPx, 10) || VAULT_CELL_PX;
+  const step = cellPx + VAULT_CELL_GAP;
+  const col = Math.floor(ox / step);
+  const row = Math.floor(oy / step);
   return { col, row };
 }
 
@@ -13553,27 +13864,45 @@ function _vaultClampToGrid(gridEl, cell, w, h) {
 }
 
 // Drop target: the vault grid. Accepts source drags (move in) AND vault
-// drags (rearrange within the active page).
+// drags (rearrange within a page / across pages within a quad).
 window.vaultDropOnVault = function(ev) {
   if (!_vaultDragState) return;
   ev.preventDefault();
   _hideVaultDragIndicator();
   const state = _vaultDragState;
   _vaultDragState = null;
-  const raw = _vaultDropCell(ev, ev.currentTarget);
+  const gridEl = ev.currentTarget;
+  const raw = _vaultDropCell(ev, gridEl);
   if (!raw) return;
-  const { col, row } = _vaultClampToGrid(ev.currentTarget, raw, state.w || 1, state.h || 1);
-  if (state.origin === 'vault') {
-    // Intra-vault rearrange on the currently-visible page. Cross-page rearrange
-    // isn't supported through DnD because the grid only shows one page at a
-    // time — the user can't target another page mid-drag.
-    const moved = _rearrangeVaultItem(state.byteOffset, col, row);
-    if (moved) {
-      renderVault(document.getElementById('tabContent'));
+  const w = state.w || 1, h = state.h || 1;
+  const { col, row } = _vaultClampToGrid(gridEl, raw, w, h);
+
+  // Resolve target pageId + local coords. For quad view this picks the
+  // correct sub-page based on which quadrant the drop landed in.
+  let destPageId, localX, localY;
+  if (gridEl.dataset.quad === '1') {
+    const quadEntry = findQuadForPage(vaultActivePage);
+    if (!quadEntry) return;
+    if (quadItemStraddles(col, row, w, h)) {
+      showPopup(L('ui_vault_quad_straddle','Items can\'t span page boundaries inside a quad.'));
+      return;
     }
+    const sub = quadCellToSubpage(quadEntry.quad, col, row);
+    destPageId = sub.pageId;
+    localX = sub.localX;
+    localY = sub.localY;
+  } else {
+    destPageId = vaultActivePage;
+    localX = col;
+    localY = row;
+  }
+
+  if (state.origin === 'vault') {
+    const moved = _rearrangeVaultItem(state.byteOffset, destPageId, localX, localY);
+    if (moved) renderVault(document.getElementById('tabContent'));
     return;
   }
-  moveSourceItemToVault(state.byteOffset, { pageId: vaultActivePage, x: col, y: row });
+  moveSourceItemToVault(state.byteOffset, { pageId: destPageId, x: localX, y: localY });
 };
 
 // Drop target: one of the source grids (inventory or character stash). Only
@@ -13592,44 +13921,73 @@ window.vaultDropOnSource = function(ev, destKind) {
   moveVaultItemToSource(state.byteOffset, destKind, { x: col, y: row });
 };
 
-// Intra-vault rearrange on the active page. Updates item position + patches
-// its stored raw bytes so autosave/encode see the new location. Rejects drops
-// that would overlap an existing top-level item (socketed children at (0,0)
-// are ignored — they're not really "on" the grid).
-function _rearrangeVaultItem(byteOffset, newX, newY) {
+// Intra-vault rearrange. Updates item position + patches its stored raw bytes
+// so autosave/encode see the new location. `newPageId` may differ from the
+// item's current page when rearranging within a quad; falls through to the
+// item's existing page if omitted.
+function _rearrangeVaultItem(byteOffset, arg2, arg3, arg4) {
   const item = findVaultItem(byteOffset);
   if (!item) { showPopup(L('ui_vault_item_not_found','Vault item not found.')); return false; }
   if (!_vaultItemIsTopLevel(item)) return false; // shouldn't be draggable anyway
+
+  // Overloaded args: old callers passed (offset, newX, newY); quad-aware calls
+  // pass (offset, newPageId, newX, newY).
+  let newPageId, newX, newY;
+  if (arg4 === undefined) { newPageId = item.pageId; newX = arg2; newY = arg3; }
+  else                    { newPageId = arg2; newX = arg3; newY = arg4; }
+
   const { w, h } = getItemSize(item.typeCode);
 
-  // Bounds check
   if (newX < 0 || newY < 0 || newX + w > VAULT_GRID_W || newY + h > VAULT_GRID_H) {
     showPopup(L('ui_vault_invalid_drop','Invalid drop target.'));
     return false;
   }
-  // No-op if dropped on current cell
-  if (item.x === newX && item.y === newY) return false;
+  if (newPageId < 0 || newPageId >= VAULT_PAGE_COUNT) {
+    showPopup(L('ui_vault_invalid_drop','Invalid drop target.'));
+    return false;
+  }
+  // No-op if dropped on current cell AND page
+  if (item.pageId === newPageId && item.x === newX && item.y === newY) return false;
 
-  // Collision check on the active page (excluding the item being moved and
-  // skipping socketed children that share coordinates with their parent).
+  // Collision check on the target page (excluding the item being moved).
   for (const it of vaultItems) {
-    if (it.pageId !== item.pageId) continue;
+    if (it.pageId !== newPageId) continue;
     if (it.byteOffset === item.byteOffset) continue;
     if (!_vaultItemIsTopLevel(it)) continue;
     const { w: iw, h: ih } = getItemSize(it.typeCode);
-    if (newX + w <= it.x || it.x + iw <= newX) continue; // no horizontal overlap
-    if (newY + h <= it.y || it.y + ih <= newY) continue; // no vertical overlap
+    if (newX + w <= it.x || it.x + iw <= newX) continue;
+    if (newY + h <= it.y || it.y + ih <= newY) continue;
     showPopup(L('ui_vault_cell_occupied','Cell is occupied.'));
     return false;
   }
 
-  // Apply the move: object fields + raw bytes both need to reflect new x/y.
-  // storage=5 (stash) + parent=0 (stored) preserve the existing convention.
+  // Collect this parent's socketed children BEFORE moving, via the same
+  // adjacent-in-array rule moveSourceItemToVault uses when pushing them.
+  // Do this even for same-page moves so we don't accidentally re-assign
+  // another parent's children in a page-change scenario.
+  const children = [];
+  if (item.pageId !== newPageId) {
+    const idx = vaultItems.indexOf(item);
+    if (idx >= 0) {
+      for (let i = idx + 1; i < vaultItems.length; i++) {
+        const ch = vaultItems[i];
+        if (_vaultItemIsTopLevel(ch)) break;
+        children.push(ch);
+      }
+    }
+  }
+
+  // Apply the move: object fields + raw bytes reflect new x/y.
+  item.pageId = newPageId;
   item.x = newX;
   item.y = newY;
   if (item._vaultRawBytes) {
     item._vaultRawBytes = _patchItemPosition(item._vaultRawBytes, newX, newY, 5, 0);
   }
+  // Children's pageId follows the parent (they were on the old page adjacent
+  // in array order and belong to this item's cascade).
+  for (const ch of children) ch.pageId = newPageId;
+
   markVaultDirty();
   return true;
 }
@@ -14048,8 +14406,15 @@ function renderVault(c) {
     ? esc(vaultFileName || 'Vault.d2i') + dirtyBadge
     : esc(L('ui_vault_no_loaded', 'No vault loaded'));
 
-  const pageName = esc(vaultPageLabel(vaultActivePage));
-  const itemCountOnPage = vaultItems.filter(it => it.pageId === vaultActivePage).length;
+  // If the active page is part of a quad, the right panel renders the full
+  // 32×26 quad instead of a single 16×13 page. Nav skips over the other 3
+  // pages in the quad (they're included in this view already).
+  const quadInfo = findQuadForPage(vaultActivePage);
+  const inQuad = quadInfo !== null;
+  const pageName = esc(inQuad ? (quadInfo.quad.name || L('ui_vault_quad_default_name','Quad Tab')) : vaultPageLabel(vaultActivePage));
+  const itemCountOnPage = inQuad
+    ? vaultItems.filter(it => quadInfo.quad.pages.includes(it.pageId) && _vaultItemIsTopLevel(it)).length
+    : vaultItems.filter(it => it.pageId === vaultActivePage && _vaultItemIsTopLevel(it)).length;
 
   // ── Source panel HTML ──
   const srcView = getVaultSourceView();
@@ -14103,7 +14468,12 @@ function renderVault(c) {
         </button>
       </div>
 
-      <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+      <!-- In single-page mode the source panel and the 16×13 vault grid sit
+           side-by-side comfortably. In quad mode the 32×26 grid is too wide
+           to share the row with a 500px source panel within the 1300px editor
+           shell, so we stack them vertically and let the quad use the full
+           width of the editor. -->
+      <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;flex-direction:${inQuad ? 'column' : 'row'}">
         <!-- ── SOURCE PANEL ── -->
         <!-- Fixed 500px keeps the panel width stable regardless of which source
              is selected (inventory 10×4 vs stash 16×13), so the vault doesn't
@@ -14124,30 +14494,45 @@ function renderVault(c) {
         <div style="flex:0 0 auto;margin-left:auto">
           <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
             <span style="font-family:'Cinzel',serif;color:var(--d2-gold);font-size:13px;letter-spacing:1px">${esc(L('ui_vault_vault_label','VAULT'))}</span>
-            <button class="btn" onclick="vaultGoToPage(${vaultActivePage - 1})" ${vaultActivePage > 0 ? '' : 'disabled'}>◄</button>
+            <button class="btn" onclick="vaultGoToPrev()" ${_vaultPrevPage() !== null ? '' : 'disabled'}>◄</button>
             <div style="min-width:180px;text-align:center;font-family:'Cinzel',serif;color:var(--d2-gold)">
-              ${pageName} <span style="color:#888;font-size:11px">(${vaultActivePage + 1}/${VAULT_PAGE_COUNT})</span>
+              ${pageName} <span style="color:#888;font-size:11px">${inQuad ? esc(L('ui_vault_quad_label','(quad · 4 pages)')) : `(${vaultActivePage + 1}/${VAULT_PAGE_COUNT})`}</span>
             </div>
-            <button class="btn" onclick="vaultGoToPage(${vaultActivePage + 1})" ${vaultActivePage < VAULT_PAGE_COUNT - 1 ? '' : 'disabled'}>►</button>
+            <button class="btn" onclick="vaultGoToNext()" ${_vaultNextPage() !== null ? '' : 'disabled'}>►</button>
             <input type="number" min="1" max="${VAULT_PAGE_COUNT}" value="${vaultActivePage + 1}"
                    id="vaultPageInput" style="width:60px" onchange="vaultGoToPage(this.value - 1)">
             <button class="btn" onclick="vaultRenamePage()">${esc(L('ui_vault_rename_btn','Rename'))}</button>
             <!-- Fixed-width so growing numbers don't shift the page-nav row.
-                 Label column is flex:1, value column is right-aligned. -->
+                 Label column is flex:1, value column is right-aligned. The
+                 Merge/Unmerge button sits directly below so quad controls
+                 live with the page-level info they relate to. -->
             <div style="margin-left:auto;font-size:10px;color:var(--d2-text-dim);font-family:'Cinzel',serif;letter-spacing:1px;line-height:1.35;width:120px;white-space:nowrap">
               <div style="color:var(--d2-gold);margin-bottom:2px">${esc(L('ui_vault_count_header','Item Count'))}</div>
               <div style="display:flex;justify-content:space-between">
                 <span>${esc(L('ui_vault_count_page','Page:'))}</span>
                 <span style="color:var(--d2-text)">${itemCountOnPage}</span>
               </div>
-              <div style="display:flex;justify-content:space-between">
+              <div style="display:flex;justify-content:space-between;margin-bottom:6px">
                 <span>${esc(L('ui_vault_count_total','Total:'))}</span>
                 <span style="color:var(--d2-text)">${vaultItems.length}</span>
               </div>
+              ${inQuad
+                ? `<button class="btn" onclick="vaultUnmergeQuad(${quadInfo.quadIndex})"
+                           style="width:100%;font-size:10px;letter-spacing:1px;padding:4px 0;
+                                  border-color:var(--d2-red);color:#d46060">
+                     ${esc(L('ui_vault_unmerge_btn','Unmerge'))}
+                   </button>`
+                : `<button class="btn" onclick="openVaultQuadModal()" ${loaded ? '' : 'disabled'}
+                           title="${esc(L('ui_vault_quad_tooltip','Merge 4 consecutive pages into one 32×26 quad tab'))}"
+                           style="width:100%;font-size:10px;letter-spacing:1px;padding:4px 0">
+                     ${esc(L('ui_vault_quad_btn','Merge to Quad'))}
+                   </button>`}
             </div>
           </div>
           ${(() => {
-            const grid = buildVaultPageGrid(vaultActivePage, 29);
+            const grid = inQuad
+              ? buildVaultQuadGrid(quadInfo.quad, VAULT_CELL_PX)
+              : buildVaultPageGrid(vaultActivePage, VAULT_CELL_PX);
             const overlapWarn = grid.overlaps.length > 0
               ? `<div style="margin-top:8px;font-size:11px;color:#c86030">⚠ ${grid.overlaps.length} item${grid.overlaps.length===1?'':'s'} hidden due to grid collisions on this page</div>`
               : '';
@@ -14165,7 +14550,124 @@ window.vaultGoToPage = function(pageIdx) {
   if (activeTab === 'vault') renderVault(document.getElementById('tabContent'));
 };
 
+// Navigation treats a quad as a single logical page — ◄/► jump over all 16
+// pages in a quad at once. If the adjacent page is itself inside a quad,
+// land on that quad's first page (so the render stays on the quad view).
+function _vaultPrevPage() {
+  const here = findQuadForPage(vaultActivePage);
+  const base = here ? Math.min.apply(null, here.quad.pages) : vaultActivePage;
+  const p = base - 1;
+  if (p < 0) return null;
+  const q = findQuadForPage(p);
+  return q ? Math.min.apply(null, q.quad.pages) : p;
+}
+function _vaultNextPage() {
+  const here = findQuadForPage(vaultActivePage);
+  const base = here ? Math.max.apply(null, here.quad.pages) : vaultActivePage;
+  const p = base + 1;
+  if (p >= VAULT_PAGE_COUNT) return null;
+  const q = findQuadForPage(p);
+  return q ? Math.min.apply(null, q.quad.pages) : p;
+}
+window.vaultGoToPrev = function() { const p = _vaultPrevPage(); if (p !== null) vaultGoToPage(p); };
+window.vaultGoToNext = function() { const p = _vaultNextPage(); if (p !== null) vaultGoToPage(p); };
+
+// ── Quad merge / unmerge ───────────────────────────────────
+
+// Pages that are free to be included in a new quad (not already inside one).
+function _vaultFreePagesForQuad() {
+  const inUse = new Set();
+  for (const q of vaultQuads) for (const p of q.pages) inUse.add(p);
+  const free = [];
+  for (let p = 0; p < VAULT_PAGE_COUNT; p++) if (!inUse.has(p)) free.push(p);
+  return free;
+}
+
+// Find the smallest starting page `s` such that pages s..s+15 are all free.
+function _vaultSuggestQuadStart() {
+  const free = new Set(_vaultFreePagesForQuad());
+  for (let s = 0; s + VAULT_QUAD_SIZE <= VAULT_PAGE_COUNT; s++) {
+    let ok = true;
+    for (let i = 0; i < VAULT_QUAD_SIZE && ok; i++) if (!free.has(s + i)) ok = false;
+    if (ok) return s;
+  }
+  return -1;
+}
+
+// Merge modal: starting page (1-indexed) + name.
+window.openVaultQuadModal = function() {
+  const suggestedStart = _vaultSuggestQuadStart();
+  if (suggestedStart < 0) {
+    showPopup(L('ui_vault_quad_no_room','No 4 consecutive free pages available. Unmerge a quad first or delete other quads.'));
+    return;
+  }
+  const defaultName = Lfmt('ui_vault_quad_default_format','Quad Tab {n}', { n: vaultQuads.length + 1 });
+  // Two-field prompt would need a custom dialog; simpler: show a note that
+  // the 4 pages starting at the input value will be merged, one input for name.
+  showDialog({
+    title: L('ui_vault_quad_modal_title','Merge to Quad'),
+    message: Lfmt('ui_vault_quad_modal_body',
+      'This merges 4 consecutive pages into a single 32×26 tab. Pages {a}-{b} will become the quad. Items on those pages stay where they are — only the view changes.',
+      { a: suggestedStart + 1, b: suggestedStart + VAULT_QUAD_SIZE }),
+    input: { value: defaultName, placeholder: defaultName, maxLength: 80 },
+    buttons: [
+      { label: L('ui_vault_quad_modal_ok','Merge'), tone: 'success', onClick: (val) => _vaultCreateQuad(suggestedStart, val || defaultName) },
+      { label: L('ui_cancel','Cancel'), tone: 'ghost' },
+    ],
+  });
+};
+
+function _vaultCreateQuad(startPage, name) {
+  // Validate: 4 consecutive pages starting at startPage, all free.
+  const free = new Set(_vaultFreePagesForQuad());
+  for (let i = 0; i < VAULT_QUAD_SIZE; i++) {
+    if (!free.has(startPage + i)) {
+      showPopup(L('ui_vault_quad_no_room','No 4 consecutive free pages available. Unmerge a quad first or delete other quads.'));
+      return;
+    }
+  }
+  const pages = [];
+  for (let i = 0; i < VAULT_QUAD_SIZE; i++) pages.push(startPage + i);
+  vaultQuads.push({ name: (name || '').slice(0, 80), pages });
+  vaultActivePage = startPage;
+  markVaultDirty();
+  renderVault(document.getElementById('tabContent'));
+}
+
+window.vaultUnmergeQuad = function(quadIndex) {
+  if (quadIndex < 0 || quadIndex >= vaultQuads.length) return;
+  const q = vaultQuads[quadIndex];
+  showConfirm(
+    Lfmt('ui_vault_unmerge_confirm','Unmerge "{name}" back into 4 individual pages?', { name: q.name || L('ui_vault_quad_default_name','Quad Tab') }),
+    function() {
+      vaultQuads.splice(quadIndex, 1);
+      markVaultDirty();
+      renderVault(document.getElementById('tabContent'));
+    },
+    L('ui_vault_unmerge_btn','Unmerge')
+  );
+};
+
 window.vaultRenamePage = function() {
+  const quadInfo = findQuadForPage(vaultActivePage);
+  if (quadInfo) {
+    // Rename the quad itself, not the underlying page.
+    const defaultName = L('ui_vault_quad_default_name','Quad Tab');
+    showDialog({
+      title:   L('ui_vault_rename_quad_title','Rename Quad'),
+      note:    L('ui_vault_rename_quad_note','Leave blank to restore the default "Quad Tab" name.'),
+      input:   { value: quadInfo.quad.name || '', placeholder: defaultName, maxLength: 80 },
+      buttons: [
+        { label: L('ui_btn_ok','OK'), tone: 'success', onClick: (val) => {
+            quadInfo.quad.name = (val || '').trim();
+            markVaultDirty();
+            renderVault(document.getElementById('tabContent'));
+          } },
+        { label: L('ui_cancel','Cancel'), tone: 'danger' },
+      ],
+    });
+    return;
+  }
   const pageNumber = vaultActivePage + 1;
   showDialog({
     title:   Lfmt('ui_vault_rename_title','Rename Page {n}',{n:pageNumber}),

@@ -2259,5 +2259,61 @@
     {
         "Key": "ui_vault_count_total",
         "enUS": "Total:"
+    },
+    {
+        "Key": "ui_vault_quad_btn",
+        "enUS": "Merge to Quad"
+    },
+    {
+        "Key": "ui_vault_quad_tooltip",
+        "enUS": "Merge 4 consecutive pages into one 32×26 quad tab"
+    },
+    {
+        "Key": "ui_vault_quad_label",
+        "enUS": "(quad · 4 pages)"
+    },
+    {
+        "Key": "ui_vault_quad_default_name",
+        "enUS": "Quad Tab"
+    },
+    {
+        "Key": "ui_vault_quad_default_format",
+        "enUS": "Quad Tab {n}"
+    },
+    {
+        "Key": "ui_vault_quad_modal_title",
+        "enUS": "Merge to Quad"
+    },
+    {
+        "Key": "ui_vault_quad_modal_body",
+        "enUS": "This merges 4 consecutive pages into a single 32×26 tab. Pages {a}-{b} will become the quad. Items on those pages stay where they are — only the view changes."
+    },
+    {
+        "Key": "ui_vault_quad_modal_ok",
+        "enUS": "Merge"
+    },
+    {
+        "Key": "ui_vault_quad_no_room",
+        "enUS": "No 4 consecutive free pages available. Unmerge a quad first or delete other quads."
+    },
+    {
+        "Key": "ui_vault_quad_straddle",
+        "enUS": "Items can't span page boundaries inside a quad."
+    },
+    {
+        "Key": "ui_vault_unmerge_btn",
+        "enUS": "Unmerge"
+    },
+    {
+        "Key": "ui_vault_unmerge_confirm",
+        "enUS": "Unmerge \"{name}\" back into 4 individual pages?"
+    },
+    {
+        "Key": "ui_vault_rename_quad_title",
+        "enUS": "Rename Quad"
+    },
+    {
+        "Key": "ui_vault_rename_quad_note",
+        "enUS": "Leave blank to restore the default \"Quad Tab\" name."
     }
 ]
