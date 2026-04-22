@@ -2235,5 +2235,29 @@
     {
         "Key": "ui_autosave_multi_tab",
         "enUS": "Auto-save is already active in another browser tab. Disable it there first."
+    },
+    {
+        "Key": "ui_vault_item_not_found",
+        "enUS": "Vault item not found."
+    },
+    {
+        "Key": "ui_vault_invalid_drop",
+        "enUS": "Invalid drop target."
+    },
+    {
+        "Key": "ui_vault_cell_occupied",
+        "enUS": "Cell is occupied."
+    },
+    {
+        "Key": "ui_vault_count_header",
+        "enUS": "Item Count"
+    },
+    {
+        "Key": "ui_vault_count_page",
+        "enUS": "Page:"
+    },
+    {
+        "Key": "ui_vault_count_total",
+        "enUS": "Total:"
     }
 ]

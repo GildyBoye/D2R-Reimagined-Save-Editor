@@ -44,11 +44,17 @@
     color: var(--d2-text);
   }
 
+  /* Editor shell width. Bumped from 1200px so long localized tab labels
+     (Deutsch, Español, etc.) fit the tab bar without overflowing. Declared
+     as a CSS variable so the fire-side panels stay in sync automatically.
+     +100px (50px each side) — keeps the fire-panel shrinkage modest at
+     wide windows while still giving tabs noticeably more room. */
+  :root { --editor-max-w: 1300px; }
   .editor-shell {
     display: flex;
     flex-direction: column;
     height: 100vh;
-    max-width: 1200px;
+    max-width: var(--editor-max-w);
     margin: 0 auto;
     border-left: 1px solid var(--d2-border);
     border-right: 1px solid var(--d2-border);
@@ -131,9 +137,12 @@
   .flag-exp  { border-color: var(--d2-gold-dim); color: var(--d2-gold); background: rgba(200,168,75,0.08); }
   .flag-dead { border-color: #4a3050; color: #9a70c0; background: rgba(74,48,80,0.15); }
 
-  /* ── Tab bar ── */
-  .tab-bar { background: var(--d2-surface); border-bottom: 2px solid var(--d2-gold-dim); display: flex; overflow-x: auto; scrollbar-width: none; flex-shrink: 0; }
-  .tab-bar::-webkit-scrollbar { display: none; }
+  /* ── Tab bar ──
+     flex-wrap:wrap so long localized labels (or the full 10-tab set) spill to
+     a second row instead of overflowing past the window edge. Previously
+     relied on overflow-x:auto but the scrollbar was hidden via
+     scrollbar-width:none, which meant overflowing tabs were just invisible. */
+  .tab-bar { background: var(--d2-surface); border-bottom: 2px solid var(--d2-gold-dim); display: flex; flex-wrap: wrap; flex-shrink: 0; }
   .tab { font-family: 'Cinzel', serif; font-size: 11px; letter-spacing: 1.5px; padding: 12px 18px; cursor: pointer; border: none; background: var(--d2-tab-inactive); color: var(--d2-text-dim); border-right: 1px solid var(--d2-border); transition: all 0.15s; white-space: nowrap; border-bottom: 2px solid transparent; margin-bottom: -2px; }
   .tab:hover { color: var(--d2-text); background: var(--d2-surface2); }
   .tab.active { color: var(--d2-gold-bright); background: var(--d2-surface3); border-bottom: 2px solid var(--d2-gold); }
@@ -653,8 +662,9 @@
     display: none;
   }
   .fire-side.active { display: block; }
-  .fire-side.left  { left: 0; right: calc(50% + 600px - 1px); }
-  .fire-side.right { right: 0; left: calc(50% + 600px - 1px); }
+  /* Match the editor-shell width so fire panels always abut the editor edge. */
+  .fire-side.left  { left: 0; right: calc(50% + var(--editor-max-w) / 2 - 1px); }
+  .fire-side.right { right: 0; left:  calc(50% + var(--editor-max-w) / 2 - 1px); }
   .fire-side canvas {
     width: 100%; height: 100%;
     image-rendering: pixelated; display: block;
@@ -1512,12 +1522,7 @@ async function startBaseFileLoad() {
     }
   }
 
-  // ── Phase 3: editor-specific JSON data (split out of the HTML for size) ──
-  // Per-file fetch with GitHub → local fallback. These files weren't in the
-  // mod data originally — they're editor metadata (item lookup tables, class
-  // templates, campfire sprites, wheel challenge pool) that used to live as
-  // inline consts. All are non-critical: if a file fails to load, the editor
-  // still works but the feature it powers is disabled.
+  // Editor-specific JSON data (GitHub → local fallback, non-critical).
   await loadEditorData(timeout);
 
   buildItemNameMap();
@@ -2100,14 +2105,8 @@ function buildStatByNameMap() {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  STAT DESCRIPTORS (descfunc routing)
-//  Builds a per-stat-id metadata map from itemstatcost.txt so item tooltips
-//  can render stats via the game's own descriptor system. Each entry carries
-//  the descfunc number, descval positioning, the positive/negative/auxiliary
-//  string-table keys (ModStr* etc.), and the display-group metadata for
-//  collapsing related stats (e.g. 4 resistances → "All Resistances").
-//
-//  Consumed by applyDescfunc() / applyDgrpGrouping() in the tooltip pipeline.
+//  STAT DESCRIPTORS — builds STAT_DESCRIPTORS + STAT_DGRP_MEMBERS from
+//  itemstatcost.txt for the descfunc tooltip pipeline.
 // ═══════════════════════════════════════════════════════════
 let STAT_DESCRIPTORS = {};          // statId -> descriptor object
 let STAT_DGRP_MEMBERS = {};          // dgrpId -> [statId, ...] (for grouping)
@@ -2358,16 +2357,8 @@ function propCodeToStatEntries(code, min, max, par, mode) {
     // func 24: non-class skill (hidden companion)
     if (func === 24) paramVal = _resolveSkillId(par);
 
-    // func 14: sockets. Do NOT write stat 194 (item_numsockets) to the binary stat
-    // list — the game treats that stat as ADDITIVE on top of the binary num_sockets
-    // field (4 bits after set_bonus_flags, only present when socketed=1). For inherently-
-    // socketed uniques (e.g. Overlord's Helm with `sock 4 4`), writing both stat 194=4
-    // AND num_sockets=4 makes the game display 8 sockets. Natively-dropped uniques
-    // with sockets encode via the num_sockets field only and omit stat 194 — verified
-    // against GildBarb.d2s's Onyx's Super Nova which has `sock` in setitems.txt but
-    // no stat 194 in its binary stat list. We auto-populate `numSockets` from the
-    // sock prop during insert (see confirmInsertItem) and rely entirely on the
-    // binary field + socketed flag for socket rendering.
+    // func 14 sockets: skip — stat 194 + num_sockets would double-count.
+    // See doc/PROPERTY-ENCODING.md § func 14.
     if (func === 14) continue;
 
     _addStatEntry(entries, statName, statVal, paramVal);
@@ -2495,13 +2486,7 @@ function propToDisplay(code, min, max, par) {
   }
   if (code === 'sock') { lines.push(`Socketed (${val})`); return lines; }
 
-  // Elemental damage (single element). Each of these uses func-15 + func-16
-  // slots that share the prop's min/max. The generic formatSlot func-15 path
-  // renders the stat label "to Minimum Fire Damage" which is awkward — the
-  // value shown is already a min-max range. Handle explicitly so output
-  // matches D2's in-game "Adds N-M Fire Damage" tooltip text. For cold/poison,
-  // the 3rd slot (func-17) carries a length value — par=frames (25 fps), so
-  // "over X seconds" = par/25.
+  // Elemental damage (single element). Cold/poison carry a length in par (frames, 25fps).
   if (code === 'dmg-fire') { lines.push(`Adds ${min}-${max} Fire Damage`); return lines; }
   if (code === 'dmg-ltng') { lines.push(`Adds ${min}-${max} Lightning Damage`); return lines; }
   if (code === 'dmg-mag')  { lines.push(`Adds ${min}-${max} Magic Damage`);     return lines; }
@@ -2630,12 +2615,7 @@ function propToDisplay(code, min, max, par) {
   if (code === 'aura') {
     const skillId = _resolveSkillId(par);
     const skillName = skillNameById[skillId] || (par ? String(par) : `Skill #${skillId}`);
-    // Real auras have a single rolled level, not a range. Most item entries
-    // define min==max; a handful (e.g. Tyrael's Might, Metalgrid) have a range
-    // of possible rolls. For both the Insert Modal preview and virtual-item
-    // tooltips, show the upper-bound level — matches what an ideal roll looks
-    // like and avoids the odd "Level 15-20 ... Aura" wording. (Binary-decoded
-    // items render via descfunc=16 which already pulls the rolled value.)
+    // Aura: show the upper-bound level (most items have min==max anyway).
     const level = (max != null ? max : min);
     lines.push(`Level ${level} ${skillName} Aura When Equipped`);
     return lines;
@@ -2664,16 +2644,8 @@ function propToDisplay(code, min, max, par) {
   if (eng) {
     const primaryFunc = eng.func1 || 0;
 
-    // Per-level / per-time / per-stat properties (funcs 17 & 18).
-    //
-    // In uniqueitems.txt these props have par set to the "per-8-units" rate
-    // (e.g. str/lvl par=8 means +8 Strength per 8 character levels = +1/level)
-    // and min/max are 0. The OLD handler recursively called the base prop with
-    // min=max=0 which produced display text like "+0 to Strength (Based on
-    // Character Level)" — accurate to the stored fields but useless to read.
-    //
-    // Fix: derive the per-unit rate from par/8 and pass that as the effective
-    // value to the base-prop display, then append a clearer suffix.
+    // Per-level / per-time properties (funcs 17 & 18) — par is per-8-units rate.
+    // See doc/PROPERTY-ENCODING.md § per-level stats.
     if (primaryFunc === 17 || primaryFunc === 18) {
       const baseProp = code.replace(/\/(lvl|time|str|dex|vit|enr)$/, '');
       const suffix = code.includes('/lvl')  ? 'Per Character Level' :
@@ -4128,13 +4100,13 @@ function renderRecentFiles() {
 // Hook into the drop zone to capture file handles when possible
 document.addEventListener('DOMContentLoaded', () => {
   renderRecentFiles();
-  // Auto-save is session-scoped: always starts OFF on page load. We still
-  // rehydrate handles from IndexedDB so re-enabling the toggle later only
-  // needs a permission re-grant rather than a fresh save-picker.
+  // Auto-save is fully session-scoped: toggle + handles both reset. We
+  // deliberately do NOT rehydrate handles from IDB on page load so the user
+  // gets a clean slate and must re-load each file + reconfigure auto-save
+  // targets explicitly — matches the "advanced option" intent.
   _autoSaveEnabled = false;
   try { localStorage.removeItem('autoSaveEnabled'); }
   catch (e) { /* best-effort: localStorage may be disabled */ }
-  rehydrateFileHandles().catch(err => _logCaught('rehydrateFileHandles', err));
   const dropZone = document.getElementById('dropZone');
   if (!dropZone) return;
 
@@ -4367,12 +4339,7 @@ window.selectNewCharClass = function(idx) {
 };
 
 // ═══════════════════════════════════════════════════════════
-//  ADVANCED OPTIONS: Spin The Wheel
-//  Rolls a random class + a random active skill from that class +
-//  N random challenge modifiers (0..5) as a self-imposed build challenge.
-//  Shown next to the selected class name on Accept; no mechanical
-//  enforcement — purely flavor. Challenge pool adapted from
-//  gheedsgamble.com, minus duplicates/contradictions.
+//  SPIN THE WHEEL — random class + active skill + N challenge modifiers
 // ═══════════════════════════════════════════════════════════
 let _wheelAnimTimer = null;
 let _wheelSettledResult = null; // most recent settled roll (before Accept) — survives between reroll+accept
@@ -4680,14 +4647,41 @@ function _doReset() {
   _undoSnapshot = null;
   updateUndoButton();
 
-  // Reset is a hard "start over" — turn auto-save off and drop the char
-  // handle so re-enabling later doesn't try to overwrite a file that no
-  // longer matches what's loaded. Vault/grail/shared-stash handles are
-  // left alone (those kinds aren't affected by the character reset).
+  // Reset is a hard "start over" — clear ALL loaded files (char + vault +
+  // grail + shared stash) and drop every handle so re-enabling auto-save
+  // later requires explicitly re-loading each file. Ensures no stale data
+  // can be silently saved to the wrong target.
   setAutoSaveEnabled(false);
-  _fileHandles.char = null;
-  try { autoSaveIdbDelHandle('char').catch(err => _logCaught('_doReset.idbDelChar', err)); }
-  catch (e) { _logCaught('_doReset.autoSaveIdbDelHandle', e); }
+
+  // Clear aux file state so their tabs start empty next time the user visits them
+  vaultD2i = null;
+  vaultItems = [];
+  vaultPageNames = {};
+  vaultActivePage = 0;
+  vaultDirty = false;
+  vaultFileName = null;
+
+  grailD2i = null;
+  grailFileName = null;
+  grailParsed = null;
+  grailFound = new Set();
+  grailFoundItems = new Map();
+  grailDirty = false;
+
+  sharedStashData = null;
+  sharedStashName = null;
+  sharedStashParsed = null;
+  sharedStashOpenTab = '';
+  sharedStashDirty = false;
+
+  // Drop every file handle from memory AND IDB so nothing lingers across
+  // a reset — user must re-pick targets when they re-enable auto-save.
+  for (const k of Object.keys(_fileHandles)) {
+    _fileHandles[k] = null;
+    _lastSeenMtime[k] = 0;
+    try { autoSaveIdbDelHandle(k).catch(err => _logCaught('_doReset.idbDel.' + k, err)); }
+    catch (e) { _logCaught('_doReset.autoSaveIdbDelHandle.' + k, e); }
+  }
 
   // Clear all tracked state from the session
   _deletedItemOffsets.clear();
@@ -4999,16 +4993,7 @@ function encodeExtendedItem(item) {
   // cs (1 bit) — 0 (no class specific)
   wbN(pos, 0, 1); pos += 1;
 
-  // D2RR extra-bit rule (verified against GildBarb.d2s / Mayb.d2s known-good items):
-  //   - Jewelry / charms / jewels / misc (non-armor, non-weapon): 1 extra bit after
-  //     the quality-specific field for q=5 (set) and q=7 (unique).
-  //   - Armor / weapons: NO extra bit. Their binary goes directly from set_id/unique_id
-  //     to the timestamp bit.
-  // Confirmed by decoding:
-  //   • Spring Facet (jew q=7): WITH_EXTRA → clean lightmindam(50) first stat.
-  //   • Demonic Chuckle / Evil Humor / Temptation's Death (rin/amu q=5): WITH_EXTRA → clean maxhp/maxmana.
-  //   • hbl(131) / fhl(16) set helmets, 7m7(75) / 7gs(238) set weapons: NO_EXTRA → valid def/durability and stat list; WITH_EXTRA gives impossible durability and garbage stats.
-  // Decoder comment at _readPropList agrees: gap is for "unique/set non-armor items like charms and rings".
+  // D2RR extra-bit rule — see doc/PROPERTY-ENCODING.md § extra-bit rule.
   const isArmor = ARMOR_SET.has(code);
   const isWeapon = WEAPON_SET.has(code);
   const wantsNonArmorExtraBit = !isArmor && !isWeapon;
@@ -5084,15 +5069,7 @@ function encodeExtendedItem(item) {
     wbN(pos, item.numSockets & 0xF, 4); pos += 4;
   }
 
-  // Set items: write sbf + a partial-bonus stat list per active slot, derived from
-  // setitems.txt aprop*a/b columns. Required — the game crashes on join whenever the
-  // character wears multiple pieces of the same set and one of those pieces has sbf=0
-  // with no partial cache (verified with jewelry AND armor/weapon set items).
-  //
-  // Note: game-dropped upgraded items can have *additional* stats in their partial
-  // lists (e.g. res-all/upgrade_medium) from Reimagined's item-upgrade system. Those
-  // extras aren't required for fresh editor inserts — the aprop-only cache loads fine.
-  // See doc/PROPERTY-ENCODING.md.
+  // Set items: sbf + partial-bonus cache. See doc/PROPERTY-ENCODING.md § set bonus.
   let setBonusesBySlot = null;
   if (quality === 5) {
     const sid = item.setId ?? item.setItemId;
@@ -5186,15 +5163,8 @@ function encodeExtendedItem(item) {
     }
   }
 
-  // D2RR requires at least one zero bit of padding after the property-list 511
-  // terminator before byte-aligning. If the stat list happens to end exactly on
-  // a byte boundary (e.g. Ogre's Embrace's 9 stats total 176 bits = multiple of 8),
-  // plain `while (pos & 7) pos++` adds zero padding bits and the game rejects the
-  // save on load. Game-dropped items always include the extra bit — verified by
-  // diffing a working Ogre's Embrace against an editor-produced one, and by
-  // checking the rule across 13 unique/set/magic items across 3 real saves: the
-  // actual padding is always `(8 - endBit%8) || 8`, i.e. one bit + byte-align.
-  // encodeCompactItem already does the equivalent `pos += 8` for gems.
+  // Trailing-bit pad: `(8 - endBit%8) || 8` after 511 terminator.
+  // See doc/PROPERTY-ENCODING.md § trailing-bit pad.
   pos++;
   while (pos & 7) pos++;
   return buf.slice(0, pos >> 3);
@@ -5230,12 +5200,8 @@ function flushDeletedItems() {
   const endBound = jm2Off > 0 ? jm2Off : workBytes.length;
   const itemStart = jmOff + 4;
 
-  // Build keep/delete ranges from the sorted offsets. The JM count field tallies
-  // TOP-LEVEL items only — socketed children (parent=6) are present in the stream
-  // but aren't counted by the header. Confirmed against a Reimagined save where an
-  // Overlord's Helm with a socketed Perfect Diamond had count=5 for 6 stream items
-  // (4 potions + helm + diamond). So deletedCount only increments for non-child
-  // entries; byte ranges still get excluded for both parent and children.
+  // JM count tallies top-level items only; deletedCount skips parent=6 children.
+  // See doc/ITEM-ROUTING.md § JM count vs stream count.
   const kept = [];
   let deletedCount = 0;
   let deletedBytes = 0; // total offsets removed (for logging only)
@@ -5613,23 +5579,7 @@ window.onUndoClick = function() {
 };
 
 // ═══════════════════════════════════════════════════════════
-//  AUTO-SAVE SYSTEM (File System Access API, Chromium-only)
-//
-//  Flow:
-//    1. User opens Advanced Options, flips the auto-save toggle ON.
-//    2. Confirmation dialog lists currently-loaded files + warnings.
-//    3. After confirm, we call showSaveFilePicker for each loaded kind
-//       while still inside the user-gesture chain of the confirm click.
-//    4. Each captured FileSystemFileHandle is persisted to IndexedDB so
-//       the next page load can rehydrate without re-picking.
-//    5. Any mark*Dirty() call now schedules a debounced autosave. After
-//       AUTOSAVE_DELAY_MS, the write lands on the stored handle.
-//
-//  Gotcha: showSaveFilePicker requires a user gesture. The debounce
-//  timer is NOT a gesture, so we capture handles at toggle-ON and at
-//  file-load time (onchange → FileReader.onload is a gesture chain in
-//  Chromium today). If a write fires with no handle, we skip silently
-//  and surface a status message so the user can set a target.
+//  AUTO-SAVE SYSTEM — see doc/AUTOSAVE-UNDO-DESIGN.md
 // ═══════════════════════════════════════════════════════════
 
 // Picker config per kind. suggestedName is a function so it re-reads the
@@ -6528,24 +6478,10 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') scheduleExternalCheck();
 });
 
-// Restore handles from IndexedDB on page load. Browsers drop FSA write
-// permission on reload (queryPermission returns 'prompt'), so we adopt the
-// handle regardless of current permission state. The first time the user
-// loads the same file in this session, maybeCaptureAutoSaveHandle will call
-// requestPermission() from inside the load user-gesture — that's when the
-// 'allow edits to X' prompt appears, and we never lose a session's handle.
-async function rehydrateFileHandles() {
-  if (!('showSaveFilePicker' in window)) return;
-  for (const kind of ['char', 'sharedStash', 'grail', 'vault']) {
-    const h = await autoSaveIdbGetHandle(kind);
-    if (!h) continue;
-    // If the user loaded a fresh file during the DOMContentLoaded → rehydrate
-    // async gap, they've already populated _fileHandles[kind] with the correct
-    // handle. Don't stomp it with the stale rehydrated one.
-    if (_fileHandles[kind]) continue;
-    _fileHandles[kind] = h;
-  }
-}
+// (Handle rehydration used to run here — removed so auto-save targets are
+// fully session-scoped. The IDB store is still written by captureAutoSaveHandle
+// so the data exists; we just don't read it back at startup. Kept here as a
+// reminder if we ever want to surface a "restore last session" opt-in button.)
 
 // ═══════════════════════════════════════════════════════════
 //  BIT READER
@@ -6629,44 +6565,7 @@ function writeString(buf, off, maxLen, str) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  D2S PARSER
-//
-//  Format: D2R Resurrected version 0x69 (105)
-//  Offsets verified against GildDin.d2s + Python header.py (which confirms
-//  D2R stores class at 0x18=24 and level at 0x1B=27):
-//    0   magic       0xaa55aa55
-//    4   version     uint32 (105 = 0x69 for D2R)
-//    8   file size   uint32
-//    12  checksum    uint32 (rotate-left-1 + byte, per checksum.py)
-//    24  class       uint8  (0=Amazon…6=Assassin, 7=Warlock in Reimagined)
-//    26  status      uint8  (0x04=hasDied, 0x08=HC, 0x20=expansion — D2R encoding)
-//    27  level       uint8  (confirmed 58 via gf stats section)
-//    152 difficulty  3 bytes — one per diff (bit7=active, bits0-2=act 0-based)
-//    299 name        64 bytes, null-padded
-//
-//  Section markers (searched dynamically):
-//    "Woo!" quests   found at ~403 (Python quests.py confirms: +10 bytes then 96*3)
-//    "WS"   wps      found at ~701 (Python waypoints.py confirms: +8 then 24*3)
-//    "gf"   stats    found at ~833 (Python stats.py confirms: 9-bit IDs, 0x1FF end)
-//    "if"   skills   found at ~880 (Python skills.py confirms: 30 bytes)
-//    "JM"   items    found at ~912 (D2R format: different from classic D2)
-//
-//  D2R (v0x69) item bit layout — confirmed from D2<>D2R converter source + empirical testing:
-//    bit  4: identified (1b)
-//    bit 11: socketed (1b)
-//    bit 21: simple/compact (1b)
-//    bit 22: ethereal (1b)
-//    bit 24: personalized (1b)
-//    bit 26: runeword (1b)
-//    bit 27-34: D2R padding (8b, skip — classic had 15b here)
-//    bit 35: parent   (3b): 0=stored, 1=equipped, 2=belt, 6=in_item/socketed
-//    bit 38: equipSlot(4b): 1=helm,2=amu,3=armor,4=RH,5=LH,6=RR,7=LR,8=belt,9=boots,10=gloves,11=altRH,12=altLH
-//    bit 42: x/col    (4b): inventory column; belt slot when parent=2
-//    bit 46: y/row    (3b): inventory row
-//    bit 49: ? (1b, skip)
-//    bit 50: storage  (3b): 1=inventory, 4=horadric cube, 5=personal stash
-//    bit 53+: type code (4 Huffman-encoded chars, variable width, 4th char always ' ')
-//             Decode via huffman tree — NOT a fixed-width integer!
+//  D2S PARSER — see doc/ARCHITECTURE.md § Save Format + Item Binary Format
 // ═══════════════════════════════════════════════════════════
 const HDR = {
   CLASS:       24,  // 0x18: character class byte
@@ -6716,12 +6615,7 @@ function parseD2S(buf) {
   out.header.version    = readU32LE(buf,4);
   out.header.fileSize   = readU32LE(buf,8);
   out.header.cls        = buf[HDR.CLASS];
-  // Determine format version to select correct field offsets.
-  // parsing.rs (detect_hardcore_and_last_played):
-  //   CHARACTER_SECTION_START = 16
-  //   V99  (0x63): status = 16+20=36(0x24), last_played = 16+32=48(0x30)
-  //   V105 (0x69): status = 16+4=20(0x14),  last_played = 16+16=32(0x20)
-  //   HC flag for both: status & (1<<2) = status & 0x04
+  // V99 (0x63) and V105 (0x69) use different field offsets. HC flag = status & 0x04.
   const formatVersion = out.header.version; // already read above as readU32LE(buf,4)
   const isV105 = (formatVersion === 105); // 0x69 = Reimagined RotW
   const statusOff     = isV105 ? 20 : 36;  // 0x14 or 0x24
@@ -6791,27 +6685,7 @@ function parseD2S(buf) {
     for (let i=0;i<30;i++) out.skills.push(buf[ifOff+2+i]);
   }
 
-  // ── Quest section ("Woo!" marker at ~byte 335) ──
-  // Structure: 4-byte "Woo!" + 6 unknown bytes = 10 byte header
-  // Then 3 difficulties × 96 bytes each (= 288 bytes total)
-  // Each difficulty block: 96 bytes = 48 shorts
-  //   offset 0  : short — act I intro flag
-  //   offsets 2-13 (6 shorts): Act I quest data
-  //   offset 14 : short — act I->II transition
-  //   offset 16 : short — act II intro
-  //   offsets 18-29: Act II quest data
-  //   offset 30 : transition
-  //   offset 32 : act III intro
-  //   offsets 34-45: Act III quest data
-  //   offset 46 : transition
-  //   offset 48 : act IV intro
-  //   offsets 50-55 (3 shorts): Act IV quest data (only 3 quests)
-  //   offset 56 : transition
-  //   offsets 58-63: unknown / padding
-  //   offset 64 : unknown
-  //   offsets 66-67: unknown
-  //   offsets 70-81 (6 shorts): Act V quest data
-  //   offsets 82-95: unknown padding
+  // Quest section — see doc/ARCHITECTURE.md § Quest section.
   out.questsOffset = -1;
   out.quests = []; // [diff][questIndex] = 16-bit flags
   const wooOff = findMarker(buf,'Wo',300);
@@ -6862,27 +6736,7 @@ function parseD2S(buf) {
     }
   }
 
-  // ── Item section ("JM" marker) ──
-  // D2R item bit layout (verified against GildDin.d2s):
-  //   bit  4:     identified
-  //   bit  11:    socketed
-  //   bit  21:    simple (111-bit fixed, no extended data)
-  //   bit  22:    ethereal
-  //   bit  24:    personalized
-  //   bit  26:    runeword
-  //   bits 42-44: location  (0=stored,1=equipped,2=belt,4=cursor,6=socketed)
-  //   bits 45-48: equip_slot (1=head,2=neck,3=torso,4=rhand,5=lhand,6=rfing,7=lfing,8=waist,9=feet,10=hands,11=alt_r,12=alt_l)
-  //   bits 49-52: x_pos
-  //   bits 53-55: y_pos
-  //   bit  56:    unknown
-  //   bits 57-59: storage (1=inventory,4=cube,5=stash)
-  // Extended (non-simple) items continue:
-  //   bits 60-69: type index (10-bit numeric ID in D2R, not ASCII)
-  //   bits 70-91: remaining type bits + unknown (22 bits)
-  //   bits 92-94: num_socketed
-  //   bits 95-126: item ID (32-bit)
-  //   bits 127-133: item level (7-bit)
-  //   bits 134-137: quality (4-bit) 1=low 2=norm 3=high 4=magic 5=set 6=rare 7=unique 8=crafted
+  // Item section ("JM" marker) — bit layout in doc/ARCHITECTURE.md § Item Binary Format
   out.itemsOffset = -1;
   out.items = [];
   out.mercItemsOffset = -1;
@@ -6985,12 +6839,7 @@ function parseD2S(buf) {
       out.items.push(item);
     }
 
-    // Merc items — same byte-pattern signature as the character scan above
-    // (`b0 & 0xE0 == 0`, `b2 & 0x80`, `b4 & 0x05 == 0x05`). The previous merc-only
-    // pattern rejected merc items with `b3 != 0`, which silently dropped runewords
-    // (bit 26 set → b3 = 0x04) and items with certain flag combinations. Using the
-    // main scan's stronger magic-marker check (`b4 & 0x05`) catches those too and
-    // reuses the same false-positive rejection via itemNameByCode.
+    // Merc items — same byte-pattern signature as the character scan above.
     const jfOff = jm2Off > 0 ? findMarker(buf,'jf', jm2Off) : -1;
     if (jfOff >= 0) {
       out.mercItemsOffset = jfOff;
@@ -7321,16 +7170,7 @@ function _setActProgressionFlags(diff, unlock) {
   const qOff = parsedChar.questsOffset;
   if (qOff < 0) return;
   const base = qOff + 10 + diff * 96;
-  // Per-act intro and transition offsets within the 96-byte block:
-  // offset 0:  Act I intro
-  // offset 14: Act I→II travel (set = Act II unlocked)
-  // offset 16: Act II intro
-  // offset 30: Act II→III travel
-  // offset 32: Act III intro
-  // offset 46: Act III→IV travel
-  // offset 48: Act IV intro
-  // offset 56: Act IV→V travel (some sources say 68)
-  // offset 68: Act V intro
+  // Per-act intro + transition offsets — see doc/ARCHITECTURE.md § Quest section.
   const PROGRESSION_OFFSETS = [0, 14, 16, 30, 32, 46, 48, 56, 68];
   const val = unlock ? 0x01 : 0x00;
   for (const off of PROGRESSION_OFFSETS) {
@@ -8073,25 +7913,6 @@ const SET_ITEM_NAMES=(()=>{
 })();
 
 // ═══════════════════════════════════════════════════════════
-// ── Verified location map for D2R Reimagined (GildDin.d2s exhaustive analysis) ──
-//
-// In Reimagined's expanded shared stash, loc=0-3 encode the STASH PAGE, not equip/stored.
-// GildDin is a dead HC character with NO equipped items; all gear is in stash pages.
-// Multiple items share position (2,2) because they are on DIFFERENT stash pages.
-// We need a save with equipped gear to confirm the equipped encoding — until then
-// we show loc=0-3 as stash pages and do not show any "equipped" slots.
-//
-//   loc=0 : stash page 0
-//   loc=1 : stash page 1
-//   loc=2 : stash page 2
-//   loc=3 : stash page 3
-//   loc=6 : socketed inside another item
-//   loc=7 : belt slots  (item.x = 0-15 encodes slot position)
-//
-// Storage byte (bits 57-59):
-//   store=1 : personal inventory
-//   store=4 : shared stash
-//   store=5 : personal stash
 const ITEM_LOCATION = {
   0: 'Stash (pg 1)',
   1: 'Stash (pg 2)',
@@ -8244,16 +8065,7 @@ function itemFlags(item) {
   return f.join(' ');
 }
 
-// ── Correct item routing based on exhaustive binary analysis of GildDin.d2s ──
-// ── Definitive item routing (verified against GildDin.d2s all 26 items) ──
-// loc=6: socketed inside another item — skip from all grids
-// loc=7: belt slot (item.x = raw slot index 0-15)
-// store=1: personal inventory (10×8 in Reimagined)
-// store=4: shared stash — loc (0-3) is the page/tab index
-// store=3 or store=6 with loc not in (6,7): personal stash (16×13 in Reimagined)
-// store=7: quest/special items (Khalim's items etc)
-// isMerc: mercenary items
-// Equipped: slot 1-12 with loc=1 and store not in (1,3,4,6,7) — detect heuristically
+// Item routing — see doc/ITEM-ROUTING.md
 function getItemsByLocation() {
   const equipped      = {};           // equipSlot -> item
   const inventory     = [];           // personal inventory (10×8), storage=1
@@ -8882,14 +8694,7 @@ function renderInventory(c) {
     return `<div style="width:${w}px;height:${h}px;flex-shrink:0"></div>`;
   }
 
-  // ── Layout constants (matching the image proportions) ──
-  // The image is ~0.669 aspect (width/height). Paperdoll is top ~42%.
-  // Using a 340px wide panel:
-  // Left weapon col: ~2.2 cells = 76px wide
-  // Center col: ~2.3 cells = 80px wide  
-  // Right weapon col: ~2.2 cells = 76px wide
-  // Gap between cols: ~12px
-  // Cell unit: ~34px
+  // Layout constants (matched to the reference image: 0.669 aspect, paperdoll top ~42%).
 
   const CELL = 50;   // inventory cell size
   const GAP  = 4;    // gap between paperdoll slots
@@ -8908,21 +8713,8 @@ function renderInventory(c) {
   const tabActive   = `${tabStyle}background:var(--d2-surface3);color:var(--d2-gold);border-color:var(--d2-gold-dim);`;
   const tabInactive = `${tabStyle}background:var(--d2-surface);color:var(--d2-text-dim);opacity:0.6;`;
 
-  // ── D2R Paperdoll — matches in-game inventory panel ──
-  // Layout (from the actual game screenshot):
-  //
-  //    [I][II]                        [I][II]
-  //   [ L.Hand ]  [ Helm  ] [Amu]  [ R.Hand ]
-  //   [ (2×4)  ]  [ Torso ]        [  (2×4) ]
-  //   [        ]  [ (2×3) ]        [        ]
-  //   [        ]  [       ]        [        ]
-  //   [Gloves] [R.Ri][Belt][L.Ri] [Boots ]
-  //     (2×2)   (1×1)(2×1)(1×1)    (2×2)
-  //
-  // Note: In D2, "R.Hand" (slot 4) = primary weapon, shown on LEFT of screen
-  //       "L.Hand" (slot 5) = off-hand/shield, shown on RIGHT of screen
-  //       But in the actual game UI, the shield IS on the left and weapon on the right.
-  //       Matching the screenshot: shield/off-hand on LEFT, weapon on RIGHT.
+  // Paperdoll layout note: slot 4 = "R.Hand" is primary weapon (rendered right),
+  // slot 5 = "L.Hand" is off-hand/shield (rendered left) — matches the in-game UI.
 
   const weaponTabsL = `<div style="display:flex;gap:0;margin-bottom:-1px">
     <div class="pd-weapon-tab active" style="${tabActive}" onclick="switchWeaponSet(1)" data-weapon-tab="L1">I</div>
@@ -8934,20 +8726,8 @@ function renderInventory(c) {
     <div class="pd-weapon-tab" style="${tabInactive}" onclick="switchWeaponSet(2)" data-weapon-tab="R2">II</div>
   </div>`;
 
-  // ── D2R Paperdoll — CSS grid matching in-game layout ──
-  //
-  //  9-column grid:
-  //  Col:  1(LWep)  2(g) 3(RRing) 4(g) 5(Center) 6(g) 7(LRing) 8(g) 9(RWep)
-  //
-  //  Row 1: [I][II] tabs                                         [I][II] tabs
-  //  Row 2: [L.Hand]       [  Helm  ]     [Amu]                  [R.Hand]
-  //  Row 3: [      ]       [       Torso       ]                 [      ]
-  //  Row 4: [      ]       [               ]                     [      ]
-  //  Row 5: [Gloves]  [RRi]   [Belt]   [LRi]                    [Boots ]
-  //
-  //  Weapons flush to edges, directly above gloves/boots.
-  //  Helm+Torso centered in col 5. Belt in col 5. Rings in cols 3+7.
-  //  Amulet between helm and R.Hand.
+  // Paperdoll — 9-column CSS grid (weapons col 1/9, helm+torso+belt col 5,
+  // rings col 3/7, amulet between helm and R.Hand).
 
   const G = GAP;
   // Columns: weapon | gap | ring | gap | center(helm/torso/belt) | gap | ring | gap | weapon
@@ -9555,26 +9335,7 @@ function decodeItemProperties(buf, byteOff, item) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  DESCFUNC ROUTER
-//  Formats a single stat (id + value + param) into a localized display line
-//  using the descfunc system from itemstatcost.txt + item-modifiers.json.
-//  Returns a string on success, or null to let the caller fall back to the
-//  legacy STAT_DEF template path.
-//
-//  Descfunc reference (standard D2 spec, D2RR follows same convention):
-//     1  +value str                     6  +value str str2
-//     2  value% str                     7  value% str str2
-//     3  value str                      8  +value% str str2
-//     4  +value% str                    9  value str str2
-//     5  value*100/128% str            10  value*100/128% str str2
-//    11  repairs 1 dur in value sec    19  plain template (Blizzard default)
-//    12  +value str (descval=2=after)  20/21  flipped sign variants
-//    13  +value to {class} skills      22  value% str [montype in param]
-//    14  +value to {skilltab} ({class})  23  ↑ same — damage vs montype
-//    15  chance% Cast Level N {skill} on {event}   24  Level N {skill} (charges)
-//    16  Level value {skill} Aura      27  +value to {skill} ({class} Only)
-//    17  +value str (by time)          28  +value to {skill}  (oskill)
-//    18  +value% str (by time)
+//  DESCFUNC ROUTER — see doc/PROPERTY-ENCODING.md § descfunc pipeline
 // ═══════════════════════════════════════════════════════════
 
 // Resolve a skill name from its numeric ID; falls back to a printable placeholder.
@@ -9615,15 +9376,7 @@ function applyDescfunc(desc, value, param, value2, value3) {
   const func = desc.func;
   const tpl  = template;
 
-  // ── Elemental damage pairs ("Adds N-M Fire Damage") ──
-  // The binary decoder pairs min/max damage stats into a single (value, value2) entry on the
-  // min-damage leader. Use Blizzard's dedicated range templates so non-English locales get
-  // the correct grammar ("Fügt 5-10 Feuerschaden hinzu" etc.) instead of two separate lines.
-  //
-  // Cold (stat 54) and poison (stat 57) also carry `value3` = duration in frames (25 fps), and
-  // Blizzard's range templates for those stats include a third `%d` for "over N Seconds".
-  // Poison additionally encodes damage as (display * 256 / lengthFrames), so we scale stored
-  // values back to human-readable damage before substituting.
+  // Elemental damage pairs. See doc/PROPERTY-ENCODING.md § elemental-damage-pairs.
   if (value2 !== undefined) {
     const rangeKey = ELEM_DMG_RANGE_KEY[desc.id];
     if (rangeKey && stringTable[rangeKey]) {
@@ -10487,12 +10240,7 @@ window.removeItemByOffset = function(byteOffset) {
   showConfirm(L('ui_confirm_remove_item','Remove this item from the save? This cannot be undone until you reload.'), () => {
     const item = parsedChar.items[idx];
 
-    // Collect socketed children FIRST (before splicing the parent out of the list so
-    // findSocketedChildren can see its byte neighbours). Removing a socketed parent
-    // without also removing its children leaves the children orphaned with parent=6
-    // pointing at a non-existent item — the game parses the orphan on load, finds no
-    // valid parent, and crashes. Verified against Mayb.d2s after an Overlord's Helm
-    // was removed and its socketed jewel at 0x5a8 was left behind.
+    // Collect socketed children BEFORE splicing the parent — orphan parent=6 items crash the game.
     const children = (byteOffset >= 0 && !item.isVirtual)
       ? findSocketedChildren(workBytes, parsedChar.items, item)
       : [];
@@ -11166,14 +10914,7 @@ window.confirmInsertItem = function() {
     newItem.setItemId = entry.setId;
   }
 
-  // Sockets — the modal socket input already carries the correct value:
-  //   - Inherent-socket uniques/sets (e.g. Overlord's Helm `sock 4 4`): selectModalItem
-  //     pre-fills and disables the input with the item's inherent count.
-  //   - Regular socketable items: user picks 0..maxSock via the input.
-  // Encoder deliberately doesn't write stat 194 for func 14 (see propCodeToStatEntries)
-  // so the ONLY socket count in the binary is this num_sockets field.
-  // Clamp to [0, maxSock] so a stale value from a prior modal open (or devtools
-  // manipulation) can't produce an oversized socket count that the game rejects.
+  // Clamp sockets to [0, maxSock]. See doc/PROPERTY-ENCODING.md § sockets.
   const sockInput = document.getElementById('modalSockets');
   const sockMax   = MAX_SOCKETS_BY_CODE[typeCode] || 0;
   const sockRaw   = sockInput ? (parseInt(sockInput.value, 10) || 0) : 0;
@@ -11505,12 +11246,7 @@ function parseSharedStash() {
       }
     }
 
-    // Read pageType from the section header. Each section is preceded by a 0x40-byte
-    // header (magic 0x55AA55AA at section start; JM marker at sectionStart+0x40), and
-    // pageType sits at sectionStart+0x14 as a u32 LE. pageType=0 is a regular shared
-    // stash tab; pageType=1 is the Reimagined combined specialty tab holding gems,
-    // runes, and materials mixed together. For t=0 the first section starts at 0 so
-    // jmOff-0x40 is the section start; for later sections the same offset rule applies.
+    // pageType at sectionStart+0x14 (u32 LE). See doc/ARCHITECTURE.md § .d2i section layout.
     const sectionStart = jmOff - 0x40;
     const pageTypeOff = sectionStart + 0x14;
     const pageType = (sectionStart >= 0 && pageTypeOff + 4 <= buf.length)
@@ -12047,13 +11783,8 @@ window.moveItemsToGrail = function() {
   window._grailTransferList = eligible;
 };
 
-// Valid socketable item codes — things that can actually be gems/runes/jewels inside a
-// socket. Used to reject scanner false-positives inside item stat bits that coincidentally
-// match the item-start pattern AND have parent=6: without this filter, a cascade delete
-// of a socketed item would over-count the children and drop the JM count too low → game
-// reads N items then hits the next item's bytes where it expects the corpse JM marker,
-// and crashes on load. Verified against Mayba.d2s where deleting a gem-socketed Overlord's
-// Helm decremented count by 3 instead of 2.
+// Valid socketable item codes — used to filter scanner false-positives from cascade.
+// See doc/ITEM-ROUTING.md § socketed-child cascade.
 const _SOCKETABLE_CHILD_RE = /^(gc[a-z]|gf[a-z]|gs[a-z]|gl[a-z]|gp[a-z]|gm[a-z]|gz[a-z]|sk[a-z]|r[0-9]{2}|jew|cjw)$/;
 
 // Read the parent item's `socketCount` field (3 bits at the start of its extended data)
@@ -12093,18 +11824,7 @@ function _readParentSocketCount(sourceBuf, parentItem) {
 // Find socketed child items (parent=6) that belong to a given parent item
 function findSocketedChildren(sourceBuf, sourceItems, parentItem) {
   if (!parentItem.socketed && !parentItem.numSockets) return [];
-  // Child items have parent=6 (in_item). In the binary they appear IMMEDIATELY AFTER
-  // the parent's full byte range — they're separate item entries in the JM stream.
-  // A scanner false-positive inside the parent's stat bits can match the item-start
-  // byte pattern AND have `parent=6` by coincidence, producing a ghost item with a
-  // byteOffset INSIDE the parent's own bytes. Three layers of defense:
-  //   1. byteOffset must be >= parent's end (not inside the parent's stat bits).
-  //   2. typeCode must match a real socketable type (gem/rune/jewel/skull).
-  //   3. Children array is capped at the parent's 3-bit `socketCount` field from its
-  //      binary — the game's own authoritative count of how many gems are in this item.
-  //
-  // Also: children must live in the same section (character vs merc) as the parent —
-  // crossing the boundary would attach merc runes to character gear.
+  // See doc/ITEM-ROUTING.md § socketed-child cascade.
   const children = [];
   const parentOff = parentItem.byteOffset;
   const parentSection = !!parentItem.isMerc;
@@ -13465,9 +13185,11 @@ function buildVaultPageGrid(pageId, cellPx) {
   // paints the extra space to the right of the cells.
   // Drop zone: ondragover + ondrop on the wrapper catches any drop inside the
   // grid and lets the drop handler compute the target cell from the coordinates.
-  let html = `<div class="inv-grid-wrap"
+  let html = `<div class="inv-grid-wrap vault-grid-drop"
+    data-grid-w="${gridW}" data-grid-h="${gridH}" data-cell-px="${cellPx}"
     ondragover="vaultDragOver(event)"
     ondrop="vaultDropOnVault(event)"
+    ondragleave="vaultDragLeave(event)"
     style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${gridH},${cellPx}px);gap:1px;background:rgba(60,46,22,0.4);border:1px solid rgba(60,46,22,0.5);padding:0;position:relative;width:max-content">`;
   const rendered = new Set();
   for (let row = 0; row < gridH; row++) {
@@ -13632,7 +13354,7 @@ function buildVaultSourceGrid(items, gridW, gridH, cellPx, sourceKind) {
         occupied.add(`${x + dx},${y + dy}`);
   }
 
-  let html = `<div class="inv-grid-wrap" ${dropAttrs} style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${gridH},${cellPx}px);gap:1px;background:rgba(60,46,22,0.4);border:1px solid rgba(60,46,22,0.5);padding:0;position:relative;width:max-content">`;
+  let html = `<div class="inv-grid-wrap vault-source-drop" data-grid-w="${gridW}" data-grid-h="${gridH}" data-cell-px="${cellPx}" ${dropAttrs} ondragleave="vaultDragLeave(event)" style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${gridH},${cellPx}px);gap:1px;background:rgba(60,46,22,0.4);border:1px solid rgba(60,46,22,0.5);padding:0;position:relative;width:max-content">`;
   const rendered = new Set();
   for (let row = 0; row < gridH; row++) {
     for (let col = 0; col < gridW; col++) {
@@ -13706,14 +13428,105 @@ window.vaultDragStart = function(ev, byteOffset, origin, w, h) {
   }
 };
 
-window.vaultDragEnd = function() { _vaultDragState = null; };
+window.vaultDragEnd = function() {
+  _vaultDragState = null;
+  _hideVaultDragIndicator();
+};
 
 // dragover on a drop zone must call preventDefault to allow the subsequent drop.
+// We also position a green preview overlay so the user sees exactly which cell
+// the item will land on.
 window.vaultDragOver = function(ev) {
   if (!_vaultDragState) return;
   ev.preventDefault();
   if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+  _showVaultDragIndicator(ev.currentTarget, ev);
 };
+
+// When the drag leaves a grid (e.g. moves between panels), hide the indicator
+// so it doesn't linger on a grid the cursor is no longer over.
+window.vaultDragLeave = function(ev) {
+  // relatedTarget is null when leaving the window entirely, or the element
+  // we're entering. If we're still inside the same grid wrapper, keep
+  // the indicator visible — only hide when we actually cross the boundary.
+  const rt = ev.relatedTarget;
+  if (rt && ev.currentTarget.contains(rt)) return;
+  _hideVaultDragIndicator();
+};
+
+// Green overlay shown on the drop target during drag. Mirrors the style used
+// by the inventory drag indicator in the Inventory tab.
+let _vaultDragIndicatorEl = null;
+function _showVaultDragIndicator(gridEl, ev) {
+  const state = _vaultDragState;
+  if (!state || !gridEl) return;
+  const gridW = parseInt(gridEl.dataset.gridW, 10) || VAULT_GRID_W;
+  const gridH = parseInt(gridEl.dataset.gridH, 10) || VAULT_GRID_H;
+  const cellPx = parseInt(gridEl.dataset.cellPx, 10) || VAULT_CELL_PX;
+  const cellStep = cellPx + VAULT_CELL_GAP;
+  const w = state.w || 1;
+  const h = state.h || 1;
+
+  if (!_vaultDragIndicatorEl) {
+    _vaultDragIndicatorEl = document.createElement('div');
+    _vaultDragIndicatorEl.style.cssText = 'position:absolute;pointer-events:none;z-index:10;border:2px solid #4a9a4a;background:rgba(74,154,74,0.25);border-radius:1px;transition:left 0.05s,top 0.05s,background 0.1s';
+  }
+  if (_vaultDragIndicatorEl.parentElement !== gridEl) gridEl.appendChild(_vaultDragIndicatorEl);
+
+  const rect = gridEl.getBoundingClientRect();
+  const ox = ev.clientX - rect.left - 1;
+  const oy = ev.clientY - rect.top  - 1;
+  // Clamp so the indicator always fits fully inside the grid even when the
+  // cursor is near the right/bottom edge.
+  let col = Math.floor(ox / cellStep);
+  let row = Math.floor(oy / cellStep);
+  col = Math.max(0, Math.min(col, gridW - w));
+  row = Math.max(0, Math.min(row, gridH - h));
+
+  // Red tint if target cells are occupied by something other than the item
+  // being dragged (cheap intent preview — not authoritative, drop handler
+  // still re-validates and may reject with a popup).
+  const isInvalid = _isVaultCellOccupied(gridEl, col, row, w, h, state);
+  _vaultDragIndicatorEl.style.border     = isInvalid ? '2px solid #c74040' : '2px solid #4a9a4a';
+  _vaultDragIndicatorEl.style.background = isInvalid ? 'rgba(199,64,64,0.25)' : 'rgba(74,154,74,0.25)';
+
+  _vaultDragIndicatorEl.style.left   = (col * cellStep + 1) + 'px';
+  _vaultDragIndicatorEl.style.top    = (row * cellStep + 1) + 'px';
+  _vaultDragIndicatorEl.style.width  = (w * cellStep - 1) + 'px';
+  _vaultDragIndicatorEl.style.height = (h * cellStep - 1) + 'px';
+  _vaultDragIndicatorEl.style.display = '';
+}
+function _hideVaultDragIndicator() {
+  if (_vaultDragIndicatorEl) _vaultDragIndicatorEl.style.display = 'none';
+}
+
+// Cheap occupancy preview for the indicator's red/green tint. Only meaningful
+// for drops targeting the vault grid on the active page; source grids don't
+// know about rearrange-self-exclusion so we just inspect what's visible.
+function _isVaultCellOccupied(gridEl, col, row, w, h, state) {
+  if (!gridEl.classList.contains('vault-grid-drop')) return false;
+  const movingSelf = state.origin === 'vault';
+  const movingItem = movingSelf ? findVaultItem(state.byteOffset) : null;
+  for (const it of vaultItems) {
+    if (it.pageId !== vaultActivePage) continue;
+    if (!_vaultItemIsTopLevel(it)) continue;
+    if (movingItem && it.byteOffset === movingItem.byteOffset) continue;
+    const { w: iw, h: ih } = getItemSize(it.typeCode);
+    if (col + w <= it.x || it.x + iw <= col) continue;
+    if (row + h <= it.y || it.y + ih <= row) continue;
+    return true;
+  }
+  return false;
+}
+
+// Decode the 3-bit parent field (bits 35-37) from an item's raw bytes. Used
+// to skip socketed children (parent=6) when computing grid occupancy.
+function _vaultItemIsTopLevel(it) {
+  const buf = it._vaultRawBytes;
+  if (!buf || buf.length < 5) return true;
+  const parent = (buf[4] >> 3) & 0x7;
+  return parent !== 6;
+}
 
 // Compute the (col, row) on a grid wrapper for a given drop event. Returns null
 // if the drop lands outside the grid tracks (e.g. in the border).
@@ -13728,20 +13541,39 @@ function _vaultDropCell(ev, gridEl) {
   return { col, row };
 }
 
-// Drop target: the vault grid. Accepts anything in _vaultDragState except a
-// vault-origin drag (intra-vault rearrange isn't in scope for this phase).
+// Clamp a raw (col,row) to a grid wrapper so the item sits fully inside.
+// Matches the indicator's clamping so drop = where the preview showed.
+function _vaultClampToGrid(gridEl, cell, w, h) {
+  const gridW = parseInt(gridEl.dataset.gridW, 10) || VAULT_GRID_W;
+  const gridH = parseInt(gridEl.dataset.gridH, 10) || VAULT_GRID_H;
+  return {
+    col: Math.max(0, Math.min(cell.col, gridW - w)),
+    row: Math.max(0, Math.min(cell.row, gridH - h)),
+  };
+}
+
+// Drop target: the vault grid. Accepts source drags (move in) AND vault
+// drags (rearrange within the active page).
 window.vaultDropOnVault = function(ev) {
   if (!_vaultDragState) return;
   ev.preventDefault();
+  _hideVaultDragIndicator();
   const state = _vaultDragState;
   _vaultDragState = null;
+  const raw = _vaultDropCell(ev, ev.currentTarget);
+  if (!raw) return;
+  const { col, row } = _vaultClampToGrid(ev.currentTarget, raw, state.w || 1, state.h || 1);
   if (state.origin === 'vault') {
-    // Intra-vault rearrange is not implemented here. Silently ignore.
+    // Intra-vault rearrange on the currently-visible page. Cross-page rearrange
+    // isn't supported through DnD because the grid only shows one page at a
+    // time — the user can't target another page mid-drag.
+    const moved = _rearrangeVaultItem(state.byteOffset, col, row);
+    if (moved) {
+      renderVault(document.getElementById('tabContent'));
+    }
     return;
   }
-  const cell = _vaultDropCell(ev, ev.currentTarget);
-  if (!cell) return;
-  moveSourceItemToVault(state.byteOffset, { pageId: vaultActivePage, x: cell.col, y: cell.row });
+  moveSourceItemToVault(state.byteOffset, { pageId: vaultActivePage, x: col, y: row });
 };
 
 // Drop target: one of the source grids (inventory or character stash). Only
@@ -13749,14 +13581,58 @@ window.vaultDropOnVault = function(ev) {
 window.vaultDropOnSource = function(ev, destKind) {
   if (!_vaultDragState) return;
   ev.preventDefault();
+  _hideVaultDragIndicator();
   const state = _vaultDragState;
   _vaultDragState = null;
   if (state.origin !== 'vault') return;     // only vault → source drops
   if (destKind !== 'inventory' && destKind !== 'stash') return;
-  const cell = _vaultDropCell(ev, ev.currentTarget);
-  if (!cell) return;
-  moveVaultItemToSource(state.byteOffset, destKind, { x: cell.col, y: cell.row });
+  const raw = _vaultDropCell(ev, ev.currentTarget);
+  if (!raw) return;
+  const { col, row } = _vaultClampToGrid(ev.currentTarget, raw, state.w || 1, state.h || 1);
+  moveVaultItemToSource(state.byteOffset, destKind, { x: col, y: row });
 };
+
+// Intra-vault rearrange on the active page. Updates item position + patches
+// its stored raw bytes so autosave/encode see the new location. Rejects drops
+// that would overlap an existing top-level item (socketed children at (0,0)
+// are ignored — they're not really "on" the grid).
+function _rearrangeVaultItem(byteOffset, newX, newY) {
+  const item = findVaultItem(byteOffset);
+  if (!item) { showPopup(L('ui_vault_item_not_found','Vault item not found.')); return false; }
+  if (!_vaultItemIsTopLevel(item)) return false; // shouldn't be draggable anyway
+  const { w, h } = getItemSize(item.typeCode);
+
+  // Bounds check
+  if (newX < 0 || newY < 0 || newX + w > VAULT_GRID_W || newY + h > VAULT_GRID_H) {
+    showPopup(L('ui_vault_invalid_drop','Invalid drop target.'));
+    return false;
+  }
+  // No-op if dropped on current cell
+  if (item.x === newX && item.y === newY) return false;
+
+  // Collision check on the active page (excluding the item being moved and
+  // skipping socketed children that share coordinates with their parent).
+  for (const it of vaultItems) {
+    if (it.pageId !== item.pageId) continue;
+    if (it.byteOffset === item.byteOffset) continue;
+    if (!_vaultItemIsTopLevel(it)) continue;
+    const { w: iw, h: ih } = getItemSize(it.typeCode);
+    if (newX + w <= it.x || it.x + iw <= newX) continue; // no horizontal overlap
+    if (newY + h <= it.y || it.y + ih <= newY) continue; // no vertical overlap
+    showPopup(L('ui_vault_cell_occupied','Cell is occupied.'));
+    return false;
+  }
+
+  // Apply the move: object fields + raw bytes both need to reflect new x/y.
+  // storage=5 (stash) + parent=0 (stored) preserve the existing convention.
+  item.x = newX;
+  item.y = newY;
+  if (item._vaultRawBytes) {
+    item._vaultRawBytes = _patchItemPosition(item._vaultRawBytes, newX, newY, 5, 0);
+  }
+  markVaultDirty();
+  return true;
+}
 
 // ── Move semantics ──────────────────────────────────────────
 // Character items  → Vault : MOVE  (item removed from char, gained by vault)
@@ -13856,7 +13732,26 @@ window.moveSourceItemToVault = function(byteOffset, explicit) {
   ensureItemProps(item);
 
   // Cascade children (socketed gems/runes/jewels go with the parent).
-  const children = findSocketedChildren(buf, items, item);
+  // Virtual items don't have real byte offsets for findSocketedChildren to
+  // walk — their cascade was preserved by the vault→inv move which pushed
+  // children adjacent in the items array. Scan forward to recover them.
+  let children;
+  if (item.isVirtual && (item._virtualBytes || item._grailCopyBytes)) {
+    children = [];
+    const idx = items.indexOf(item);
+    if (idx >= 0) {
+      for (let i = idx + 1; i < items.length; i++) {
+        const ch = items[i];
+        const cBytes = ch._virtualBytes || ch._grailCopyBytes;
+        if (!ch.isVirtual || !cBytes || cBytes.length < 5) break;
+        const cParent = (cBytes[4] >> 3) & 0x7;
+        if (cParent !== 6) break;
+        children.push(ch);
+      }
+    }
+  } else {
+    children = findSocketedChildren(buf, items, item);
+  }
 
   // Extract raw bytes + compute placement for the parent.
   const { w, h } = getItemSize(item.typeCode);
@@ -13884,8 +13779,24 @@ window.moveSourceItemToVault = function(byteOffset, explicit) {
     }
   }
 
-  const parentLen = getItemBinaryLength(buf, item.byteOffset, lengthItems, sectionEnd);
-  const parentBytes = buf.slice(item.byteOffset, item.byteOffset + parentLen);
+  // Extract raw bytes. Items with a valid positive byteOffset can slice
+  // directly from the source buffer (most common case). Virtual items with
+  // a fake negative byteOffset can't — we'd slice from the TAIL of the
+  // buffer and get garbage. Fall back to their cached bytes instead.
+  // This is what was making a vault→inv→vault round-trip of a set item
+  // re-save as a white item.
+  let parentBytes;
+  if (item.byteOffset >= 0 && buf) {
+    const parentLen = getItemBinaryLength(buf, item.byteOffset, lengthItems, sectionEnd);
+    parentBytes = buf.slice(item.byteOffset, item.byteOffset + parentLen);
+  } else if (item._virtualBytes) {
+    parentBytes = new Uint8Array(item._virtualBytes);
+  } else if (item._grailCopyBytes) {
+    parentBytes = new Uint8Array(item._grailCopyBytes);
+  } else {
+    showPopup('Source item has no binary bytes — cannot move to vault.');
+    return;
+  }
   // parent=0 (stored), storage=5 (masquerade as stash — same convention as grail).
   const patchedParent = _patchItemPosition(parentBytes, placement.x, placement.y, 5, 0);
 
@@ -13901,9 +13812,19 @@ window.moveSourceItemToVault = function(byteOffset, explicit) {
   }];
 
   // Children keep parent=6 (socketed in_item) — don't touch their bits, just copy.
+  // Same prefer-real-offset-then-fallback rule as the parent.
   for (const child of children) {
-    const cLen = getItemBinaryLength(buf, child.byteOffset, lengthItems, sectionEnd);
-    const cBytes = buf.slice(child.byteOffset, child.byteOffset + cLen);
+    let cBytes;
+    if (child.byteOffset >= 0 && buf) {
+      const cLen = getItemBinaryLength(buf, child.byteOffset, lengthItems, sectionEnd);
+      cBytes = buf.slice(child.byteOffset, child.byteOffset + cLen);
+    } else if (child._virtualBytes) {
+      cBytes = new Uint8Array(child._virtualBytes);
+    } else if (child._grailCopyBytes) {
+      cBytes = new Uint8Array(child._grailCopyBytes);
+    } else {
+      continue; // child has no bytes recoverable — drop it (shouldn't happen)
+    }
     // Children's position fields don't matter (they're socketed) — leave untouched.
     newItems.push({
       typeCode: child.typeCode,
@@ -14211,9 +14132,19 @@ function renderVault(c) {
             <input type="number" min="1" max="${VAULT_PAGE_COUNT}" value="${vaultActivePage + 1}"
                    id="vaultPageInput" style="width:60px" onchange="vaultGoToPage(this.value - 1)">
             <button class="btn" onclick="vaultRenamePage()">${esc(L('ui_vault_rename_btn','Rename'))}</button>
-            <span style="color:var(--d2-text-dim);font-size:11px;margin-left:auto">
-              ${itemCountOnPage} item${itemCountOnPage === 1 ? '' : 's'} · ${vaultItems.length} total
-            </span>
+            <!-- Fixed-width so growing numbers don't shift the page-nav row.
+                 Label column is flex:1, value column is right-aligned. -->
+            <div style="margin-left:auto;font-size:10px;color:var(--d2-text-dim);font-family:'Cinzel',serif;letter-spacing:1px;line-height:1.35;width:120px;white-space:nowrap">
+              <div style="color:var(--d2-gold);margin-bottom:2px">${esc(L('ui_vault_count_header','Item Count'))}</div>
+              <div style="display:flex;justify-content:space-between">
+                <span>${esc(L('ui_vault_count_page','Page:'))}</span>
+                <span style="color:var(--d2-text)">${itemCountOnPage}</span>
+              </div>
+              <div style="display:flex;justify-content:space-between">
+                <span>${esc(L('ui_vault_count_total','Total:'))}</span>
+                <span style="color:var(--d2-text)">${vaultItems.length}</span>
+              </div>
+            </div>
           </div>
           ${(() => {
             const grid = buildVaultPageGrid(vaultActivePage, 29);
