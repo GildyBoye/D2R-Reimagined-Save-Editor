@@ -4310,8 +4310,12 @@ let SET_SPRITE_ASSETS    = {};
 let _uniqueNameById   = {};
 let _setNameByItemId  = {};
 
-// Source URL for the mod's HD item JSON files.
+// Source URL for the mod's HD item JSON files (sprite-path mappings).
 const REIMAGINED_HD_URL = 'https://raw.githubusercontent.com/D2R-Reimagined/d2r-reimagined-mod/next/data/hd/items/';
+// Source URL for the mod's actual sprite binaries. These override / extend
+// the base sprites in Gild's editor repo — Reimagined-specific items live
+// only here, and tuned versions of existing items may shadow the base ones.
+const REIMAGINED_SPRITE_URL = 'https://raw.githubusercontent.com/D2R-Reimagined/d2r-reimagined-mod/next/data/hd/global/ui/items/';
 
 // Parse a Blizzard SpA1 sprite (D2R's item sprite format). Layout:
 //   0x00  4  "SpA1" magic
@@ -4388,11 +4392,18 @@ function loadItemSprite(assetPath) {
   const paths = _spriteCandidatePaths(assetPath);
   const urls = [];
   // Files on disk use the `.lowend.sprite` suffix (kept for size + speed;
-  // full-res `.sprite` variants were pruned). We fall back to plain `.sprite`
-  // as a safety net in case a user drops an alternate extension in later.
+  // full-res `.sprite` variants were pruned). We also accept the plain
+  // `.sprite` extension as a safety net for either repo.
   const exts = ['.lowend.sprite', '.sprite'];
+  // Source priority (per path+ext):
+  //   1. Reimagined mod HD overrides — Reimagined-specific items + tuned
+  //      replacements that should shadow the base sprite.
+  //   2. Editor's own repo (Gild's base sprites) on GitHub.
+  //   3. Local fallback (editor cloned / served from disk).
+  // All three remote sources are skipped when usingFallback is set.
   for (const p of paths) {
     for (const ext of exts) {
+      if (!usingFallback) urls.push(REIMAGINED_SPRITE_URL + p + ext);
       if (!usingFallback) urls.push(EDITOR_DATA_URL + 'sprites/' + p + ext);
       urls.push(BASE_FALLBACK_URL + 'sprites/' + p + ext);
     }
