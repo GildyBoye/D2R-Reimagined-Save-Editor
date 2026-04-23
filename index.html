@@ -1725,6 +1725,11 @@ async function loadEditorData(timeout) {
   // the editor stays in sync with upstream. Only consumed when the user flips
   // on the "Show item sprites" toggle in Advanced Options; safe to skip.
   await loadHdSpriteMappings(timeout).catch(err => _logCaught('loadHdSpriteMappings', err));
+
+  // colors.txt + globaldatahd.json — drives the per-palette sprite tints so
+  // items sharing a base sprite (e.g. every unique ring) show with their
+  // correct invtransform color. Missing files just disable tinting.
+  await loadColorTransforms(timeout).catch(err => _logCaught('loadColorTransforms', err));
 }
 
 function addLog(cls,msg) {
@@ -4309,6 +4314,219 @@ let SET_SPRITE_ASSETS    = {};
 // uniqueId/setItemId → canonical English name (for snake-case keying).
 let _uniqueNameById   = {};
 let _setNameByItemId  = {};
+// uniqueId/setItemId → invtransform 3-letter color code (e.g. "dpur", "cgrn").
+// Drives the sprite tint for items that reuse a base sprite but display with
+// a different palette in-game. Empty string = no tint.
+let _uniqueTintById   = {};
+let _setTintByItemId  = {};
+
+// Per-palette color transforms pulled from the game's own globaldatahd.json
+// (the `SpriteColoringHelper.colorTransform` array). Each entry holds the
+// HSV delta + tint blend parameters D2R applies when drawing an inventory
+// sprite with a given invtransform code.
+//
+//   _COLOR_CODES_ORDER        — the 21 codes from base/colors.txt in the
+//                               same row order as colorTransform[] (used to
+//                               key the array on load).
+//   _COLOR_TRANSFORMS         — code → { hsv:[dh,ds,dv], tint:[r,g,b,a] }
+//   _COLOR_TRANSFORM_OVERRIDES — "<sprite-path>|<code>" → transform,
+//                               for the handful of per-sprite tweaks in
+//                               `colorTransformOverride`.
+//
+// All populated by loadColorTransforms() at startup. The defaults below
+// mirror the 21-code palette from the upstream colors.txt so the feature
+// still works if the fetch fails.
+const _COLOR_CODES_ORDER = ['whit','lgry','dgry','blac','lblu','dblu','cblu',
+                            'lred','dred','cred','lgrn','dgrn','cgrn','lyel',
+                            'dyel','lgld','dgld','lpur','dpur','oran','bwht'];
+let _COLOR_TRANSFORMS          = {};
+let _COLOR_TRANSFORM_OVERRIDES = {};
+
+// Convert sRGB (0..1) to HSV (h in 0..1, s/v in 0..1).
+function _rgbToHsv(r, g, b) {
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  let h = 0;
+  if (d !== 0) {
+    if (max === r)      h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else                h = (r - g) / d + 4;
+    h /= 6;
+    if (h < 0) h += 1;
+  }
+  const s = max === 0 ? 0 : d / max;
+  return [h, s, max];
+}
+
+// Convert HSV back to sRGB (0..1).
+function _hsvToRgb(h, s, v) {
+  const i = Math.floor(h * 6);
+  const f = h * 6 - i;
+  const p = v * (1 - s);
+  const q = v * (1 - f * s);
+  const t = v * (1 - (1 - f) * s);
+  switch (i % 6) {
+    case 0: return [v, t, p];
+    case 1: return [q, v, p];
+    case 2: return [p, v, t];
+    case 3: return [p, q, v];
+    case 4: return [t, p, v];
+    default:return [v, p, q];
+  }
+}
+
+// Apply a D2R color transform to a pixel array in-place (RGBA bytes).
+// `xform` is { hsv: [dh, ds, dv, _], tint: [r, g, b, a] } as read from
+// globaldatahd.json. The HSV delta is added (hue wraps), then the tint is
+// luminance-modulated and alpha-blended over the result.
+function _applyColorTransform(rgba, xform) {
+  if (!xform) return rgba;
+  const hsv  = xform.hsv  || [0, 0, 0, 0];
+  const tint = xform.tint || [0, 0, 0, 0];
+  const dh = hsv[0] || 0, ds = hsv[1] || 0, dv = hsv[2] || 0;
+  const tr = tint[0] || 0, tg = tint[1] || 0, tb = tint[2] || 0, ta = tint[3] || 0;
+  const hasHsv  = dh !== 0 || ds !== 0 || dv !== 0;
+  const hasTint = ta > 0 && (tr !== 0 || tg !== 0 || tb !== 0);
+  if (!hasHsv && !hasTint) return rgba;
+  for (let i = 0; i < rgba.length; i += 4) {
+    if (rgba[i + 3] === 0) continue;
+    let r = rgba[i] / 255, g = rgba[i + 1] / 255, b = rgba[i + 2] / 255;
+    if (hasHsv) {
+      let [h, s, v] = _rgbToHsv(r, g, b);
+      h = (h + dh) % 1; if (h < 0) h += 1;
+      s = Math.max(0, Math.min(1, s + ds));
+      v = Math.max(0, Math.min(1, v + dv));
+      [r, g, b] = _hsvToRgb(h, s, v);
+    }
+    if (hasTint) {
+      // Tint is applied as a luminance-modulated lerp toward the tint color.
+      // The *2 scale keeps mid-luminance pixels visibly tinted (otherwise
+      // tints with strength≤0.5 barely register against a white sprite).
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      const k = Math.min(1, ta);
+      r = r * (1 - k) + tr * lum * 2 * k;
+      g = g * (1 - k) + tg * lum * 2 * k;
+      b = b * (1 - k) + tb * lum * 2 * k;
+    }
+    rgba[i]     = Math.max(0, Math.min(255, Math.round(r * 255)));
+    rgba[i + 1] = Math.max(0, Math.min(255, Math.round(g * 255)));
+    rgba[i + 2] = Math.max(0, Math.min(255, Math.round(b * 255)));
+  }
+  return rgba;
+}
+
+// Strip JS-style comments and trailing commas so JSON.parse accepts the
+// JSON5-ish files D2R ships (globaldatahd.json, etc.).
+function _parseLenientJson(text) {
+  return JSON.parse(
+    text
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '')
+      .replace(/,(\s*[}\]])/g, '$1')
+  );
+}
+
+// Sprite-path prefix used in globaldatahd.json's override keys. We strip it
+// so entries match the category-prefixed paths returned by _spriteFileForItem.
+const _HD_SPRITE_PATH_PREFIX = 'data/hd/global/ui/items/';
+
+// Fetch colors.txt + globaldatahd.json from the editor repo (with local
+// fallback) and wire them into _COLOR_TRANSFORMS / overrides. Silent on
+// failure — items fall back to untinted sprites.
+async function loadColorTransforms(timeout) {
+  // colors.txt — optional; its role is to give us the exact code order for
+  // indexing colorTransform[]. The hardcoded fallback already matches the
+  // upstream file, so a miss here just means we don't pick up future mod
+  // additions.
+  let codeOrder = _COLOR_CODES_ORDER.slice();
+  const colorsUrls = usingFallback
+    ? [BASE_FALLBACK_URL + 'colors.txt']
+    : [EDITOR_DATA_URL + 'colors.txt', BASE_FALLBACK_URL + 'colors.txt'];
+  for (const url of colorsUrls) {
+    try {
+      const res = await fetchTimed(url, timeout);
+      const text = await res.text();
+      const lines = text.split(/\r?\n/).slice(1); // skip header row
+      const parsed = [];
+      for (const line of lines) {
+        const cols = line.split('\t');
+        const code = (cols[1] || '').trim().toLowerCase();
+        if (code) parsed.push(code);
+      }
+      if (parsed.length) codeOrder = parsed;
+      break;
+    } catch (e) { /* try next */ }
+  }
+
+  // globaldatahd.json — the heavy lifter. Contains the 21 colorTransform
+  // entries plus any per-sprite tweaks the mod ships.
+  const gdhdUrls = usingFallback
+    ? [BASE_FALLBACK_URL + 'globaldatahd.json']
+    : [EDITOR_DATA_URL + 'globaldatahd.json', BASE_FALLBACK_URL + 'globaldatahd.json'];
+  let gdhd = null;
+  for (const url of gdhdUrls) {
+    try {
+      const res = await fetchTimed(url, timeout);
+      gdhd = _parseLenientJson(await res.text());
+      break;
+    } catch (e) { /* try next */ }
+  }
+  if (!gdhd) {
+    addLog('warn', '⚠ globaldatahd.json — not loaded (sprite tints disabled)');
+    return;
+  }
+
+  // Dig for the SpriteColoringHelper child.
+  let helper = null;
+  if (Array.isArray(gdhd.children)) {
+    helper = gdhd.children.find(c => c && c.type === 'SpriteColoringHelper');
+  }
+  const fields = helper && helper.fields ? helper.fields : {};
+
+  // colorTransform[] — positional, indexed via codeOrder.
+  const xforms = Array.isArray(fields.colorTransform) ? fields.colorTransform : [];
+  const byCode = {};
+  xforms.forEach((entry, i) => {
+    const code = codeOrder[i];
+    if (!code || !entry || typeof entry !== 'object') return;
+    byCode[code] = {
+      hsv:  Array.isArray(entry.hsvTransform)  ? entry.hsvTransform.slice(0, 4)  : [0, 0, 0, 0],
+      tint: Array.isArray(entry.tintTransform) ? entry.tintTransform.slice(0, 4) : [0, 0, 0, 0],
+    };
+  });
+  _COLOR_TRANSFORMS = byCode;
+
+  // colorTransformOverride[] — [path, code, transformObj] triples.
+  const overrides = Array.isArray(fields.colorTransformOverride) ? fields.colorTransformOverride : [];
+  const overrideMap = {};
+  for (const row of overrides) {
+    if (!Array.isArray(row) || row.length < 3) continue;
+    const rawPath = String(row[0] || '');
+    const code = String(row[1] || '').toLowerCase();
+    const entry = row[2];
+    if (!rawPath || !code || !entry || typeof entry !== 'object') continue;
+    const path = rawPath.startsWith(_HD_SPRITE_PATH_PREFIX)
+      ? rawPath.slice(_HD_SPRITE_PATH_PREFIX.length) : rawPath;
+    overrideMap[path + '|' + code] = {
+      hsv:  Array.isArray(entry.hsvTransform)  ? entry.hsvTransform.slice(0, 4)  : [0, 0, 0, 0],
+      tint: Array.isArray(entry.tintTransform) ? entry.tintTransform.slice(0, 4) : [0, 0, 0, 0],
+    };
+  }
+  _COLOR_TRANSFORM_OVERRIDES = overrideMap;
+
+  addLog('ok', `✓ globaldatahd.json (${Object.keys(byCode).length} color transforms, ${Object.keys(overrideMap).length} overrides)`);
+}
+
+// Resolve the final color transform for an item given its sprite path and
+// invtransform code. Per-sprite overrides beat the default table. Returns
+// null when no transform should be applied (unknown/empty code, or "whit"
+// which is effectively identity for already-white sprites).
+function _resolveColorTransform(spritePath, code) {
+  if (!code) return null;
+  const path = (spritePath || '');
+  const override = _COLOR_TRANSFORM_OVERRIDES[path + '|' + code];
+  if (override) return override;
+  return _COLOR_TRANSFORMS[code] || null;
+}
 
 // Source URL for the mod's HD item JSON files (sprite-path mappings).
 const REIMAGINED_HD_URL = 'https://raw.githubusercontent.com/D2R-Reimagined/d2r-reimagined-mod/next/data/hd/items/';
@@ -4423,13 +4641,16 @@ function loadItemSprite(assetPath) {
   return promise;
 }
 
-// Normalize a display name to the snake_case key used by uniques.json /
-// sets.json. Matches their convention: lowercase, drop apostrophes, collapse
-// other non-alphanumerics into single underscores, trim edges.
+// Normalize a raw uniqueitems/setitems `index` column value to the snake_case
+// key used by uniques.json / sets.json. Simple rule matching the mod's
+// conversion script: lowercase, replace every non-alphanumeric run with a
+// single underscore, trim edges. NOTE: apostrophes are treated like any
+// other non-alphanumeric — "El'Druin" → "el_druin". The txt files already
+// encode possessives without apostrophes ("Civerbs Ward" → "civerbs_ward"),
+// so there is no special-case needed for "'s" endings.
 function _snakeSpriteKey(name) {
   if (!name) return '';
   return String(name).toLowerCase()
-    .replace(/['\u2019]/g, '')
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
 }
@@ -4512,15 +4733,50 @@ function _spriteFileForItem(item) {
   return ITEM_SPRITE_ASSETS[tc] || '';
 }
 
+// Resolve the invtransform palette code for an item (e.g. "dpur", "cgrn").
+// Uniques and set items each have their own tint stored from the txt files;
+// everything else goes untinted.
+function _spriteTintForItem(item) {
+  if (!item) return '';
+  if (item.quality === 7 && item.uniqueId != null) {
+    return _uniqueTintById[item.uniqueId] || '';
+  }
+  if (item.quality === 5) {
+    const sid = (item.setItemId != null) ? item.setItemId : item.setId;
+    if (sid != null) return _setTintByItemId[sid] || '';
+  }
+  return '';
+}
+
+// The sprite path used as the key into _spriteCandidatePaths and into the
+// colorRangeOverride / colorTransformOverride maps. Picks the
+// category-prefixed form when the asset path starts with a kind we know
+// about — matches the full on-disk / full override-key form.
+function _spriteOverrideKey(assetPath) {
+  if (!assetPath) return '';
+  const first = (assetPath.split('/')[0] || '').toLowerCase();
+  if (first === 'weapon' || first === 'misc' || first === 'armor') return assetPath;
+  const category = _SPRITE_CATEGORY_BY_KIND[first];
+  return category ? (category + '/' + assetPath) : assetPath;
+}
+
 // Paint a parsed sprite into an already-sized canvas. The canvas's
 // width/height attributes are set to the sprite's native pixel size; CSS
 // width/height let the browser scale to fit the cell slot.
-function paintItemSprite(canvas, parsed) {
+// `tintCode` / `spritePath` are optional — when provided, the pixels are
+// run through the matching entry in _COLOR_TRANSFORMS (with per-sprite
+// overrides applied) before being written to the canvas.
+function paintItemSprite(canvas, parsed, tintCode, spritePath) {
   if (!canvas || !parsed) return;
   canvas.width  = parsed.width;
   canvas.height = parsed.height;
   const ctx = canvas.getContext('2d');
-  const img = new ImageData(new Uint8ClampedArray(parsed.rgba), parsed.width, parsed.height);
+  const xform = _resolveColorTransform(spritePath, tintCode);
+  // Copy rgba because applyColorTransform mutates, and the cached parsed
+  // sprite is shared across all items painted from this asset.
+  const pixels = new Uint8ClampedArray(parsed.rgba);
+  if (xform) _applyColorTransform(pixels, xform);
+  const img = new ImageData(pixels, parsed.width, parsed.height);
   ctx.putImageData(img, 0, 0);
 }
 
@@ -4533,10 +4789,16 @@ function _itemCellVisualHtml(item, displayName, cls) {
   if (!_itemSpriteMode) return nameHtml;
   const file = _spriteFileForItem(item);
   if (!file) return nameHtml;
+  const tint = _spriteTintForItem(item);
+  const overrideKey = _spriteOverrideKey(file);
   // Keep the fallback name info on the canvas so hydrateItemSprites can
-  // swap back to the name div if the sprite fetch fails.
+  // swap back to the name div if the sprite fetch fails. Tint code + the
+  // category-prefixed path ride along so the transform picker can honor
+  // per-sprite overrides.
   return `<canvas class="item-sprite"
     data-sprite-file="${esc(file)}"
+    data-sprite-tint="${esc(tint)}"
+    data-sprite-path="${esc(overrideKey)}"
     data-fallback-name="${esc(displayName)}"
     data-name-cls="${esc(cls)}"
     style="width:100%;height:100%;display:block;image-rendering:auto"></canvas>`;
@@ -4549,11 +4811,13 @@ function hydrateItemSprites(root) {
   const canvases = (root || document).querySelectorAll('canvas.item-sprite[data-sprite-file]');
   for (const cv of canvases) {
     const file = cv.dataset.spriteFile;
+    const tint = cv.dataset.spriteTint || '';
+    const path = cv.dataset.spritePath || file;
     loadItemSprite(file).then(parsed => {
       // If the tab re-rendered while we were fetching (user clicked something
       // else), this canvas is no longer in the DOM — skip quietly.
       if (!cv.isConnected) return;
-      if (parsed) paintItemSprite(cv, parsed);
+      if (parsed) paintItemSprite(cv, parsed, tint, path);
       else if (cv.dataset.fallbackName) {
         // Fetch failed — swap to the name fallback in place.
         cv.outerHTML = `<div class="inv-item-name ${cv.dataset.nameCls || ''}">${esc(cv.dataset.fallbackName)}</div>`;
@@ -10906,6 +11170,7 @@ function _buildUniqueItemCatalog(hideCodes) {
       searchKey: (uniqueName + ' ' + baseName + ' ' + code + ' ' + subCategory).toLowerCase(),
     });
     _uniqueNameById[idx] = uniqueName;
+    _uniqueTintById[idx] = (row['invtransform'] || '').trim().toLowerCase();
   });
 }
 
@@ -10925,6 +11190,7 @@ function _buildSetItemCatalog() {
       searchKey: (setName + ' ' + setGroup + ' ' + baseName + ' ' + code).toLowerCase(),
     });
     _setNameByItemId[idx] = setName;
+    _setTintByItemId[idx] = (row['invtransform'] || '').trim().toLowerCase();
   });
 }
 
