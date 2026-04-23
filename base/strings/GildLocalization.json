@@ -2335,5 +2335,25 @@
     {
         "Key": "ui_search_more",
         "enUS": "…and {n} more. Narrow the search to see them."
+    },
+    {
+        "Key": "ui_act_title_1",
+        "enUS": "The Sightless Eye (Act I)"
+    },
+    {
+        "Key": "ui_act_title_2",
+        "enUS": "The Secret of the Vizjerei (Act II)"
+    },
+    {
+        "Key": "ui_act_title_3",
+        "enUS": "The Infernal Gate (Act III)"
+    },
+    {
+        "Key": "ui_act_title_4",
+        "enUS": "The Harrowing (Act IV)"
+    },
+    {
+        "Key": "ui_act_title_5",
+        "enUS": "Lord of Destruction (Act V)"
     }
 ]

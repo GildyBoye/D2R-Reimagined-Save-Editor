@@ -693,10 +693,18 @@
     background: var(--d2-surface2);
     border: 1px solid var(--d2-border);
     border-radius: 2px;
+    cursor: pointer;
     transition: border-color 0.15s, background 0.15s;
   }
+  .quest-card:hover { border-color: var(--d2-gold-dim); background: rgba(200,168,75,0.05); }
   .quest-card.done    { border-color: var(--d2-green); background: rgba(42,90,42,0.08); }
+  .quest-card.done:hover    { border-color: var(--d2-green-bright); background: rgba(42,90,42,0.14); }
   .quest-card.started { border-color: #c8a030; background: rgba(200,160,48,0.06); }
+  .quest-card.started:hover { border-color: #e0b848; background: rgba(200,160,48,0.12); }
+  .quest-card.locked  { cursor: not-allowed; }
+  .quest-card.locked:hover { border-color: var(--d2-green); background: rgba(42,90,42,0.08); }
+  /* Checkbox is visual-only — the whole card handles the click. */
+  .quest-card .quest-check { pointer-events: none; }
   .quest-card-icon {
     flex: 0 0 auto;
     width: 48px; height: 48px;
@@ -11168,6 +11176,28 @@ const QUEST_DEFS = [
   {act:'Act V',   name:"Eve of Destruction"},
 ];
 
+// Display order for the Quests tab. Each array holds binary-QUEST_DEFS
+// indices in the order the user wants to see them inside that act. The
+// binary save format is fixed (indices tied to byte offsets) so QUEST_DEFS
+// itself can't be reordered — only the render output.
+const QUEST_DISPLAY_ORDER = {
+  'Act I':   [0, 1, 3, 4, 2, 5],     // Den, Burial, Cain, Tower, Tools, Slaughter
+  'Act II':  [6, 7, 8, 9, 10, 11],
+  'Act III': [15, 14, 13, 12, 16, 17], // Bird, Blade, Khalim, Tome, Temple, Guardian
+  'Act IV':  [18, 20, 19],            // Fallen Angel, Hell's Forge, Terror's End
+  'Act V':   [21, 22, 23, 24, 25, 26],
+};
+
+// Localized act titles — "The Sightless Eye (Act I)" etc. Keyed by the same
+// 'Act I'–'Act V' strings used on QUEST_DEFS entries.
+const ACT_TITLE_KEYS = {
+  'Act I':   { key: 'ui_act_title_1', fallback: 'The Sightless Eye (Act I)' },
+  'Act II':  { key: 'ui_act_title_2', fallback: 'The Secret of the Vizjerei (Act II)' },
+  'Act III': { key: 'ui_act_title_3', fallback: 'The Infernal Gate (Act III)' },
+  'Act IV':  { key: 'ui_act_title_4', fallback: 'The Harrowing (Act IV)' },
+  'Act V':   { key: 'ui_act_title_5', fallback: 'Lord of Destruction (Act V)' },
+};
+
 // Quest icon image filenames (indices match QUEST_DEFS). Files live in
 // base/images/ — the render just emits an <img> tag per quest card.
 const QUEST_ICON_FILES = [
@@ -12607,28 +12637,44 @@ function renderQuests(c) {
   }
 
   acts.forEach(act => {
-    html += h2(act) + '<div class="quest-act-grid">';
-    byAct[act].forEach(q => {
+    // Render the act's quests in the user-preferred display order, not the
+    // binary order. byAct[act] is keyed by binary index, so we walk the
+    // display-order array and pluck each quest out in the right sequence.
+    const byIndex = new Map(byAct[act].map(q => [q.index, q]));
+    const order = QUEST_DISPLAY_ORDER[act] || byAct[act].map(q => q.index);
+    const titleCfg = ACT_TITLE_KEYS[act];
+    const actTitle = titleCfg ? L(titleCfg.key, titleCfg.fallback) : act;
+    html += h2(actTitle) + '<div class="quest-act-grid">';
+    order.forEach(binaryIndex => {
+      const q = byIndex.get(binaryIndex);
+      if (!q) return;
       const lockedOnLoad = _questsCompletedOnLoad[diff]?.[q.index];
       const statusColor = q.done ? 'var(--d2-green-bright)' : q.started ? '#c8a030' : 'var(--d2-text-dim)';
       const statusLabel = q.done ? (lockedOnLoad ? 'Complete' : 'Complete ✦') : q.started ? 'Started' : 'Incomplete';
       const qd = QUEST_DEFS[q.index];
       const rewardTag = qd.rewardDesc ? `<div class="quest-card-reward">${esc(qd.rewardDesc)}</div>` : '';
-      const disabledAttr = (q.done && lockedOnLoad) ? 'disabled title="Was completed when file was loaded — cannot reset"' : '';
-      const cardCls = q.done ? 'quest-card done' : q.started ? 'quest-card started' : 'quest-card';
+      const locked = q.done && lockedOnLoad;
+      const cardCls = (q.done ? 'quest-card done' : q.started ? 'quest-card started' : 'quest-card')
+                     + (locked ? ' locked' : '');
+      const lockedTitle = locked ? ' title="Was completed when file was loaded — cannot reset"' : '';
       const iconFile = QUEST_ICON_FILES[q.index];
       // Fallback span (scroll glyph) is hidden by default; the <img>'s onerror
       // swaps it in if the file is missing.
       const iconHtml = `<img src="base/images/${esc(iconFile)}" alt=""
         onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
         <span class="quest-card-fallback">&#128220;</span>`;
-      html += `<div class="${cardCls}">
+      // Whole card is the click target. Checkbox is visual-only — CSS sets
+      // pointer-events:none so clicks pass through to the card. Locked cards
+      // surface the existing "can't reset" popup through toggleQuest itself
+      // (it already guards against !complete when lockedOnLoad is true).
+      const clickAttr = `onclick="toggleQuest(${diff},${q.index},${!q.done})"`;
+      html += `<div class="${cardCls}" ${clickAttr}${lockedTitle}>
         <div class="quest-card-icon">${iconHtml}</div>
         <div class="quest-card-body">
           <div class="quest-card-head">
             <input type="checkbox" class="quest-check"
-              ${q.done?'checked':''} ${disabledAttr}
-              onchange="toggleQuest(${diff},${q.index},this.checked)">
+              ${q.done?'checked':''} ${locked?'disabled':''}
+              tabindex="-1">
             <span class="quest-card-name" title="${esc(L('q_'+q.name.replace(/[^a-zA-Z0-9]/g,'_'), q.name))}">${esc(L('q_'+q.name.replace(/[^a-zA-Z0-9]/g,'_'), q.name))}</span>
           </div>
           ${rewardTag}
