@@ -12860,8 +12860,10 @@ function renderGrail(c) {
       <button class="btn btn-primary" onclick="moveItemsToGrail()">${esc(L('ui_grail_copy_items_btn','Copy Items to Grail'))}</button>
       <span style="color:var(--d2-text-dim);font-size:12px">${grailD2i ? esc(grailFileName) : esc(L('ui_grail_no_loaded','No grail loaded'))}</span>
     </div>
-    <div style="margin-bottom:16px">
+    <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button class="btn" onclick="saveGrailFile()" ${grailD2i ? '' : 'disabled'}>${esc(L('ui_grail_save_btn','Save Grail .d2i'))}</button>
+      <button class="btn" data-cloud-btn onclick="cloudUploadGrail()" ${grailD2i ? '' : 'disabled'} style="${_cloudUser ? '' : 'display:none'}">☁ ${esc(L('ui_grail_cloud_upload','Upload to Cloud'))}</button>
+      <button class="btn" data-cloud-btn onclick="cloudLoadGrail()" style="${_cloudUser ? '' : 'display:none'}">☁ ${esc(L('ui_grail_cloud_load','Load from Cloud'))}</button>
     </div>
 
     <!-- ── Search input ── -->
@@ -12951,6 +12953,10 @@ function renderGrail(c) {
 
   html += `</div>`;
   c.innerHTML = html;
+  // Sync cloud button visibility with current auth state after every render.
+  // The template bakes display:none in when _cloudUser is null at render time;
+  // this sweeps any stale hide style back off once the session restores async.
+  if (typeof _updateCloudUi === 'function') _updateCloudUi();
 }
 
 window.toggleGrailGrid = function(sectionId) {
@@ -15351,6 +15357,8 @@ function renderVault(c) {
         </button>
         <input type="file" accept=".d2i" id="vaultFileInput" style="display:none" onchange="loadVaultFile(this.files[0])">
         <span style="color:var(--d2-text-dim);font-size:12px;flex:1">${fileInfo}</span>
+        <button class="btn" data-cloud-btn onclick="cloudLoadVault()" style="${_cloudUser ? '' : 'display:none'}">☁ ${esc(L('ui_vault_cloud_load','Load from Cloud'))}</button>
+        <button class="btn" data-cloud-btn onclick="cloudUploadVault()" ${loaded ? '' : 'disabled'} style="${_cloudUser ? '' : 'display:none'}">☁ ${esc(L('ui_vault_cloud_upload','Upload to Cloud'))}</button>
         <button class="btn" onclick="saveVaultFile()" ${loaded ? '' : 'disabled'}>
           ${esc(L('ui_vault_save_btn','Save Vault .d2i'))}
         </button>
@@ -15449,6 +15457,8 @@ function renderVault(c) {
   // Paint SpA1 item sprites into any sprite-placeholder canvases the grid
   // just produced. Async + cached; no-op if the sprite toggle is off.
   hydrateItemSprites(c);
+  // Sync cloud button visibility — see the matching call in renderGrail.
+  if (typeof _updateCloudUi === 'function') _updateCloudUi();
 }
 
 window.vaultGoToPage = function(pageIdx) {
@@ -15687,6 +15697,210 @@ function setStatus(text,cls) {
   const dot=document.getElementById('statusDot');
   dot.className='status-dot'+(cls?' '+cls:'');
 }
+
+// ═══════════════════════════════════════════════════════════
+//  CLOUD SYNC (Grail + Vault only)
+// ═══════════════════════════════════════════════════════════
+// Optional Supabase-backed backup for the two accumulator files. Character
+// saves intentionally stay local — they're session state, not long-term
+// progress. One grail + one vault per user is enforced by a unique index
+// on (user_id, kind) in the DB; uploads are upserts that overwrite in place.
+//
+// The SDK is loaded lazily on first interaction so page-load for users who
+// never touch cloud features is unchanged. Auto-restore at DOMContentLoaded
+// only fires when a session token is already sitting in localStorage, so
+// anonymous visitors pay no network cost either.
+//
+// RLS in Supabase is the security wall — the anon key below is meant to be
+// public. See the policies on public.saves + storage.objects for the
+// "user can only touch their own rows/files" enforcement.
+const CLOUD_SUPABASE_URL      = 'https://xyhhqngkuxbwrhyqxdjc.supabase.co';
+const CLOUD_SUPABASE_ANON_KEY = 'sb_publishable_geGc8A3s6MNySvD8a7gkWA_p2LnE4iV';
+
+let _supabase      = null;
+let _cloudUser     = null;
+let _cloudSdkPromise = null;
+
+function _loadSupabaseSdk() {
+  if (_cloudSdkPromise) return _cloudSdkPromise;
+  _cloudSdkPromise = new Promise((resolve, reject) => {
+    if (window.supabase) return resolve();
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+    s.onload  = () => resolve();
+    s.onerror = () => reject(new Error('Failed to load Supabase SDK'));
+    document.head.appendChild(s);
+  });
+  return _cloudSdkPromise;
+}
+
+async function _cloudClient() {
+  if (_supabase) return _supabase;
+  await _loadSupabaseSdk();
+  _supabase = window.supabase.createClient(CLOUD_SUPABASE_URL, CLOUD_SUPABASE_ANON_KEY);
+  _supabase.auth.onAuthStateChange((_event, session) => {
+    _cloudUser = session?.user || null;
+    _updateCloudUi();
+  });
+  const { data } = await _supabase.auth.getSession();
+  _cloudUser = data.session?.user || null;
+  _updateCloudUi();
+  return _supabase;
+}
+
+async function cloudSignIn() {
+  try {
+    const s = await _cloudClient();
+    const { error } = await s.auth.signInWithOAuth({
+      provider: 'discord',
+      // Strip any hash so Supabase's reply-with-token doesn't stack fragments.
+      options: { redirectTo: window.location.href.split('#')[0] },
+    });
+    if (error) showPopup('Sign-in failed: ' + error.message);
+  } catch (err) {
+    showPopup('Sign-in failed: ' + (err.message || err));
+  }
+}
+window.cloudSignIn = cloudSignIn;
+
+async function cloudSignOut() {
+  try {
+    const s = await _cloudClient();
+    await s.auth.signOut();
+    _cloudUser = null;
+    _updateCloudUi();
+  } catch (err) {
+    _logCaught('cloudSignOut', err);
+  }
+}
+window.cloudSignOut = cloudSignOut;
+
+// Shared upload/download primitives for the two file kinds. The blob path is
+// deterministic per (user, kind) so upsert-in-place keeps one copy each.
+async function _cloudUploadAuxFile(kind, bytes, name, meta) {
+  if (!bytes || !bytes.length) { showPopup(`No ${kind} data to upload.`); return; }
+  const s = await _cloudClient();
+  if (!_cloudUser) { showPopup('Sign in first.'); return; }
+  const path = `${_cloudUser.id}/${kind}.bin`;
+  const { error: upErr } = await s.storage
+    .from('saves')
+    .upload(path, new Blob([bytes], { type: 'application/octet-stream' }), { upsert: true });
+  if (upErr) { showPopup('Upload failed: ' + upErr.message); return; }
+  const { error: rowErr } = await s.from('saves').upsert({
+    user_id:    _cloudUser.id,
+    kind,
+    name:       name || kind,
+    meta:       meta || {},
+    size_bytes: bytes.length,
+  }, { onConflict: 'user_id,kind' });
+  if (rowErr) { showPopup('Upload metadata failed: ' + rowErr.message); return; }
+  showPopup(`Uploaded ${kind} to cloud (${(bytes.length/1024).toFixed(1)} KB).`);
+}
+
+async function _cloudDownloadAuxFile(kind) {
+  const s = await _cloudClient();
+  if (!_cloudUser) { showPopup('Sign in first.'); return null; }
+  const { data: blob, error } = await s.storage
+    .from('saves')
+    .download(`${_cloudUser.id}/${kind}.bin`);
+  if (error) {
+    // 404 for "no upload yet" reads nicer than raw Supabase error text.
+    if (/not found|does not exist/i.test(error.message || '')) {
+      showPopup(`No cloud ${kind} found. Upload one first.`);
+    } else {
+      showPopup(`Cloud ${kind} download failed: ` + error.message);
+    }
+    return null;
+  }
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+async function cloudUploadGrail() {
+  if (!grailD2i) { showPopup('Load a grail .d2i first.'); return; }
+  const tabCount  = (grailParsed?.tabs?.length) || 0;
+  const itemCount = (grailParsed?.tabs || []).reduce((sum, t) => sum + t.items.length, 0);
+  await _cloudUploadAuxFile('grail', grailD2i, grailFileName || 'grail.d2i', {
+    tabCount, itemCount,
+  });
+}
+window.cloudUploadGrail = cloudUploadGrail;
+
+async function cloudLoadGrail() {
+  const bytes = await _cloudDownloadAuxFile('grail');
+  if (!bytes) return;
+  // Feed through the existing file-load path so validation, stamping, and
+  // re-render all stay in sync with the manual-browse flow.
+  loadGrailFile(new File([bytes], 'grail.d2i', { type: 'application/octet-stream' }));
+}
+window.cloudLoadGrail = cloudLoadGrail;
+
+async function cloudUploadVault() {
+  if (!vaultD2i) { showPopup('Load a vault .d2i first.'); return; }
+  await _cloudUploadAuxFile('vault', vaultD2i, vaultFileName || 'vault.d2i', {
+    itemCount: vaultItems.length,
+    pageNameCount: Object.keys(vaultPageNames || {}).length,
+    quadCount: (vaultQuads || []).length,
+  });
+}
+window.cloudUploadVault = cloudUploadVault;
+
+async function cloudLoadVault() {
+  const bytes = await _cloudDownloadAuxFile('vault');
+  if (!bytes) return;
+  loadVaultFile(new File([bytes], 'vault.d2i', { type: 'application/octet-stream' }));
+}
+window.cloudLoadVault = cloudLoadVault;
+
+// Fixed top-right widget showing sign-in state. Injected once, updated by
+// _updateCloudUi() whenever the session changes.
+function _ensureCloudAuthWidget() {
+  if (document.getElementById('cloudAuthWidget')) return;
+  const w = document.createElement('div');
+  w.id = 'cloudAuthWidget';
+  w.style.cssText =
+    "position:fixed;top:8px;right:8px;z-index:10000;display:flex;align-items:center;gap:8px;" +
+    "background:var(--d2-surface2);border:1px solid var(--d2-border);border-radius:2px;" +
+    "padding:4px 8px;font-family:'Cinzel',serif;font-size:11px;color:var(--d2-text-dim)";
+  w.innerHTML =
+    '<span id="cloudUserLabel" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>' +
+    '<button type="button" id="cloudAuthBtn" class="btn" style="padding:2px 10px;font-size:10px;margin:0"></button>';
+  document.body.appendChild(w);
+  _updateCloudUi();
+}
+
+function _updateCloudUi() {
+  _ensureCloudAuthWidget();
+  const btn   = document.getElementById('cloudAuthBtn');
+  const label = document.getElementById('cloudUserLabel');
+  if (!btn || !label) return;
+  if (_cloudUser) {
+    const who = _cloudUser.user_metadata?.full_name
+             || _cloudUser.user_metadata?.name
+             || _cloudUser.email
+             || 'Signed in';
+    label.textContent = '☁ ' + who;
+    btn.textContent   = 'Sign out';
+    btn.onclick       = cloudSignOut;
+  } else {
+    label.textContent = '';
+    btn.textContent   = '☁ Sign in';
+    btn.onclick       = cloudSignIn;
+  }
+  // Show/hide inline cloud buttons inside Grail/Vault tab action rows.
+  document.querySelectorAll('[data-cloud-btn]').forEach(el => {
+    el.style.display = _cloudUser ? '' : 'none';
+  });
+}
+
+// Auto-restore existing session on page load. Only touches the SDK if a
+// token is already in localStorage — anonymous users pay zero network cost.
+window.addEventListener('DOMContentLoaded', () => {
+  _ensureCloudAuthWidget();
+  const ref = (CLOUD_SUPABASE_URL.match(/https:\/\/([^.]+)/) || [])[1];
+  if (ref && localStorage.getItem('sb-' + ref + '-auth-token')) {
+    _cloudClient().catch(err => _logCaught('cloudClient.autoRestore', err));
+  }
+});
 
 // ═══════════════════════════════════════════════════════════
 //  BOOT
