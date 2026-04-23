@@ -4375,41 +4375,94 @@ function _hsvToRgb(h, s, v) {
 }
 
 // Apply a D2R color transform to a pixel array in-place (RGBA bytes).
-// `xform` is { hsv: [dh, ds, dv, _], tint: [r, g, b, a] } as read from
-// globaldatahd.json. The HSV delta is added (hue wraps), then the tint is
-// luminance-modulated and alpha-blended over the result.
+// `xform` is { hsv: [dh, ds, dv, _], tint: [r, g, b, a] } from globaldatahd.json.
+//
+// Two paths depending on whether the transform has a tint color:
+//
+// 1. HAS TINT (16 of the 21 codes — all the colored ones: lblu/dpur/cred/...).
+//    Derive output RGB from pixel LUMINANCE × tint color. This avoids the
+//    chromatic aberration that a naive HSV hue-shift produces on near-grey
+//    pixels: a pixel like (99, 101, 100) has essentially arbitrary hue
+//    (noise between the tiny channel diffs), and boosting its saturation
+//    surfaces that noise as visible rainbow garbage. By sourcing the hue
+//    from the tint color instead, grey shadows stay grey-toned-purple
+//    instead of going green/orange. The `dv` delta still modulates
+//    brightness so light/dark variants differentiate properly.
+//
+// 2. GRAYSCALE ONLY (whit/lgry/dgry/blac/bwht — tint is all zeros, hsv has
+//    no hue shift). These are safe to run through the straight HSV model:
+//    desaturate + brighten/darken, no hue rotation to amplify. Keeps the
+//    "whiten" and "blacken" transforms working correctly for base sprites.
 function _applyColorTransform(rgba, xform) {
   if (!xform) return rgba;
   const hsv  = xform.hsv  || [0, 0, 0, 0];
   const tint = xform.tint || [0, 0, 0, 0];
   const dh = hsv[0] || 0, ds = hsv[1] || 0, dv = hsv[2] || 0;
   const tr = tint[0] || 0, tg = tint[1] || 0, tb = tint[2] || 0, ta = tint[3] || 0;
+  const useTint = ta > 0 && (tr !== 0 || tg !== 0 || tb !== 0);
   const hasHsv  = dh !== 0 || ds !== 0 || dv !== 0;
-  const hasTint = ta > 0 && (tr !== 0 || tg !== 0 || tb !== 0);
-  if (!hasHsv && !hasTint) return rgba;
-  for (let i = 0; i < rgba.length; i += 4) {
-    if (rgba[i + 3] === 0) continue;
-    let r = rgba[i] / 255, g = rgba[i + 1] / 255, b = rgba[i + 2] / 255;
-    if (hasHsv) {
+  if (!useTint && !hasHsv) return rgba;
+
+  const lerpToExtreme = (cur, delta) => {
+    if (delta === 0) return cur;
+    const target = delta > 0 ? 1 : 0;
+    return cur + (target - cur) * Math.min(1, Math.abs(delta));
+  };
+
+  if (useTint) {
+    // Luminance-to-tint path.
+    //
+    // ACCENT_SAT_THRESHOLD: pixels whose original saturation exceeds this
+    // are preserved untouched — they're the gold trim, colored gems, and
+    // painted decorations the game's `colorRange` mask protects in-engine.
+    // A flat sat threshold is a pragmatic stand-in for the real per-sprite
+    // HSV band in globaldatahd.json; it catches the bulk of the visual
+    // intent (anything with strong native color is meant to stay that color)
+    // without having to port the full range-mask system.
+    //
+    // No `dv` is applied to accent pixels — brightening gold trim on `lred`
+    // and darkening it on `dred` doesn't match in-game behaviour; the trim
+    // is constant across light/dark variants and only the base material
+    // shifts. The dv differentiator still comes through via the tint path
+    // where it brightens/darkens the luminance used for the tint color.
+    //
+    // The tinted component is `tint_color × luminance` with no extra scale.
+    // An earlier ×2 multiplier was pushing mid-luminance pixels into fully
+    // saturated tint territory (every grey pixel became pure red), flattening
+    // the sprite's natural shading. Plain luminance-multiply keeps the
+    // original shading curve while tinting it toward the target color.
+    const ACCENT_SAT_THRESHOLD = 0.55;
+    for (let i = 0; i < rgba.length; i += 4) {
+      if (rgba[i + 3] === 0) continue;
+      const r = rgba[i] / 255, g = rgba[i + 1] / 255, b = rgba[i + 2] / 255;
+      const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+      const sat = mx === 0 ? 0 : (mx - mn) / mx;
+      if (sat > ACCENT_SAT_THRESHOLD) continue; // preserve accent unchanged
+      let lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      if (dv !== 0) lum = lerpToExtreme(lum, dv);
+      const tintedR = Math.min(1, tr * lum);
+      const tintedG = Math.min(1, tg * lum);
+      const tintedB = Math.min(1, tb * lum);
+      const nr = r * (1 - ta) + tintedR * ta;
+      const ng = g * (1 - ta) + tintedG * ta;
+      const nb = b * (1 - ta) + tintedB * ta;
+      rgba[i]     = Math.max(0, Math.min(255, Math.round(nr * 255)));
+      rgba[i + 1] = Math.max(0, Math.min(255, Math.round(ng * 255)));
+      rgba[i + 2] = Math.max(0, Math.min(255, Math.round(nb * 255)));
+    }
+  } else {
+    // Grayscale HSV path (whit/lgry/dgry/blac/bwht).
+    for (let i = 0; i < rgba.length; i += 4) {
+      if (rgba[i + 3] === 0) continue;
+      const r = rgba[i] / 255, g = rgba[i + 1] / 255, b = rgba[i + 2] / 255;
       let [h, s, v] = _rgbToHsv(r, g, b);
-      h = (h + dh) % 1; if (h < 0) h += 1;
-      s = Math.max(0, Math.min(1, s + ds));
-      v = Math.max(0, Math.min(1, v + dv));
-      [r, g, b] = _hsvToRgb(h, s, v);
+      s = lerpToExtreme(s, ds);
+      v = lerpToExtreme(v, dv);
+      const [nr, ng, nb] = _hsvToRgb(h, s, v);
+      rgba[i]     = Math.max(0, Math.min(255, Math.round(nr * 255)));
+      rgba[i + 1] = Math.max(0, Math.min(255, Math.round(ng * 255)));
+      rgba[i + 2] = Math.max(0, Math.min(255, Math.round(nb * 255)));
     }
-    if (hasTint) {
-      // Tint is applied as a luminance-modulated lerp toward the tint color.
-      // The *2 scale keeps mid-luminance pixels visibly tinted (otherwise
-      // tints with strength≤0.5 barely register against a white sprite).
-      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-      const k = Math.min(1, ta);
-      r = r * (1 - k) + tr * lum * 2 * k;
-      g = g * (1 - k) + tg * lum * 2 * k;
-      b = b * (1 - k) + tb * lum * 2 * k;
-    }
-    rgba[i]     = Math.max(0, Math.min(255, Math.round(r * 255)));
-    rgba[i + 1] = Math.max(0, Math.min(255, Math.round(g * 255)));
-    rgba[i + 2] = Math.max(0, Math.min(255, Math.round(b * 255)));
   }
   return rgba;
 }
@@ -4533,7 +4586,14 @@ const REIMAGINED_HD_URL = 'https://raw.githubusercontent.com/D2R-Reimagined/d2r-
 // Source URL for the mod's actual sprite binaries. These override / extend
 // the base sprites in Gild's editor repo — Reimagined-specific items live
 // only here, and tuned versions of existing items may shadow the base ones.
-const REIMAGINED_SPRITE_URL = 'https://raw.githubusercontent.com/D2R-Reimagined/d2r-reimagined-mod/next/data/hd/global/ui/items/';
+//
+// IMPORTANT: The mod repo stores sprite binaries via Git LFS. Fetching from
+// raw.githubusercontent.com returns the 131-byte LFS pointer file instead of
+// the actual SpA1 binary. media.githubusercontent.com/media/* is GitHub's
+// LFS-resolving endpoint — same path scheme, CORS-friendly, returns the real
+// blob. Without this the parser sees "vers" (from "version https://…") as
+// the magic and every Reimagined sprite fetch silently fails.
+const REIMAGINED_SPRITE_URL = 'https://media.githubusercontent.com/media/D2R-Reimagined/d2r-reimagined-mod/next/data/hd/global/ui/items/';
 
 // Parse a Blizzard SpA1 sprite (D2R's item sprite format). Layout:
 //   0x00  4  "SpA1" magic
@@ -4542,28 +4602,30 @@ const REIMAGINED_SPRITE_URL = 'https://raw.githubusercontent.com/D2R-Reimagined/
 //   0x08  4  width u32 (pixels)
 //   0x0C  4  height u32 (pixels, may include multiple frames stacked)
 //   0x10-0x23  16 bytes of misc metadata (frames, origin float, etc.)
-//   0x24  4  bytes-per-pixel u32 (typically 4 for BGRA8)
-//   0x28  …  raw BGRA8 pixel data, width*height*4 bytes
-// Returns { width, height, rgba } with pixels converted to RGBA byte order
-// for ImageData, or throws on bad magic / truncated file.
+//   0x24  4  bytes-per-pixel u32 (4 for RGBA8)
+//   0x28  …  raw RGBA8 pixel data, width*height*4 bytes — already in
+//            canvas ImageData order, no channel swap needed
+// Returns { width, height, rgba }, or throws on bad magic / truncated file.
 function parseSpA1(buf) {
   const view = new DataView(buf);
   if (view.getUint32(0, true) !== 0x31417053) throw new Error('Not a SpA1 sprite');
   const width  = view.getUint32(8, true);
   const height = view.getUint32(12, true);
-  const bpp    = view.getUint32(0x24, true);
-  if (bpp !== 4) throw new Error('Unsupported SpA1 bpp: ' + bpp);
+  // The bpp field at 0x24 is 4 in Blizzard's base game exports, but
+  // Reimagined's re-exported sprites leave it zero-filled. Fall back to
+  // inferring it from the payload size: if (fileSize - 0x28) == w*h*4 the
+  // data is definitely RGBA8, which is the only format we support anyway.
   const pixOffset = 0x28;
   const expected  = width * height * 4;
-  if (buf.byteLength < pixOffset + expected) throw new Error('Truncated SpA1 sprite');
-  const src = new Uint8Array(buf, pixOffset, expected);
-  const rgba = new Uint8Array(expected);
-  for (let i = 0; i < expected; i += 4) {
-    rgba[i]     = src[i + 2]; // R ← B
-    rgba[i + 1] = src[i + 1]; // G
-    rgba[i + 2] = src[i];     // B ← R
-    rgba[i + 3] = src[i + 3]; // A
-  }
+  const payload   = buf.byteLength - pixOffset;
+  let bpp = view.getUint32(0x24, true);
+  if (bpp === 0 && payload === expected) bpp = 4;
+  if (bpp !== 4) throw new Error('Unsupported SpA1 bpp: ' + bpp);
+  if (payload < expected) throw new Error('Truncated SpA1 sprite');
+  // Pixels are stored RGBA — copy straight into a fresh buffer (slicing the
+  // ArrayBuffer lets ImageData own its data without aliasing the fetch's
+  // Response buffer, which some browsers keep around).
+  const rgba = new Uint8Array(buf.slice(pixOffset, pixOffset + expected));
   return { width, height, rgba };
 }
 
@@ -4577,15 +4639,21 @@ const _SPRITE_CATEGORY_BY_KIND = Object.freeze({
   mace: 'weapon',    orb: 'weapon',     polearm: 'weapon', scepter: 'weapon',
   spear: 'weapon',   staff: 'weapon',   sword: 'weapon',   throw: 'weapon',
   wand: 'weapon',    xbow: 'weapon',
+  uniqueweapon: 'weapon', // Reimagined custom-art unique weapons (El'Druin, etc.)
   // armor
   armor: 'armor',    belt: 'armor',     boot: 'armor',     circlet: 'armor',
   glove: 'armor',    grimoires: 'armor',helm: 'armor',     helmet: 'armor',
   pelt: 'armor',     shield: 'armor',   voodoo_head: 'armor',
+  uniquearmor: 'armor', // Reimagined custom-art unique armor (Tyrael's Might, etc.)
   // misc
   amulet: 'misc',    body_part: 'misc', book: 'misc',      charm: 'misc',
   gem: 'misc',       gold: 'misc',      herb: 'misc',      key: 'misc',
   potion: 'misc',    quest: 'misc',     quiver: 'misc',    ring: 'misc',
   rune: 'misc',      scroll: 'misc',    shard: 'misc',     torch: 'misc',
+  // Reimagined custom-art uniques routed through misc
+  uniqueamulet: 'misc', uniquering: 'misc', uniquecharm: 'misc',
+  // Reimagined-specific item classes (grabbers, power orbs, storage chests, etc.)
+  beacon: 'misc',   grabbers: 'misc',  powerorbs: 'misc', storage: 'misc',
 });
 
 // Build the on-disk candidate paths for a mod asset path. Always tries the
@@ -4609,21 +4677,21 @@ function loadItemSprite(assetPath) {
   if (_itemSpriteCache.has(assetPath)) return _itemSpriteCache.get(assetPath);
   const paths = _spriteCandidatePaths(assetPath);
   const urls = [];
-  // Files on disk use the `.lowend.sprite` suffix (kept for size + speed;
-  // full-res `.sprite` variants were pruned). We also accept the plain
-  // `.sprite` extension as a safety net for either repo.
+  // Prefer `.lowend.sprite` everywhere to save bandwidth — full-res variants
+  // are 3-4× larger and the editor renders them into a 29-pixel cell anyway.
+  // Each source is fully exhausted (both extensions) before we fall through
+  // to the next so a Reimagined override beats an editor-repo base sprite
+  // regardless of which extension the mod ships.
   const exts = ['.lowend.sprite', '.sprite'];
-  // Source priority (per path+ext):
-  //   1. Reimagined mod HD overrides — Reimagined-specific items + tuned
-  //      replacements that should shadow the base sprite.
-  //   2. Editor's own repo (Gild's base sprites) on GitHub.
-  //   3. Local fallback (editor cloned / served from disk).
-  // All three remote sources are skipped when usingFallback is set.
+  const sources = [];
+  if (!usingFallback) sources.push(REIMAGINED_SPRITE_URL);
+  if (!usingFallback) sources.push(EDITOR_DATA_URL + 'sprites/');
+  sources.push(BASE_FALLBACK_URL + 'sprites/');
   for (const p of paths) {
-    for (const ext of exts) {
-      if (!usingFallback) urls.push(REIMAGINED_SPRITE_URL + p + ext);
-      if (!usingFallback) urls.push(EDITOR_DATA_URL + 'sprites/' + p + ext);
-      urls.push(BASE_FALLBACK_URL + 'sprites/' + p + ext);
+    for (const src of sources) {
+      for (const ext of exts) {
+        urls.push(src + p + ext);
+      }
     }
   }
   const promise = (async () => {
@@ -4641,18 +4709,37 @@ function loadItemSprite(assetPath) {
   return promise;
 }
 
-// Normalize a raw uniqueitems/setitems `index` column value to the snake_case
-// key used by uniques.json / sets.json. Simple rule matching the mod's
-// conversion script: lowercase, replace every non-alphanumeric run with a
-// single underscore, trim edges. NOTE: apostrophes are treated like any
-// other non-alphanumeric — "El'Druin" → "el_druin". The txt files already
-// encode possessives without apostrophes ("Civerbs Ward" → "civerbs_ward"),
-// so there is no special-case needed for "'s" endings.
+// Generate the candidate snake_case keys for a raw uniqueitems/setitems
+// `index` column value. The mod's JSON files use two different conventions
+// depending on which item you look at:
+//
+//   "El'Druin"         → "el_druin"          (apostrophe → underscore)
+//   "Isenhart's Horns" → "isenharts_horns"   (apostrophe stripped entirely)
+//
+// Rather than guess which one a given item uses, we emit both variants
+// (apostrophe-as-separator, apostrophe-stripped) and let the caller walk
+// them in order against UNIQUE_SPRITE_ASSETS / SET_SPRITE_ASSETS, returning
+// on the first hit. Cheap — Set dedupes identical outputs so items without
+// apostrophes just produce a single key.
+function _spriteKeyVariants(name) {
+  if (!name) return [];
+  const s = String(name);
+  const out = new Set();
+  const norm = x => x.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  // Variant A: every non-alnum run becomes a single underscore (handles
+  // El'Druin, Civerb's Ward where the txt files already pre-stripped the
+  // apostrophe, most 2+ word names).
+  out.add(norm(s));
+  // Variant B: apostrophes/typographic quotes stripped entirely FIRST, then
+  // snake_cased (handles Isenhart's Horns, Sigon's Gage, Griswold's Edge —
+  // the many set items where the txt preserves the apostrophe).
+  out.add(norm(s.replace(/['\u2019]/g, '')));
+  return Array.from(out).filter(Boolean);
+}
+
+// Back-compat alias — some older call sites still use the single-key helper.
 function _snakeSpriteKey(name) {
-  if (!name) return '';
-  return String(name).toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
+  return _spriteKeyVariants(name)[0] || '';
 }
 
 // Fetch + index D2R-Reimagined's HD sprite-mapping JSON files. Tries the mod
@@ -4716,20 +4803,42 @@ async function loadHdSpriteMappings(timeout) {
 // Returns a path like "charm/charm_large" (no .sprite extension).
 function _spriteFileForItem(item) {
   if (!item) return '';
+  const tc = (item.typeCode || '').trim();
+
+  // JEWELS — special handling.
+  // uniques.json maps every unique jewel (all 8 facets + mod additions) to
+  // gem/perfect_diamond as a placeholder, so they'd otherwise all render as
+  // diamonds. Reimagined ships numbered color variants (jewels1..jewels6)
+  // for per-instance visual variety — D2R picks one per item at runtime
+  // using internal rolls we can't reproduce, so we distribute deterministically:
+  //   - Unique jewels → jewels{(uniqueId % 6) + 1}  (stable across reloads)
+  //   - All other jewels → jewels (the base sprite, available on all sources)
+  // Base jewels intentionally use the unnumbered sprite because it's the
+  // only jewel sprite present in the base-game editor repo and local
+  // fallback — the numbered variants live only on the Reimagined LFS repo.
+  if (tc === 'jew') {
+    if (item.quality === 7 && item.uniqueId != null) {
+      const variant = (item.uniqueId % 6) + 1;
+      return 'gem/jewels' + variant;
+    }
+    return 'gem/jewels';
+  }
+
   if (item.quality === 7 && item.uniqueId != null) {
-    const key = _snakeSpriteKey(_uniqueNameById[item.uniqueId]);
-    const entry = key ? UNIQUE_SPRITE_ASSETS[key] : null;
-    if (entry && entry.normal) return entry.normal;
+    for (const key of _spriteKeyVariants(_uniqueNameById[item.uniqueId])) {
+      const entry = UNIQUE_SPRITE_ASSETS[key];
+      if (entry && entry.normal) return entry.normal;
+    }
   }
   if (item.quality === 5) {
     const sid = (item.setItemId != null) ? item.setItemId : item.setId;
     if (sid != null) {
-      const key = _snakeSpriteKey(_setNameByItemId[sid]);
-      const entry = key ? SET_SPRITE_ASSETS[key] : null;
-      if (entry && entry.normal) return entry.normal;
+      for (const key of _spriteKeyVariants(_setNameByItemId[sid])) {
+        const entry = SET_SPRITE_ASSETS[key];
+        if (entry && entry.normal) return entry.normal;
+      }
     }
   }
-  const tc = (item.typeCode || '').trim();
   return ITEM_SPRITE_ASSETS[tc] || '';
 }
 
@@ -4771,7 +4880,20 @@ function paintItemSprite(canvas, parsed, tintCode, spritePath) {
   canvas.width  = parsed.width;
   canvas.height = parsed.height;
   const ctx = canvas.getContext('2d');
-  const xform = _resolveColorTransform(spritePath, tintCode);
+  // NOTE: The per-invtransform color grading (lred/dpur/cgrn/etc. HSV +
+  // tint blend) is intentionally disabled. Replicating D2R's shader
+  // faithfully requires the full `colorRange` HSV-band masking from
+  // globaldatahd.json plus the exact game-internal blend math, which we
+  // don't have a source for. Approximations consistently came out either
+  // too vivid (obliterating the sprite's natural shading) or too subtle
+  // (invisible against the base sprite), and neither failure mode was
+  // better than just rendering the untinted sprite. The loader
+  // (loadColorTransforms) and the `_uniqueTintById` / `_setTintByItemId`
+  // metadata still populate so we can revisit this without replumbing —
+  // flip the guard below to re-enable whenever the math is worth another
+  // swing.
+  const ENABLE_SPRITE_TINT = false;
+  const xform = ENABLE_SPRITE_TINT ? _resolveColorTransform(spritePath, tintCode) : null;
   // Copy rgba because applyColorTransform mutates, and the cached parsed
   // sprite is shared across all items painted from this asset.
   const pixels = new Uint8ClampedArray(parsed.rgba);
