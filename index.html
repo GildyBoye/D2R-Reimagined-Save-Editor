@@ -305,6 +305,15 @@
   }
   .inv-item:hover { border-color: var(--d2-gold); z-index: 2; }
   .inv-item-name { font-size: 11px; font-family: 'Cinzel', serif; line-height: 1.2; word-break: break-word; }
+  /* SpA1 item sprites — scaled to fit the cell slot. object-fit-like behavior
+     via width:100%/height:100% + the canvas keeping its native aspect via
+     its width/height attributes painted by hydrateItemSprites. */
+  .inv-item canvas.item-sprite {
+    width: 100%; height: 100%; display: block;
+    pointer-events: none;
+    /* image-rendering: auto (default) gives smooth scaling — switch to
+       pixelated if the sprites look too fuzzy at small cell sizes. */
+  }
   .inv-item-meta { font-size: 9px; color: var(--d2-text-dim); }
 
   /* Rarity border colours on inventory/stash items */
@@ -1711,6 +1720,11 @@ async function loadEditorData(timeout) {
     if (cats.uniqueSub && typeof cats.uniqueSub === 'object') _UNIQUE_SUBCATEGORY_KEYS  = cats.uniqueSub;
     if (cats.baseTypes && typeof cats.baseTypes === 'object') _BASE_TYPE_CATEGORY_NAMES = cats.baseTypes;
   }
+
+  // D2R-Reimagined HD sprite-path mappings — fetched from the mod repo so
+  // the editor stays in sync with upstream. Only consumed when the user flips
+  // on the "Show item sprites" toggle in Advanced Options; safe to skip.
+  await loadHdSpriteMappings(timeout).catch(err => _logCaught('loadHdSpriteMappings', err));
 }
 
 function addLog(cls,msg) {
@@ -4277,6 +4291,266 @@ let _CLASS_TEMPLATES = {};
 // Populated at startup from base/sprites.json (see loadEditorData()).
 let CLASS_SPRITES = [];
 
+// ── Item sprites (SpA1 format, loaded on demand from base/sprites/*.sprite) ──
+// Toggle state (session-scoped like other advanced options).
+let _itemSpriteMode = false;
+// Parsed-sprite cache keyed by asset path (e.g. "charm/charm_large"). Each
+// entry is a promise resolving to { width, height, rgba } or null on any
+// failure. Failures are cached so we don't retry the same 404 forever.
+const _itemSpriteCache = new Map();
+// D2R-Reimagined's HD item→sprite mapping, fetched from the mod repo at
+// startup (with a local fallback). Populated by loadHdSpriteMappings().
+//   ITEM_SPRITE_ASSETS[typeCode]       = "category/file"
+//   UNIQUE_SPRITE_ASSETS[snakeKey]     = { normal, uber, ultra }
+//   SET_SPRITE_ASSETS[snakeKey]        = { normal, uber, ultra }
+let ITEM_SPRITE_ASSETS   = {};
+let UNIQUE_SPRITE_ASSETS = {};
+let SET_SPRITE_ASSETS    = {};
+// uniqueId/setItemId → canonical English name (for snake-case keying).
+let _uniqueNameById   = {};
+let _setNameByItemId  = {};
+
+// Source URL for the mod's HD item JSON files.
+const REIMAGINED_HD_URL = 'https://raw.githubusercontent.com/D2R-Reimagined/d2r-reimagined-mod/next/data/hd/items/';
+
+// Parse a Blizzard SpA1 sprite (D2R's item sprite format). Layout:
+//   0x00  4  "SpA1" magic
+//   0x04  2  version u16 (31)
+//   0x06  2  width u16 (redundant with 0x08)
+//   0x08  4  width u32 (pixels)
+//   0x0C  4  height u32 (pixels, may include multiple frames stacked)
+//   0x10-0x23  16 bytes of misc metadata (frames, origin float, etc.)
+//   0x24  4  bytes-per-pixel u32 (typically 4 for BGRA8)
+//   0x28  …  raw BGRA8 pixel data, width*height*4 bytes
+// Returns { width, height, rgba } with pixels converted to RGBA byte order
+// for ImageData, or throws on bad magic / truncated file.
+function parseSpA1(buf) {
+  const view = new DataView(buf);
+  if (view.getUint32(0, true) !== 0x31417053) throw new Error('Not a SpA1 sprite');
+  const width  = view.getUint32(8, true);
+  const height = view.getUint32(12, true);
+  const bpp    = view.getUint32(0x24, true);
+  if (bpp !== 4) throw new Error('Unsupported SpA1 bpp: ' + bpp);
+  const pixOffset = 0x28;
+  const expected  = width * height * 4;
+  if (buf.byteLength < pixOffset + expected) throw new Error('Truncated SpA1 sprite');
+  const src = new Uint8Array(buf, pixOffset, expected);
+  const rgba = new Uint8Array(expected);
+  for (let i = 0; i < expected; i += 4) {
+    rgba[i]     = src[i + 2]; // R ← B
+    rgba[i + 1] = src[i + 1]; // G
+    rgba[i + 2] = src[i];     // B ← R
+    rgba[i + 3] = src[i + 3]; // A
+  }
+  return { width, height, rgba };
+}
+
+// The mod JSON gives sprite paths as "<kind>/<name>" (e.g. "axe/hand_axe"),
+// but on disk they live under a parent category folder: weapon/axe/*,
+// misc/charm/*, armor/helmet/*. Look up the category by first segment.
+const _SPRITE_CATEGORY_BY_KIND = Object.freeze({
+  // weapons
+  axe: 'weapon',     bow: 'weapon',     club: 'weapon',    crossbow: 'weapon',
+  h2h: 'weapon',     hammer: 'weapon',  javelin: 'weapon', knife: 'weapon',
+  mace: 'weapon',    orb: 'weapon',     polearm: 'weapon', scepter: 'weapon',
+  spear: 'weapon',   staff: 'weapon',   sword: 'weapon',   throw: 'weapon',
+  wand: 'weapon',    xbow: 'weapon',
+  // armor
+  armor: 'armor',    belt: 'armor',     boot: 'armor',     circlet: 'armor',
+  glove: 'armor',    grimoires: 'armor',helm: 'armor',     helmet: 'armor',
+  pelt: 'armor',     shield: 'armor',   voodoo_head: 'armor',
+  // misc
+  amulet: 'misc',    body_part: 'misc', book: 'misc',      charm: 'misc',
+  gem: 'misc',       gold: 'misc',      herb: 'misc',      key: 'misc',
+  potion: 'misc',    quest: 'misc',     quiver: 'misc',    ring: 'misc',
+  rune: 'misc',      scroll: 'misc',    shard: 'misc',     torch: 'misc',
+});
+
+// Build the on-disk candidate paths for a mod asset path. Always tries the
+// category-prefixed path first, falls back to the raw path for any file the
+// user dropped loose at base/sprites/ or a kind we don't know the category for.
+function _spriteCandidatePaths(assetPath) {
+  const first = (assetPath.split('/')[0] || '').toLowerCase();
+  const category = _SPRITE_CATEGORY_BY_KIND[first];
+  const out = [];
+  // Already correctly prefixed? (e.g. an uncommon upstream change)
+  if (first === 'weapon' || first === 'misc' || first === 'armor') out.push(assetPath);
+  if (category && !out.includes(category + '/' + assetPath)) out.push(category + '/' + assetPath);
+  if (!out.includes(assetPath)) out.push(assetPath);
+  return out;
+}
+
+// Load + parse a sprite by asset path (e.g. "charm/charm_large"). Caches
+// result and failures. Tries the remote editor path first, falls back to local.
+function loadItemSprite(assetPath) {
+  if (!assetPath) return Promise.resolve(null);
+  if (_itemSpriteCache.has(assetPath)) return _itemSpriteCache.get(assetPath);
+  const paths = _spriteCandidatePaths(assetPath);
+  const urls = [];
+  // Files on disk use the `.lowend.sprite` suffix (kept for size + speed;
+  // full-res `.sprite` variants were pruned). We fall back to plain `.sprite`
+  // as a safety net in case a user drops an alternate extension in later.
+  const exts = ['.lowend.sprite', '.sprite'];
+  for (const p of paths) {
+    for (const ext of exts) {
+      if (!usingFallback) urls.push(EDITOR_DATA_URL + 'sprites/' + p + ext);
+      urls.push(BASE_FALLBACK_URL + 'sprites/' + p + ext);
+    }
+  }
+  const promise = (async () => {
+    for (const url of urls) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) continue;
+        const buf = await res.arrayBuffer();
+        return parseSpA1(buf);
+      } catch (e) { /* try next */ }
+    }
+    return null;
+  })();
+  _itemSpriteCache.set(assetPath, promise);
+  return promise;
+}
+
+// Normalize a display name to the snake_case key used by uniques.json /
+// sets.json. Matches their convention: lowercase, drop apostrophes, collapse
+// other non-alphanumerics into single underscores, trim edges.
+function _snakeSpriteKey(name) {
+  if (!name) return '';
+  return String(name).toLowerCase()
+    .replace(/['\u2019]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+// Fetch + index D2R-Reimagined's HD sprite-mapping JSON files. Tries the mod
+// repo first, falls back to a local copy in base/sprites/. Called once at
+// startup from loadEditorData(). Missing files leave the respective map
+// empty — sprite lookups just degrade to text names for those item classes.
+async function loadHdSpriteMappings(timeout) {
+  const pull = async (file) => {
+    const urls = [REIMAGINED_HD_URL + file, BASE_FALLBACK_URL + 'sprites/' + file];
+    for (const url of urls) {
+      try {
+        const res = await fetchTimed(url, timeout);
+        return JSON.parse(await res.text());
+      } catch (e) { /* try next */ }
+    }
+    return null;
+  };
+
+  // Flatten the array-of-single-entry-objects shape used by all three files.
+  const flatten = (arr, out) => {
+    if (!Array.isArray(arr)) return;
+    for (const entry of arr) {
+      if (!entry || typeof entry !== 'object') continue;
+      for (const [key, val] of Object.entries(entry)) out[key] = val;
+    }
+  };
+
+  const itemsData = await pull('items.json');
+  if (itemsData) {
+    const indexed = {};
+    flatten(itemsData, indexed);
+    for (const [code, val] of Object.entries(indexed)) {
+      if (val && typeof val.asset === 'string') ITEM_SPRITE_ASSETS[code] = val.asset;
+    }
+    addLog('ok', `✓ items.json (${Object.keys(ITEM_SPRITE_ASSETS).length} item sprites)`);
+  } else {
+    addLog('warn', '⚠ items.json — not loaded (base item sprites disabled)');
+  }
+
+  const uniquesData = await pull('uniques.json');
+  if (uniquesData) {
+    flatten(uniquesData, UNIQUE_SPRITE_ASSETS);
+    addLog('ok', `✓ uniques.json (${Object.keys(UNIQUE_SPRITE_ASSETS).length} unique sprites)`);
+  } else {
+    addLog('warn', '⚠ uniques.json — not loaded (unique sprites fall back to base)');
+  }
+
+  const setsData = await pull('sets.json');
+  if (setsData) {
+    flatten(setsData, SET_SPRITE_ASSETS);
+    addLog('ok', `✓ sets.json (${Object.keys(SET_SPRITE_ASSETS).length} set sprites)`);
+  } else {
+    addLog('warn', '⚠ sets.json — not loaded (set sprites fall back to base)');
+  }
+}
+
+// Resolve an item to its sprite asset path. Priority:
+//   1. Unique items (q=7): uniques.json keyed by snake(uniqueName)
+//   2. Set items (q=5):    sets.json keyed by snake(setName)
+//   3. Base item:          items.json keyed by typeCode
+// Returns a path like "charm/charm_large" (no .sprite extension).
+function _spriteFileForItem(item) {
+  if (!item) return '';
+  if (item.quality === 7 && item.uniqueId != null) {
+    const key = _snakeSpriteKey(_uniqueNameById[item.uniqueId]);
+    const entry = key ? UNIQUE_SPRITE_ASSETS[key] : null;
+    if (entry && entry.normal) return entry.normal;
+  }
+  if (item.quality === 5) {
+    const sid = (item.setItemId != null) ? item.setItemId : item.setId;
+    if (sid != null) {
+      const key = _snakeSpriteKey(_setNameByItemId[sid]);
+      const entry = key ? SET_SPRITE_ASSETS[key] : null;
+      if (entry && entry.normal) return entry.normal;
+    }
+  }
+  const tc = (item.typeCode || '').trim();
+  return ITEM_SPRITE_ASSETS[tc] || '';
+}
+
+// Paint a parsed sprite into an already-sized canvas. The canvas's
+// width/height attributes are set to the sprite's native pixel size; CSS
+// width/height let the browser scale to fit the cell slot.
+function paintItemSprite(canvas, parsed) {
+  if (!canvas || !parsed) return;
+  canvas.width  = parsed.width;
+  canvas.height = parsed.height;
+  const ctx = canvas.getContext('2d');
+  const img = new ImageData(new Uint8ClampedArray(parsed.rgba), parsed.width, parsed.height);
+  ctx.putImageData(img, 0, 0);
+}
+
+// Decide how an item cell's inner visual renders — abbreviated-name div
+// (always the fallback) or a sprite-placeholder canvas when the toggle is on
+// AND we have a sprite filename for this item's type code. The canvas is
+// painted asynchronously by hydrateItemSprites after innerHTML lands.
+function _itemCellVisualHtml(item, displayName, cls) {
+  const nameHtml = `<div class="inv-item-name ${cls}">${esc(displayName)}</div>`;
+  if (!_itemSpriteMode) return nameHtml;
+  const file = _spriteFileForItem(item);
+  if (!file) return nameHtml;
+  // Keep the fallback name info on the canvas so hydrateItemSprites can
+  // swap back to the name div if the sprite fetch fails.
+  return `<canvas class="item-sprite"
+    data-sprite-file="${esc(file)}"
+    data-fallback-name="${esc(displayName)}"
+    data-name-cls="${esc(cls)}"
+    style="width:100%;height:100%;display:block;image-rendering:auto"></canvas>`;
+}
+
+// Scan a container for sprite-placeholder canvases and async-paint each.
+// Called after innerHTML is set on any grid that may include sprites.
+function hydrateItemSprites(root) {
+  if (!_itemSpriteMode) return;
+  const canvases = (root || document).querySelectorAll('canvas.item-sprite[data-sprite-file]');
+  for (const cv of canvases) {
+    const file = cv.dataset.spriteFile;
+    loadItemSprite(file).then(parsed => {
+      // If the tab re-rendered while we were fetching (user clicked something
+      // else), this canvas is no longer in the DOM — skip quietly.
+      if (!cv.isConnected) return;
+      if (parsed) paintItemSprite(cv, parsed);
+      else if (cv.dataset.fallbackName) {
+        // Fetch failed — swap to the name fallback in place.
+        cv.outerHTML = `<div class="inv-item-name ${cv.dataset.nameCls || ''}">${esc(cv.dataset.fallbackName)}</div>`;
+      }
+    });
+  }
+}
+
 function _renderSprite(canvas, sprite) {
   const rows = sprite.rows, pal = sprite.pal;
   const w = rows[0].length, h = rows.length;
@@ -6236,12 +6510,37 @@ window.openAdvancedOptions = function() {
          ${esc(L('ui_adv_autosave_unavailable','Auto-save requires File System Access API (Chrome, Edge, or Brave).'))}
        </div>`;
 
+  // ── Item sprites toggle (independent of auto-save) ──
+  const spriteToggle = `
+    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;
+                  padding:10px 12px;margin-top:10px;border:1px solid var(--d2-border);
+                  border-radius:2px;background:var(--d2-surface2)">
+      <input type="checkbox" id="itemSpriteToggle" ${_itemSpriteMode ? 'checked' : ''}
+             onchange="onItemSpriteToggleChange(this)">
+      <span style="flex:1">
+        <div style="color:var(--d2-gold);font-family:'Cinzel',serif;
+                    font-size:11px;letter-spacing:1px;margin-bottom:4px">
+          ${esc(L('ui_adv_sprites_title', 'Show item sprites'))}
+        </div>
+        <div style="color:var(--d2-text-dim);font-size:11px">
+          ${esc(L('ui_adv_sprites_desc','Render item cells using the game\'s .sprite files from base/sprites/ instead of abbreviated names. Missing files fall back to the name.'))}
+        </div>
+      </span>
+    </label>`;
+
   showDialog({
     title:   L('ui_adv_options_title', 'Advanced Options'),
     titleTone: 'gold',
-    bodyHtml: `<div style="padding:4px 2px 8px 2px;font-size:13px;line-height:1.5">${toggleRow}${targetsHtml}</div>`,
+    bodyHtml: `<div style="padding:4px 2px 8px 2px;font-size:13px;line-height:1.5">${toggleRow}${targetsHtml}${spriteToggle}</div>`,
     buttons: [{ label: L('ui_btn_close', 'Close'), tone: 'ghost' }],
   });
+};
+
+// Item sprite toggle handler. Flipping it re-renders the current tab so
+// cells immediately swap between sprite canvases and name divs.
+window.onItemSpriteToggleChange = function(checkbox) {
+  _itemSpriteMode = !!checkbox.checked;
+  if (activeTab) renderTab();
 };
 
 // Called when the checkbox flips. Turning OFF is free; turning ON shows the
@@ -7598,6 +7897,9 @@ function renderTab() {
       if (!inventoryUnlocked) { renderItemWarning(c, 'vault'); break; }
       renderVault(c);     break;
   }
+  // Paint any SpA1 sprite placeholders produced by the tab render. No-op
+  // when the toggle is off; otherwise async-loads + caches each sprite.
+  hydrateItemSprites(c);
 }
 
 function renderItemWarning(c, tabId) {
@@ -8327,6 +8629,7 @@ function buildInvGrid(items, gridW, gridH, cellPx=29, insertContext={}) {
           : '';
 
         const displayName = abbreviateItemName(name, w, h);
+        const visual = _itemCellVisualHtml(topItem, displayName, cls);
         html += `<div class="inv-item ${borderCls}"
           style="grid-column:${col+1}/span ${w};grid-row:${row+1}/span ${h};position:relative"
           ${dragAttr}
@@ -8335,7 +8638,7 @@ function buildInvGrid(items, gridW, gridH, cellPx=29, insertContext={}) {
           onmouseleave="closeTooltip(false)"
           title="${esc(name)}">
           ${countBadge}
-          <div class="inv-item-name ${cls}">${esc(displayName)}</div>
+          ${visual}
         </div>`;
       } else if (!occupied.has(key)) {
         // Empty cell — clickable to insert
@@ -10591,6 +10894,7 @@ function _buildUniqueItemCatalog(hideCodes) {
       code, uniqueName, baseName, qual: 7, uniqueId: idx, category, subCategory,
       searchKey: (uniqueName + ' ' + baseName + ' ' + code + ' ' + subCategory).toLowerCase(),
     });
+    _uniqueNameById[idx] = uniqueName;
   });
 }
 
@@ -10609,6 +10913,7 @@ function _buildSetItemCatalog() {
       code, setName, baseName, qual: 5, setId: idx, setGroup,
       searchKey: (setName + ' ' + setGroup + ' ' + baseName + ' ' + code).toLowerCase(),
     });
+    _setNameByItemId[idx] = setName;
   });
 }
 
@@ -11522,6 +11827,7 @@ function buildSharedStashGrid(items, gridW, gridH, cellPx) {
         const borderCls = itemQualityCls(topItem);
 
         const displayName = abbreviateItemName(name, w, h);
+        const visual = _itemCellVisualHtml(topItem, displayName, cls);
         html += `<div class="inv-item ${borderCls}"
           style="grid-column:${col+1}/span ${w};grid-row:${row+1}/span ${h};position:relative"
           onclick="showSharedStashItemDetail([${clickList}],this);pinTooltip()"
@@ -11529,7 +11835,7 @@ function buildSharedStashGrid(items, gridW, gridH, cellPx) {
           onmouseleave="closeTooltip(false)"
           title="${esc(name)}">
           ${countBadge}
-          <div class="inv-item-name ${cls}">${esc(displayName)}</div>
+          ${visual}
         </div>`;
       } else if (!occupied.has(key)) {
         html += `<div class="inv-cell-empty"></div>`;
@@ -12583,13 +12889,14 @@ function buildGrailCategoryGrid(items, gridW, gridH, cellPx, pageIndex) {
           const { name, cls } = itemDisplayName(p.grailItem);
           const borderCls = itemQualityCls(p.grailItem);
           const displayName = abbreviateItemName(name, p.w, p.h);
+          const visual = _itemCellVisualHtml(p.grailItem, displayName, cls);
           html += `<div class="inv-item ${borderCls}"
             style="grid-column:${col + 1}/span ${p.w};grid-row:${row + 1}/span ${p.h};position:relative"
             onclick="showGrailItemDetail([${p.grailItem.byteOffset}],this);pinTooltip()"
             onmouseenter="showGrailItemDetail([${p.grailItem.byteOffset}],this,true)"
             onmouseleave="closeTooltip(false)"
             title="${esc(name)}">
-            <div class="inv-item-name ${cls}">${esc(displayName)}</div>
+            ${visual}
           </div>`;
         } else {
           const slotName = abbreviateItemName(p.entry.name, p.w, p.h);
@@ -13561,6 +13868,7 @@ function buildVaultPageGrid(pageId, cellPx) {
         // jumped to. _vaultHighlightOffset is cleared after this grid render.
         const hitCls = (entry.item.byteOffset === _vaultHighlightOffset) ? ' vault-hit' : '';
         const hitAttr = (entry.item.byteOffset === _vaultHighlightOffset) ? ` data-vault-hit-offset="${entry.item.byteOffset}"` : '';
+        const visual = _itemCellVisualHtml(entry.item, displayName, cls);
         html += `<div class="inv-item ${borderCls}${hitCls}"${hitAttr}
           draggable="true"
           ondragstart="vaultDragStart(event, ${entry.item.byteOffset}, 'vault', ${entry.w}, ${entry.h})"
@@ -13570,7 +13878,7 @@ function buildVaultPageGrid(pageId, cellPx) {
           onmouseenter="showVaultItemDetail([${entry.item.byteOffset}],this,true)"
           onmouseleave="closeTooltip(false)"
           title="${esc(name)}">
-          <div class="inv-item-name ${cls}">${esc(displayName)}</div>
+          ${visual}
         </div>`;
       } else if (!cellOccupied.has(key)) {
         html += `<div class="inv-cell-empty"></div>`;
@@ -13648,6 +13956,7 @@ function buildVaultQuadGrid(quad, cellPx) {
         const displayName = abbreviateItemName(name, entry.w, entry.h);
         const hitCls = (entry.item.byteOffset === _vaultHighlightOffset) ? ' vault-hit' : '';
         const hitAttr = (entry.item.byteOffset === _vaultHighlightOffset) ? ` data-vault-hit-offset="${entry.item.byteOffset}"` : '';
+        const visual = _itemCellVisualHtml(entry.item, displayName, cls);
         html += `<div class="inv-item ${borderCls}${hitCls}"${hitAttr}
           draggable="true"
           ondragstart="vaultDragStart(event, ${entry.item.byteOffset}, 'vault', ${entry.w}, ${entry.h})"
@@ -13657,7 +13966,7 @@ function buildVaultQuadGrid(quad, cellPx) {
           onmouseenter="showVaultItemDetail([${entry.item.byteOffset}],this,true)"
           onmouseleave="closeTooltip(false)"
           title="${esc(name)}">
-          <div class="inv-item-name ${cls}">${esc(displayName)}</div>
+          ${visual}
         </div>`;
       } else if (!cellOccupied.has(key)) {
         html += `<div class="inv-cell-empty" style="${extraStyle}"></div>`;
@@ -13817,6 +14126,7 @@ function buildVaultSourceGrid(items, gridW, gridH, cellPx, sourceKind) {
         const countBadge = stack.length > 1
           ? `<div style="position:absolute;top:1px;right:2px;font-size:8px;color:var(--d2-gold);font-family:'Cinzel',serif">x${stack.length}</div>`
           : '';
+        const visual = _itemCellVisualHtml(topItem, displayName, cls);
         html += `<div class="inv-item ${borderCls}"
           draggable="true"
           ondragstart="vaultDragStart(event, ${topItem.byteOffset}, '${dragOrigin}', ${w}, ${h})"
@@ -13827,7 +14137,7 @@ function buildVaultSourceGrid(items, gridW, gridH, cellPx, sourceKind) {
           onmouseleave="closeTooltip(false)"
           title="${esc(name)}">
           ${countBadge}
-          <div class="inv-item-name ${cls}">${esc(displayName)}</div>
+          ${visual}
         </div>`;
       } else if (!occupied.has(key)) {
         html += `<div class="inv-cell-empty"></div>`;
@@ -14708,6 +15018,9 @@ function renderVault(c) {
   // Clear the one-shot search-jump highlight — CSS animation will still play
   // on the element we just rendered, but re-renders won't re-trigger it.
   _vaultHighlightOffset = null;
+  // Paint SpA1 item sprites into any sprite-placeholder canvases the grid
+  // just produced. Async + cached; no-op if the sprite toggle is off.
+  hydrateItemSprites(c);
 }
 
 window.vaultGoToPage = function(pageIdx) {

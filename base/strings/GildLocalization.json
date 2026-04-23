@@ -2355,5 +2355,13 @@
     {
         "Key": "ui_act_title_5",
         "enUS": "Lord of Destruction (Act V)"
+    },
+    {
+        "Key": "ui_adv_sprites_title",
+        "enUS": "Show item sprites"
+    },
+    {
+        "Key": "ui_adv_sprites_desc",
+        "enUS": "Render item cells using the game's .sprite files from base/sprites/ instead of abbreviated names. Missing files fall back to the name."
     }
 ]
