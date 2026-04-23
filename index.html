@@ -207,7 +207,9 @@
     50%  { box-shadow: 0 0 0 4px rgba(200,168,75,0.0), 0 0 10px 2px rgba(200,168,75,0.7); }
     100% { box-shadow: 0 0 0 0 rgba(200,168,75,0.0),   0 0 0 0 rgba(200,168,75,0.0); }
   }
-  .inv-item.vault-hit { animation: vaultHitPulse 1.2s ease-out 3; }
+  .inv-item.vault-hit,
+  .inv-item.search-hit,
+  .pd-slot.search-hit { animation: vaultHitPulse 1.2s ease-out 3; }
 
   .skill-list { display: flex; flex-direction: column; gap: 5px; margin-bottom: 16px; }
   .skill-row { display: flex; align-items: center; gap: 10px; background: var(--d2-surface2); border: 1px solid var(--d2-border); padding: 7px 12px; border-radius: 1px; }
@@ -1725,11 +1727,6 @@ async function loadEditorData(timeout) {
   // the editor stays in sync with upstream. Only consumed when the user flips
   // on the "Show item sprites" toggle in Advanced Options; safe to skip.
   await loadHdSpriteMappings(timeout).catch(err => _logCaught('loadHdSpriteMappings', err));
-
-  // colors.txt + globaldatahd.json — drives the per-palette sprite tints so
-  // items sharing a base sprite (e.g. every unique ring) show with their
-  // correct invtransform color. Missing files just disable tinting.
-  await loadColorTransforms(timeout).catch(err => _logCaught('loadColorTransforms', err));
 }
 
 function addLog(cls,msg) {
@@ -4314,273 +4311,6 @@ let SET_SPRITE_ASSETS    = {};
 // uniqueId/setItemId → canonical English name (for snake-case keying).
 let _uniqueNameById   = {};
 let _setNameByItemId  = {};
-// uniqueId/setItemId → invtransform 3-letter color code (e.g. "dpur", "cgrn").
-// Drives the sprite tint for items that reuse a base sprite but display with
-// a different palette in-game. Empty string = no tint.
-let _uniqueTintById   = {};
-let _setTintByItemId  = {};
-
-// Per-palette color transforms pulled from the game's own globaldatahd.json
-// (the `SpriteColoringHelper.colorTransform` array). Each entry holds the
-// HSV delta + tint blend parameters D2R applies when drawing an inventory
-// sprite with a given invtransform code.
-//
-//   _COLOR_CODES_ORDER        — the 21 codes from base/colors.txt in the
-//                               same row order as colorTransform[] (used to
-//                               key the array on load).
-//   _COLOR_TRANSFORMS         — code → { hsv:[dh,ds,dv], tint:[r,g,b,a] }
-//   _COLOR_TRANSFORM_OVERRIDES — "<sprite-path>|<code>" → transform,
-//                               for the handful of per-sprite tweaks in
-//                               `colorTransformOverride`.
-//
-// All populated by loadColorTransforms() at startup. The defaults below
-// mirror the 21-code palette from the upstream colors.txt so the feature
-// still works if the fetch fails.
-const _COLOR_CODES_ORDER = ['whit','lgry','dgry','blac','lblu','dblu','cblu',
-                            'lred','dred','cred','lgrn','dgrn','cgrn','lyel',
-                            'dyel','lgld','dgld','lpur','dpur','oran','bwht'];
-let _COLOR_TRANSFORMS          = {};
-let _COLOR_TRANSFORM_OVERRIDES = {};
-
-// Convert sRGB (0..1) to HSV (h in 0..1, s/v in 0..1).
-function _rgbToHsv(r, g, b) {
-  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
-  let h = 0;
-  if (d !== 0) {
-    if (max === r)      h = ((g - b) / d) % 6;
-    else if (max === g) h = (b - r) / d + 2;
-    else                h = (r - g) / d + 4;
-    h /= 6;
-    if (h < 0) h += 1;
-  }
-  const s = max === 0 ? 0 : d / max;
-  return [h, s, max];
-}
-
-// Convert HSV back to sRGB (0..1).
-function _hsvToRgb(h, s, v) {
-  const i = Math.floor(h * 6);
-  const f = h * 6 - i;
-  const p = v * (1 - s);
-  const q = v * (1 - f * s);
-  const t = v * (1 - (1 - f) * s);
-  switch (i % 6) {
-    case 0: return [v, t, p];
-    case 1: return [q, v, p];
-    case 2: return [p, v, t];
-    case 3: return [p, q, v];
-    case 4: return [t, p, v];
-    default:return [v, p, q];
-  }
-}
-
-// Apply a D2R color transform to a pixel array in-place (RGBA bytes).
-// `xform` is { hsv: [dh, ds, dv, _], tint: [r, g, b, a] } from globaldatahd.json.
-//
-// Two paths depending on whether the transform has a tint color:
-//
-// 1. HAS TINT (16 of the 21 codes — all the colored ones: lblu/dpur/cred/...).
-//    Derive output RGB from pixel LUMINANCE × tint color. This avoids the
-//    chromatic aberration that a naive HSV hue-shift produces on near-grey
-//    pixels: a pixel like (99, 101, 100) has essentially arbitrary hue
-//    (noise between the tiny channel diffs), and boosting its saturation
-//    surfaces that noise as visible rainbow garbage. By sourcing the hue
-//    from the tint color instead, grey shadows stay grey-toned-purple
-//    instead of going green/orange. The `dv` delta still modulates
-//    brightness so light/dark variants differentiate properly.
-//
-// 2. GRAYSCALE ONLY (whit/lgry/dgry/blac/bwht — tint is all zeros, hsv has
-//    no hue shift). These are safe to run through the straight HSV model:
-//    desaturate + brighten/darken, no hue rotation to amplify. Keeps the
-//    "whiten" and "blacken" transforms working correctly for base sprites.
-function _applyColorTransform(rgba, xform) {
-  if (!xform) return rgba;
-  const hsv  = xform.hsv  || [0, 0, 0, 0];
-  const tint = xform.tint || [0, 0, 0, 0];
-  const dh = hsv[0] || 0, ds = hsv[1] || 0, dv = hsv[2] || 0;
-  const tr = tint[0] || 0, tg = tint[1] || 0, tb = tint[2] || 0, ta = tint[3] || 0;
-  const useTint = ta > 0 && (tr !== 0 || tg !== 0 || tb !== 0);
-  const hasHsv  = dh !== 0 || ds !== 0 || dv !== 0;
-  if (!useTint && !hasHsv) return rgba;
-
-  const lerpToExtreme = (cur, delta) => {
-    if (delta === 0) return cur;
-    const target = delta > 0 ? 1 : 0;
-    return cur + (target - cur) * Math.min(1, Math.abs(delta));
-  };
-
-  if (useTint) {
-    // Luminance-to-tint path.
-    //
-    // ACCENT_SAT_THRESHOLD: pixels whose original saturation exceeds this
-    // are preserved untouched — they're the gold trim, colored gems, and
-    // painted decorations the game's `colorRange` mask protects in-engine.
-    // A flat sat threshold is a pragmatic stand-in for the real per-sprite
-    // HSV band in globaldatahd.json; it catches the bulk of the visual
-    // intent (anything with strong native color is meant to stay that color)
-    // without having to port the full range-mask system.
-    //
-    // No `dv` is applied to accent pixels — brightening gold trim on `lred`
-    // and darkening it on `dred` doesn't match in-game behaviour; the trim
-    // is constant across light/dark variants and only the base material
-    // shifts. The dv differentiator still comes through via the tint path
-    // where it brightens/darkens the luminance used for the tint color.
-    //
-    // The tinted component is `tint_color × luminance` with no extra scale.
-    // An earlier ×2 multiplier was pushing mid-luminance pixels into fully
-    // saturated tint territory (every grey pixel became pure red), flattening
-    // the sprite's natural shading. Plain luminance-multiply keeps the
-    // original shading curve while tinting it toward the target color.
-    const ACCENT_SAT_THRESHOLD = 0.55;
-    for (let i = 0; i < rgba.length; i += 4) {
-      if (rgba[i + 3] === 0) continue;
-      const r = rgba[i] / 255, g = rgba[i + 1] / 255, b = rgba[i + 2] / 255;
-      const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-      const sat = mx === 0 ? 0 : (mx - mn) / mx;
-      if (sat > ACCENT_SAT_THRESHOLD) continue; // preserve accent unchanged
-      let lum = 0.299 * r + 0.587 * g + 0.114 * b;
-      if (dv !== 0) lum = lerpToExtreme(lum, dv);
-      const tintedR = Math.min(1, tr * lum);
-      const tintedG = Math.min(1, tg * lum);
-      const tintedB = Math.min(1, tb * lum);
-      const nr = r * (1 - ta) + tintedR * ta;
-      const ng = g * (1 - ta) + tintedG * ta;
-      const nb = b * (1 - ta) + tintedB * ta;
-      rgba[i]     = Math.max(0, Math.min(255, Math.round(nr * 255)));
-      rgba[i + 1] = Math.max(0, Math.min(255, Math.round(ng * 255)));
-      rgba[i + 2] = Math.max(0, Math.min(255, Math.round(nb * 255)));
-    }
-  } else {
-    // Grayscale HSV path (whit/lgry/dgry/blac/bwht).
-    for (let i = 0; i < rgba.length; i += 4) {
-      if (rgba[i + 3] === 0) continue;
-      const r = rgba[i] / 255, g = rgba[i + 1] / 255, b = rgba[i + 2] / 255;
-      let [h, s, v] = _rgbToHsv(r, g, b);
-      s = lerpToExtreme(s, ds);
-      v = lerpToExtreme(v, dv);
-      const [nr, ng, nb] = _hsvToRgb(h, s, v);
-      rgba[i]     = Math.max(0, Math.min(255, Math.round(nr * 255)));
-      rgba[i + 1] = Math.max(0, Math.min(255, Math.round(ng * 255)));
-      rgba[i + 2] = Math.max(0, Math.min(255, Math.round(nb * 255)));
-    }
-  }
-  return rgba;
-}
-
-// Strip JS-style comments and trailing commas so JSON.parse accepts the
-// JSON5-ish files D2R ships (globaldatahd.json, etc.).
-function _parseLenientJson(text) {
-  return JSON.parse(
-    text
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/\/\/.*$/gm, '')
-      .replace(/,(\s*[}\]])/g, '$1')
-  );
-}
-
-// Sprite-path prefix used in globaldatahd.json's override keys. We strip it
-// so entries match the category-prefixed paths returned by _spriteFileForItem.
-const _HD_SPRITE_PATH_PREFIX = 'data/hd/global/ui/items/';
-
-// Fetch colors.txt + globaldatahd.json from the editor repo (with local
-// fallback) and wire them into _COLOR_TRANSFORMS / overrides. Silent on
-// failure — items fall back to untinted sprites.
-async function loadColorTransforms(timeout) {
-  // colors.txt — optional; its role is to give us the exact code order for
-  // indexing colorTransform[]. The hardcoded fallback already matches the
-  // upstream file, so a miss here just means we don't pick up future mod
-  // additions.
-  let codeOrder = _COLOR_CODES_ORDER.slice();
-  const colorsUrls = usingFallback
-    ? [BASE_FALLBACK_URL + 'colors.txt']
-    : [EDITOR_DATA_URL + 'colors.txt', BASE_FALLBACK_URL + 'colors.txt'];
-  for (const url of colorsUrls) {
-    try {
-      const res = await fetchTimed(url, timeout);
-      const text = await res.text();
-      const lines = text.split(/\r?\n/).slice(1); // skip header row
-      const parsed = [];
-      for (const line of lines) {
-        const cols = line.split('\t');
-        const code = (cols[1] || '').trim().toLowerCase();
-        if (code) parsed.push(code);
-      }
-      if (parsed.length) codeOrder = parsed;
-      break;
-    } catch (e) { /* try next */ }
-  }
-
-  // globaldatahd.json — the heavy lifter. Contains the 21 colorTransform
-  // entries plus any per-sprite tweaks the mod ships.
-  const gdhdUrls = usingFallback
-    ? [BASE_FALLBACK_URL + 'globaldatahd.json']
-    : [EDITOR_DATA_URL + 'globaldatahd.json', BASE_FALLBACK_URL + 'globaldatahd.json'];
-  let gdhd = null;
-  for (const url of gdhdUrls) {
-    try {
-      const res = await fetchTimed(url, timeout);
-      gdhd = _parseLenientJson(await res.text());
-      break;
-    } catch (e) { /* try next */ }
-  }
-  if (!gdhd) {
-    addLog('warn', '⚠ globaldatahd.json — not loaded (sprite tints disabled)');
-    return;
-  }
-
-  // Dig for the SpriteColoringHelper child.
-  let helper = null;
-  if (Array.isArray(gdhd.children)) {
-    helper = gdhd.children.find(c => c && c.type === 'SpriteColoringHelper');
-  }
-  const fields = helper && helper.fields ? helper.fields : {};
-
-  // colorTransform[] — positional, indexed via codeOrder.
-  const xforms = Array.isArray(fields.colorTransform) ? fields.colorTransform : [];
-  const byCode = {};
-  xforms.forEach((entry, i) => {
-    const code = codeOrder[i];
-    if (!code || !entry || typeof entry !== 'object') return;
-    byCode[code] = {
-      hsv:  Array.isArray(entry.hsvTransform)  ? entry.hsvTransform.slice(0, 4)  : [0, 0, 0, 0],
-      tint: Array.isArray(entry.tintTransform) ? entry.tintTransform.slice(0, 4) : [0, 0, 0, 0],
-    };
-  });
-  _COLOR_TRANSFORMS = byCode;
-
-  // colorTransformOverride[] — [path, code, transformObj] triples.
-  const overrides = Array.isArray(fields.colorTransformOverride) ? fields.colorTransformOverride : [];
-  const overrideMap = {};
-  for (const row of overrides) {
-    if (!Array.isArray(row) || row.length < 3) continue;
-    const rawPath = String(row[0] || '');
-    const code = String(row[1] || '').toLowerCase();
-    const entry = row[2];
-    if (!rawPath || !code || !entry || typeof entry !== 'object') continue;
-    const path = rawPath.startsWith(_HD_SPRITE_PATH_PREFIX)
-      ? rawPath.slice(_HD_SPRITE_PATH_PREFIX.length) : rawPath;
-    overrideMap[path + '|' + code] = {
-      hsv:  Array.isArray(entry.hsvTransform)  ? entry.hsvTransform.slice(0, 4)  : [0, 0, 0, 0],
-      tint: Array.isArray(entry.tintTransform) ? entry.tintTransform.slice(0, 4) : [0, 0, 0, 0],
-    };
-  }
-  _COLOR_TRANSFORM_OVERRIDES = overrideMap;
-
-  addLog('ok', `✓ globaldatahd.json (${Object.keys(byCode).length} color transforms, ${Object.keys(overrideMap).length} overrides)`);
-}
-
-// Resolve the final color transform for an item given its sprite path and
-// invtransform code. Per-sprite overrides beat the default table. Returns
-// null when no transform should be applied (unknown/empty code, or "whit"
-// which is effectively identity for already-white sprites).
-function _resolveColorTransform(spritePath, code) {
-  if (!code) return null;
-  const path = (spritePath || '');
-  const override = _COLOR_TRANSFORM_OVERRIDES[path + '|' + code];
-  if (override) return override;
-  return _COLOR_TRANSFORMS[code] || null;
-}
-
 // Source URL for the mod's HD item JSON files (sprite-path mappings).
 const REIMAGINED_HD_URL = 'https://raw.githubusercontent.com/D2R-Reimagined/d2r-reimagined-mod/next/data/hd/items/';
 // Source URL for the mod's actual sprite binaries. These override / extend
@@ -4807,21 +4537,27 @@ function _spriteFileForItem(item) {
 
   // JEWELS — special handling.
   // uniques.json maps every unique jewel (all 8 facets + mod additions) to
-  // gem/perfect_diamond as a placeholder, so they'd otherwise all render as
-  // diamonds. Reimagined ships numbered color variants (jewels1..jewels6)
-  // for per-instance visual variety — D2R picks one per item at runtime
-  // using internal rolls we can't reproduce, so we distribute deterministically:
-  //   - Unique jewels → jewels{(uniqueId % 6) + 1}  (stable across reloads)
-  //   - All other jewels → jewels (the base sprite, available on all sources)
-  // Base jewels intentionally use the unnumbered sprite because it's the
-  // only jewel sprite present in the base-game editor repo and local
-  // fallback — the numbered variants live only on the Reimagined LFS repo.
-  if (tc === 'jew') {
+  // gem/perfect_diamond as a placeholder, and the plain gem/jewels.sprite
+  // is itself a white/grey near-diamond image. So without intervention EVERY
+  // jewel renders as a diamond-lookalike, which is exactly what the user was
+  // seeing. Reimagined ships colored variants jewels1..jewels6 with actual
+  // jewel-looking art; D2R picks one per-item at runtime using internal
+  // rolls we can't reproduce, so we distribute deterministically by a
+  // stable per-item key so every jewel ends up colored and the same jewel
+  // keeps the same color on reload:
+  //   - Unique jewels   → hash(uniqueId)
+  //   - Non-unique real → hash(byteOffset)        (positive file offset)
+  //   - Virtual items   → hash(abs(byteOffset))   (editor-created, negative)
+  // Covers both 'jew' (Jewel) and 'cjw' (Colossal Jewel — Reimagined add).
+  if (tc === 'jew' || tc === 'cjw') {
+    let key = 0;
     if (item.quality === 7 && item.uniqueId != null) {
-      const variant = (item.uniqueId % 6) + 1;
-      return 'gem/jewels' + variant;
+      key = item.uniqueId;
+    } else if (typeof item.byteOffset === 'number') {
+      key = Math.abs(item.byteOffset);
     }
-    return 'gem/jewels';
+    const variant = (key % 6) + 1;
+    return 'gem/jewels' + variant;
   }
 
   if (item.quality === 7 && item.uniqueId != null) {
@@ -4842,63 +4578,15 @@ function _spriteFileForItem(item) {
   return ITEM_SPRITE_ASSETS[tc] || '';
 }
 
-// Resolve the invtransform palette code for an item (e.g. "dpur", "cgrn").
-// Uniques and set items each have their own tint stored from the txt files;
-// everything else goes untinted.
-function _spriteTintForItem(item) {
-  if (!item) return '';
-  if (item.quality === 7 && item.uniqueId != null) {
-    return _uniqueTintById[item.uniqueId] || '';
-  }
-  if (item.quality === 5) {
-    const sid = (item.setItemId != null) ? item.setItemId : item.setId;
-    if (sid != null) return _setTintByItemId[sid] || '';
-  }
-  return '';
-}
-
-// The sprite path used as the key into _spriteCandidatePaths and into the
-// colorRangeOverride / colorTransformOverride maps. Picks the
-// category-prefixed form when the asset path starts with a kind we know
-// about — matches the full on-disk / full override-key form.
-function _spriteOverrideKey(assetPath) {
-  if (!assetPath) return '';
-  const first = (assetPath.split('/')[0] || '').toLowerCase();
-  if (first === 'weapon' || first === 'misc' || first === 'armor') return assetPath;
-  const category = _SPRITE_CATEGORY_BY_KIND[first];
-  return category ? (category + '/' + assetPath) : assetPath;
-}
-
 // Paint a parsed sprite into an already-sized canvas. The canvas's
 // width/height attributes are set to the sprite's native pixel size; CSS
 // width/height let the browser scale to fit the cell slot.
-// `tintCode` / `spritePath` are optional — when provided, the pixels are
-// run through the matching entry in _COLOR_TRANSFORMS (with per-sprite
-// overrides applied) before being written to the canvas.
-function paintItemSprite(canvas, parsed, tintCode, spritePath) {
+function paintItemSprite(canvas, parsed) {
   if (!canvas || !parsed) return;
   canvas.width  = parsed.width;
   canvas.height = parsed.height;
   const ctx = canvas.getContext('2d');
-  // NOTE: The per-invtransform color grading (lred/dpur/cgrn/etc. HSV +
-  // tint blend) is intentionally disabled. Replicating D2R's shader
-  // faithfully requires the full `colorRange` HSV-band masking from
-  // globaldatahd.json plus the exact game-internal blend math, which we
-  // don't have a source for. Approximations consistently came out either
-  // too vivid (obliterating the sprite's natural shading) or too subtle
-  // (invisible against the base sprite), and neither failure mode was
-  // better than just rendering the untinted sprite. The loader
-  // (loadColorTransforms) and the `_uniqueTintById` / `_setTintByItemId`
-  // metadata still populate so we can revisit this without replumbing —
-  // flip the guard below to re-enable whenever the math is worth another
-  // swing.
-  const ENABLE_SPRITE_TINT = false;
-  const xform = ENABLE_SPRITE_TINT ? _resolveColorTransform(spritePath, tintCode) : null;
-  // Copy rgba because applyColorTransform mutates, and the cached parsed
-  // sprite is shared across all items painted from this asset.
-  const pixels = new Uint8ClampedArray(parsed.rgba);
-  if (xform) _applyColorTransform(pixels, xform);
-  const img = new ImageData(pixels, parsed.width, parsed.height);
+  const img = new ImageData(new Uint8ClampedArray(parsed.rgba), parsed.width, parsed.height);
   ctx.putImageData(img, 0, 0);
 }
 
@@ -4911,16 +4599,10 @@ function _itemCellVisualHtml(item, displayName, cls) {
   if (!_itemSpriteMode) return nameHtml;
   const file = _spriteFileForItem(item);
   if (!file) return nameHtml;
-  const tint = _spriteTintForItem(item);
-  const overrideKey = _spriteOverrideKey(file);
   // Keep the fallback name info on the canvas so hydrateItemSprites can
-  // swap back to the name div if the sprite fetch fails. Tint code + the
-  // category-prefixed path ride along so the transform picker can honor
-  // per-sprite overrides.
+  // swap back to the name div if the sprite fetch fails.
   return `<canvas class="item-sprite"
     data-sprite-file="${esc(file)}"
-    data-sprite-tint="${esc(tint)}"
-    data-sprite-path="${esc(overrideKey)}"
     data-fallback-name="${esc(displayName)}"
     data-name-cls="${esc(cls)}"
     style="width:100%;height:100%;display:block;image-rendering:auto"></canvas>`;
@@ -4933,13 +4615,11 @@ function hydrateItemSprites(root) {
   const canvases = (root || document).querySelectorAll('canvas.item-sprite[data-sprite-file]');
   for (const cv of canvases) {
     const file = cv.dataset.spriteFile;
-    const tint = cv.dataset.spriteTint || '';
-    const path = cv.dataset.spritePath || file;
     loadItemSprite(file).then(parsed => {
       // If the tab re-rendered while we were fetching (user clicked something
       // else), this canvas is no longer in the DOM — skip quietly.
       if (!cv.isConnected) return;
-      if (parsed) paintItemSprite(cv, parsed, tint, path);
+      if (parsed) paintItemSprite(cv, parsed);
       else if (cv.dataset.fallbackName) {
         // Fetch failed — swap to the name fallback in place.
         cv.outerHTML = `<div class="inv-item-name ${cv.dataset.nameCls || ''}">${esc(cv.dataset.fallbackName)}</div>`;
@@ -9027,7 +8707,12 @@ function buildInvGrid(items, gridW, gridH, cellPx=29, insertContext={}) {
 
         const displayName = abbreviateItemName(name, w, h);
         const visual = _itemCellVisualHtml(topItem, displayName, cls);
-        html += `<div class="inv-item ${borderCls}"
+        // Stack hit-test: the one-shot highlight fires if ANY item in the
+        // stack matches the search selection, not just the top item.
+        const stackHit = stack.some(({item:it}) => it.byteOffset === _itemSearchHighlightOffset);
+        const hitCls = stackHit ? ' search-hit' : '';
+        const hitAttr = stackHit ? ` data-search-hit-offset="${_itemSearchHighlightOffset}"` : '';
+        html += `<div class="inv-item ${borderCls}${hitCls}"${hitAttr}
           style="grid-column:${col+1}/span ${w};grid-row:${row+1}/span ${h};position:relative"
           ${dragAttr}
           onclick="showItemDetailStack([${clickList}],this);pinTooltip()"
@@ -9465,10 +9150,34 @@ document.addEventListener('drop', function(e) {
 function renderInventory(c) {
   if (!parsedChar.items) parsedChar.items = [];
 
-  const { equipped, inventory, belt, special } = getItemsByLocation();
+  const { equipped, inventory, belt } = getItemsByLocation();
   const dims = getInventoryDimensions(parsedChar.header.cls);
 
   let html = saveBar('Click items to inspect or remove. Use empty cells to insert new items.');
+
+  // Search covers the three item collections actually painted on this tab:
+  // equipped paperdoll slots, the inventory grid, and the belt strip. Cube,
+  // quest, and mercenary items live on their own tabs (no DOM here), so
+  // excluding them keeps jump-to from silently no-op'ing on an unreachable
+  // cell. buildInvGrid + slot() + the belt render each tag the matching
+  // element with [data-search-hit-offset] so _scrollSearchHitIntoView finds it.
+  const invSearchItems = [
+    ...Object.values(equipped || {}),
+    ...(inventory || []),
+    ...(belt || []),
+  ];
+  const invLocate = (it) => {
+    const p = it.parent ?? it.location ?? 0;
+    if (p === 1) return L('ui_search_loc_equipped','Equipped');
+    if (p === 2) return L('ui_search_loc_belt','Belt');
+    return L('ui_search_loc_inventory','Inventory');
+  };
+  const invHits = findItemSearchHits(invSearchItems, _invSearchQuery, invLocate);
+  html += buildItemSearchBarHtml(
+    'invSearchInput', _invSearchQuery,
+    L('ui_search_placeholder','Search items by name or code…'),
+    'onInvSearchInput', invHits, 'invJumpToHit'
+  );
 
   // ── Slot helper ──
   function slot(id, label, w, h) {
@@ -9479,7 +9188,10 @@ function renderInventory(c) {
       const {name,cls} = itemDisplayName(item);
       const q = ITEM_QUALITY[item.quality];
       const borderCls = itemQualityCls(item);
-      return `<div class="pd-slot has-item ${borderCls}" style="${style}"
+      const isHit = item.byteOffset === _itemSearchHighlightOffset;
+      const hitCls = isHit ? ' search-hit' : '';
+      const hitAttr = isHit ? ` data-search-hit-offset="${item.byteOffset}"` : '';
+      return `<div class="pd-slot has-item ${borderCls}${hitCls}"${hitAttr} style="${style}"
         draggable="true" ondragstart="equipSlotDragStart(event,${item.byteOffset},${id})"
         ${dropAttrs}
         onclick="showItemDetail(${item.byteOffset},this);pinTooltip()"
@@ -9605,7 +9317,10 @@ function renderInventory(c) {
       if (item) {
         const {name,cls}=itemDisplayName(item);
         const beltBorderCls = itemQualityCls(item);
-        beltHtml+=`<div class="pd-slot has-item ${beltBorderCls}" style="width:${BELT_CELL}px;height:${BELT_CELL}px;${dimStyle}"
+        const isHit = item.byteOffset === _itemSearchHighlightOffset;
+        const hitCls = isHit ? ' search-hit' : '';
+        const hitAttr = isHit ? ` data-search-hit-offset="${item.byteOffset}"` : '';
+        beltHtml+=`<div class="pd-slot has-item ${beltBorderCls}${hitCls}"${hitAttr} style="width:${BELT_CELL}px;height:${BELT_CELL}px;${dimStyle}"
           draggable="true" ondragstart="beltItemDragStart(event,${item.byteOffset})"
           ondragover="beltSlotDragOver(event)" ondragleave="beltSlotDragLeave(event)" ondrop="beltSlotDrop(event,${slotIdx})"
           onclick="showItemDetail(${item.byteOffset},this);pinTooltip()"
@@ -9646,7 +9361,25 @@ function renderInventory(c) {
       </div>
     </div>
     `;
+  // Clear the one-shot search highlight — the CSS pulse animation still plays
+  // on the element we just rendered, but subsequent re-renders won't retrigger.
+  _itemSearchHighlightOffset = null;
+  hydrateItemSprites(c);
 }
+
+// ── Inventory search handlers ──
+window.onInvSearchInput = function(value) {
+  _invSearchQuery = (value || '').trim();
+  renderInventory(document.getElementById('tabContent'));
+  const inp = document.getElementById('invSearchInput');
+  if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+};
+window.invJumpToHit = function(byteOffset) {
+  _itemSearchHighlightOffset = byteOffset;
+  renderInventory(document.getElementById('tabContent'));
+  _scrollSearchHitIntoView(byteOffset);
+};
+
 // ── Belt potion picker ──
 const BELT_POTIONS = [
   {code:'hpo',name:'Healing Potion'},
@@ -9854,6 +9587,18 @@ function renderStash(c) {
 
   let html = saveBar('Click items to inspect or remove. Use empty cells to insert new items.');
 
+  // Stash search — scans every item in the personal stash by display name + code.
+  const stashHits = findItemSearchHits(
+    personalStash,
+    _stashSearchQuery,
+    () => L('ui_search_loc_stash','Stash')
+  );
+  html += buildItemSearchBarHtml(
+    'stashSearchInput', _stashSearchQuery,
+    L('ui_search_placeholder','Search items by name or code…'),
+    'onStashSearchInput', stashHits, 'stashJumpToHit'
+  );
+
   // ── Personal Stash — dimensions from inventory.txt "Big Bank Page" row ──
   // Cell size matches the inventory tab (50px) so the 16-wide grid extends near the
   // right edge of the editor instead of leaving a large empty gutter on the right.
@@ -9861,7 +9606,22 @@ function renderStash(c) {
   html += buildInvGrid(personalStash, dims.stashW, dims.stashH, 50, {mode:'stash', storage:5});
 
   c.innerHTML = html;
+  _itemSearchHighlightOffset = null;
+  hydrateItemSprites(c);
 }
+
+// ── Stash search handlers ──
+window.onStashSearchInput = function(value) {
+  _stashSearchQuery = (value || '').trim();
+  renderStash(document.getElementById('tabContent'));
+  const inp = document.getElementById('stashSearchInput');
+  if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+};
+window.stashJumpToHit = function(byteOffset) {
+  _itemSearchHighlightOffset = byteOffset;
+  renderStash(document.getElementById('tabContent'));
+  _scrollSearchHitIntoView(byteOffset);
+};
 
 // Show detail for a stack of items (Reimagined stacking)
 // ═══════════════════════════════════════════════════════════
@@ -11292,7 +11052,6 @@ function _buildUniqueItemCatalog(hideCodes) {
       searchKey: (uniqueName + ' ' + baseName + ' ' + code + ' ' + subCategory).toLowerCase(),
     });
     _uniqueNameById[idx] = uniqueName;
-    _uniqueTintById[idx] = (row['invtransform'] || '').trim().toLowerCase();
   });
 }
 
@@ -11312,7 +11071,6 @@ function _buildSetItemCatalog() {
       searchKey: (setName + ' ' + setGroup + ' ' + baseName + ' ' + code).toLowerCase(),
     });
     _setNameByItemId[idx] = setName;
-    _setTintByItemId[idx] = (row['invtransform'] || '').trim().toLowerCase();
   });
 }
 
@@ -12131,8 +11889,6 @@ function renderSharedStashTabs() {
 
   const stashW = 16, stashH = 13, cellPx = 29;
 
-  let html = `<div style="color:var(--d2-gold);margin-bottom:12px">${esc(L('ui_ss_gold_label','Gold:'))} ${sharedStashParsed.gold.toLocaleString()}</div>`;
-
   // Flatten physical tabs into a list of virtual tabs. pageType=1 (combined specialty
   // section) becomes 3 virtual sub-tabs (Gems/Runes/Materials) so the editor shows the
   // same split the game does in-game. pageType=0 tabs render as the normal numbered tabs.
@@ -12157,6 +11913,26 @@ function renderSharedStashTabs() {
     }
   }
 
+  // Search across every virtual tab's items. Location label = the vtab's own
+  // label, so the dropdown tells the user which tab (Gems / Runes / Tab 2 /
+  // etc.) holds each hit. Jumping expands the containing tab automatically.
+  const vtabByItemOffset = new Map();
+  for (const vt of vtabs) for (const it of vt.items) vtabByItemOffset.set(it.byteOffset, vt);
+  const ssSearchItems = vtabs.flatMap(vt => vt.items);
+  const ssHits = findItemSearchHits(
+    ssSearchItems,
+    _sharedStashSearchQuery,
+    (it) => (vtabByItemOffset.get(it.byteOffset) || {}).label || '',
+    (it) => (vtabByItemOffset.get(it.byteOffset) || {}).id || ''
+  );
+
+  let html = `<div style="color:var(--d2-gold);margin-bottom:12px">${esc(L('ui_ss_gold_label','Gold:'))} ${sharedStashParsed.gold.toLocaleString()}</div>`;
+  html += buildItemSearchBarHtml(
+    'sharedStashSearchInput', _sharedStashSearchQuery,
+    L('ui_search_placeholder','Search items by name or code…'),
+    'onSharedStashSearchInput', ssHits, 'sharedStashJumpToHit'
+  );
+
   for (const vt of vtabs) {
     const isOpen = sharedStashOpenTab === vt.id;
     const arrow = isOpen ? '\u25BC' : '\u25B6';
@@ -12177,7 +11953,27 @@ function renderSharedStashTabs() {
   }
 
   container.innerHTML = html;
+  _itemSearchHighlightOffset = null;
+  hydrateItemSprites(container);
 }
+
+// ── Shared-stash search handlers ──
+window.onSharedStashSearchInput = function(value) {
+  _sharedStashSearchQuery = (value || '').trim();
+  renderSharedStashTabs();
+  const inp = document.getElementById('sharedStashSearchInput');
+  if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+};
+// The jump handler takes the byteOffset and the vtab id that holds it
+// (supplied via the hit's `context` field) so we can auto-expand that tab
+// before scrolling to the cell — otherwise the item cell wouldn't be in the
+// DOM to scroll to when the tab is collapsed.
+window.sharedStashJumpToHit = function(byteOffset, vtabId) {
+  if (vtabId) sharedStashOpenTab = vtabId;
+  _itemSearchHighlightOffset = byteOffset;
+  renderSharedStashTabs();
+  _scrollSearchHitIntoView(byteOffset);
+};
 
 function buildSharedStashGrid(items, gridW, gridH, cellPx) {
   // Only show items actually stored on this stash page (parent=0, storage=5)
@@ -12227,7 +12023,10 @@ function buildSharedStashGrid(items, gridW, gridH, cellPx) {
 
         const displayName = abbreviateItemName(name, w, h);
         const visual = _itemCellVisualHtml(topItem, displayName, cls);
-        html += `<div class="inv-item ${borderCls}"
+        const stackHit = stack.some(({item:it}) => it.byteOffset === _itemSearchHighlightOffset);
+        const hitCls = stackHit ? ' search-hit' : '';
+        const hitAttr = stackHit ? ` data-search-hit-offset="${_itemSearchHighlightOffset}"` : '';
+        html += `<div class="inv-item ${borderCls}${hitCls}"${hitAttr}
           style="grid-column:${col+1}/span ${w};grid-row:${row+1}/span ${h};position:relative"
           onclick="showSharedStashItemDetail([${clickList}],this);pinTooltip()"
           onmouseenter="showSharedStashItemDetail([${clickList}],this,true)"
@@ -12270,6 +12069,102 @@ function _matchesSearchQuery(name, code, q) {
   if (name && name.toLowerCase().includes(ql)) return true;
   if (code && code.toLowerCase().includes(ql)) return true;
   return false;
+}
+
+// ── Generic item-search state (Inventory / Character Stash / Shared Stash) ──
+// The vault has its own pair of variables (above); these drive the equivalent
+// search bars on the character-side tabs. Each query is remembered per-tab so
+// switching tabs doesn't lose your filter.
+let _invSearchQuery         = '';
+let _stashSearchQuery       = '';
+let _sharedStashSearchQuery = '';
+// One-shot highlight: when a user clicks a result, we pulse the matching cell
+// in the grid. The grid renderer reads this and clears it after applying.
+let _itemSearchHighlightOffset = null;
+
+// Render the search bar + optional results dropdown used by the char-side
+// tabs. `onJumpFn` is the window-scoped function name (string) that jump-to
+// clicks should call — it receives (byteOffset, optional context).
+function buildItemSearchBarHtml(inputId, query, placeholder, onInputFnName, hits, onJumpFnName) {
+  const clearBtn = query
+    ? `<button class="btn" style="padding:4px 10px;font-size:10px" onclick="${onInputFnName}('')">${esc(L('ui_search_clear','Clear'))}</button>`
+    : '';
+  let results = '';
+  if (query) {
+    if (!hits.length) {
+      results = `<div style="margin-top:8px;padding:8px 12px;color:var(--d2-text-dim);font-size:11px;font-style:italic">
+        ${esc(L('ui_search_no_hits','No items match.'))}
+      </div>`;
+    } else {
+      const header = `<div style="margin-top:8px;padding:4px 10px;font-family:'Cinzel',serif;font-size:10px;letter-spacing:1px;color:var(--d2-gold);background:var(--d2-surface3);border:1px solid var(--d2-border);border-bottom:none;border-radius:2px 2px 0 0">
+        ${esc(Lfmt('ui_search_hits','{n} match{plural}',{ n: hits.length, plural: hits.length === 1 ? '' : 'es' }))}
+      </div>`;
+      const rows = hits.slice(0, 80).map(h => {
+        const args = h.context != null
+          ? `${h.offset}, ${JSON.stringify(h.context).replace(/"/g, '&quot;')}`
+          : `${h.offset}`;
+        return `<div class="vault-search-hit" onclick="${onJumpFnName}(${args})">
+          <span class="vault-search-hit-name" title="${esc(h.name)}">${esc(h.name)}</span>
+          <span class="vault-search-hit-loc">${esc(h.location || '')}</span>
+        </div>`;
+      }).join('');
+      const overflow = hits.length > 80
+        ? `<div style="padding:4px 10px;font-size:10px;color:var(--d2-text-dim);font-style:italic;border-top:1px solid var(--d2-border)">
+             ${esc(Lfmt('ui_search_more','…and {n} more. Narrow the search to see them.',{ n: hits.length - 80 }))}
+           </div>`
+        : '';
+      results = header + `<div class="vault-search-results">${rows}${overflow}</div>`;
+    }
+  }
+  return `<div style="margin-bottom:14px">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <input type="text" class="search-input" id="${inputId}"
+             value="${esc(query)}"
+             placeholder="${esc(placeholder)}"
+             oninput="${onInputFnName}(this.value)"
+             style="flex:1;min-width:240px">
+      ${clearBtn}
+    </div>
+    ${results}
+  </div>`;
+}
+
+// Resolve each item to a (name, code, location) tuple and filter to matches.
+// `locate(item)` returns a human-readable location label ("Inventory", "Cube",
+// "Tab 2", etc.). Returns an array of hits sorted alphabetically by name.
+// `contextFn(item)` is optional — attaches arbitrary extra data to the hit
+// (used by shared stash to carry the vtab id so jump-to can open the tab).
+function findItemSearchHits(items, query, locate, contextFn) {
+  if (!query) return [];
+  const q = query.toLowerCase();
+  const hits = [];
+  for (const it of (items || [])) {
+    if (!it) continue;
+    try { ensureItemProps(it); } catch (e) { _logCaught('itemSearch.ensureItemProps', e); continue; }
+    const disp = itemDisplayName(it);
+    const name = (disp && disp.name) || it.typeCode || '';
+    if (!_matchesSearchQuery(name, it.typeCode, q)) continue;
+    const hit = {
+      offset: it.byteOffset,
+      name,
+      code: it.typeCode,
+      location: locate ? locate(it) : '',
+    };
+    if (contextFn) hit.context = contextFn(it);
+    hits.push(hit);
+  }
+  hits.sort((a, b) => a.name.localeCompare(b.name));
+  return hits;
+}
+
+// After a jump-to-hit render, scroll the matching cell into view and let its
+// pulse animation run. Called from every tab's jump handler. Safe no-op if
+// the element isn't in the DOM yet.
+function _scrollSearchHitIntoView(byteOffset) {
+  setTimeout(() => {
+    const el = document.querySelector(`[data-search-hit-offset="${byteOffset}"]`);
+    if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 30);
 }
 
 // `name` is the stable internal identifier (used as Map key for grouping); never localize it.
