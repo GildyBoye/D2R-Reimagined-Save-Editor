@@ -285,14 +285,36 @@
     border: 1px solid var(--d2-border);
     padding: var(--cell-gap);
   }
-  .inv-cell-empty {
-    width: var(--cell); height: var(--cell);
-    background: rgba(12,10,6,0.95);
+  /* In-game style inventory/stash grid: thin gold/tan lines between dark
+     cells, no thick brown gutters. The grid wrapper's background colour
+     shows through the 1px gap between tracks, so we use that as the line
+     colour; the outer 1px border wraps the whole thing in the same tone.
+     Individual grid builders set grid-template and width inline — this
+     class owns the look-and-feel. */
+  .inv-grid-wrap {
+    background: #5a4628;
+    border: 1px solid #5a4628;
+    padding: 0;
+    position: relative;
+  }
+
+  /* Empty + item cells share the same dark base with a soft radial lift
+     at the centre — mimics the slight interior shine D2R uses to hint at
+     slot depth without being cartoony. Cells stretch to fill whatever grid
+     track the parent builds (29px in vault/shared, 50px in inv/stash), so
+     no fixed width here — letting the default grid stretch keeps the
+     wrapper's gold gap line at a constant 1px regardless of cell size. */
+  .inv-cell-empty,
+  .inv-item {
+    background:
+      radial-gradient(ellipse at center, #141109 0%, #0a0805 70%, #060503 100%);
+    box-shadow:
+      inset 1px 1px 0 rgba(120,90,40,0.12),
+      inset -1px -1px 0 rgba(0,0,0,0.45);
   }
 
   /* Multi-cell item — spans w columns × h rows */
   .inv-item {
-    background: rgba(12,10,6,0.95);
     border: 1px solid transparent;
     border-radius: 0;
     display: flex;
@@ -684,6 +706,23 @@
   .pd-label { font-size: 9px; font-family: 'Cinzel', serif; color: var(--d2-text-dim); letter-spacing: 0.5px; text-transform: uppercase; line-height: 1; margin-bottom: 2px; white-space: nowrap; }
   .pd-name  { font-size: 11px; font-family: 'Cinzel', serif; line-height: 1.2; word-break: break-word; }
   .pd-qual  { font-size: 9px; color: var(--d2-text-dim); margin-top: 1px; }
+  /* Sprite canvases on paperdoll slots size to fill the remaining vertical
+     space between the slot's label and quality tag, keeping aspect via
+     object-fit:contain. Without max-height the canvas would happily overflow
+     the slot since its native dimensions (e.g. 98×147) are much larger than
+     the slot itself. */
+  .pd-slot canvas.item-sprite {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    display: block;
+    margin: 2px auto;
+    pointer-events: none;
+  }
   .pd-spacer { background: transparent; border: none; cursor: default; }
   .quest-row.done { border-color: var(--d2-green); background: rgba(42,90,42,0.08); }
   .quest-check { width: 16px; height: 16px; accent-color: var(--d2-gold); cursor: pointer; flex-shrink: 0; }
@@ -3918,6 +3957,50 @@ function hasValidSaveMagic(buf) {
       && buf[2] === 0x55 && buf[3] === 0xAA;
 }
 
+// ── Editor-written file kind tags ───────────────────────────────────────
+// The editor stamps distinguishing magic into its vault and grail .d2i files
+// so a Shared Stash slot can't accidentally load a Vault file (and vice
+// versa). All three file types share the same 0x55AA55AA header, and the
+// game-written shared stash has no custom marker we can add — so instead of
+// tagging the shared stash, we tag OURS and let the loaders reject any file
+// wearing a different editor's tag.
+//
+//   Vault:  "VLT1" / "VLT2" at offset 0x40 (already exists, predates this
+//           system — see encodeVault / decodeVaultHeader).
+//   Grail:  "GRL1" at offset 0x14 — sits inside the standard d2i header's
+//           reserved-zeros region (0x14..0x3F), so it doesn't disturb the
+//           JM blocks at 0x40+ and is transparent to any external tool
+//           reading the file as a plain .d2i.
+//   Shared: untagged on disk so the file stays bit-compatible with D2R.
+//
+// `detectEditorFileKind` returns 'vault' / 'grail' / '' and is the
+// single source of truth for every cross-loader guard.
+const GRAIL_TAG_OFFSET = 0x14;
+function stampGrailMagic(buf) {
+  if (!buf || buf.length <= GRAIL_TAG_OFFSET + 3) return;
+  buf[GRAIL_TAG_OFFSET]     = 0x47; // 'G'
+  buf[GRAIL_TAG_OFFSET + 1] = 0x52; // 'R'
+  buf[GRAIL_TAG_OFFSET + 2] = 0x4C; // 'L'
+  buf[GRAIL_TAG_OFFSET + 3] = 0x31; // '1'
+}
+function hasGrailMagic(buf) {
+  return !!buf && buf.length > GRAIL_TAG_OFFSET + 3
+      && buf[GRAIL_TAG_OFFSET]     === 0x47
+      && buf[GRAIL_TAG_OFFSET + 1] === 0x52
+      && buf[GRAIL_TAG_OFFSET + 2] === 0x4C
+      && buf[GRAIL_TAG_OFFSET + 3] === 0x31;
+}
+function hasVaultMagic(buf) {
+  return !!buf && buf.length > 0x43
+      && buf[0x40] === 0x56 && buf[0x41] === 0x4C && buf[0x42] === 0x54
+      && (buf[0x43] === 0x31 || buf[0x43] === 0x32);
+}
+function detectEditorFileKind(buf) {
+  if (hasVaultMagic(buf)) return 'vault';
+  if (hasGrailMagic(buf)) return 'grail';
+  return '';
+}
+
 function handleFile(input) {
   const f = input.files[0];
   if (f) {
@@ -4604,8 +4687,28 @@ function _itemCellVisualHtml(item, displayName, cls) {
   return `<canvas class="item-sprite"
     data-sprite-file="${esc(file)}"
     data-fallback-name="${esc(displayName)}"
+    data-fallback-class="inv-item-name"
     data-name-cls="${esc(cls)}"
     style="width:100%;height:100%;display:block;image-rendering:auto"></canvas>`;
+}
+
+// Paperdoll equivalent of _itemCellVisualHtml — emits the sprite canvas
+// without hardcoded 100% dimensions so CSS flex sizing can fit it between
+// the slot's label (top) and quality tag (bottom). Falls back to a .pd-name
+// div when sprite mode is off or the item has no resolvable sprite asset.
+// The hydrate handler reads `data-fallback-class` to know which text-class
+// to use if the fetch fails, so a broken sprite on the paperdoll lands in
+// .pd-name (matching the rest of the slot) instead of .inv-item-name.
+function _paperdollVisualHtml(item, displayName, cls) {
+  const nameHtml = `<div class="pd-name ${cls}">${esc(displayName)}</div>`;
+  if (!_itemSpriteMode) return nameHtml;
+  const file = _spriteFileForItem(item);
+  if (!file) return nameHtml;
+  return `<canvas class="item-sprite"
+    data-sprite-file="${esc(file)}"
+    data-fallback-name="${esc(displayName)}"
+    data-fallback-class="pd-name"
+    data-name-cls="${esc(cls)}"></canvas>`;
 }
 
 // Scan a container for sprite-placeholder canvases and async-paint each.
@@ -4621,8 +4724,11 @@ function hydrateItemSprites(root) {
       if (!cv.isConnected) return;
       if (parsed) paintItemSprite(cv, parsed);
       else if (cv.dataset.fallbackName) {
-        // Fetch failed — swap to the name fallback in place.
-        cv.outerHTML = `<div class="inv-item-name ${cv.dataset.nameCls || ''}">${esc(cv.dataset.fallbackName)}</div>`;
+        // Fetch failed — swap to the name fallback in place. data-fallback-class
+        // picks the right text styling for the parent (inv-item-name for grid
+        // cells, pd-name for paperdoll slots).
+        const fallbackClass = cv.dataset.fallbackClass || 'inv-item-name';
+        cv.outerHTML = `<div class="${fallbackClass} ${cv.dataset.nameCls || ''}">${esc(cv.dataset.fallbackName)}</div>`;
       }
     });
   }
@@ -8680,7 +8786,7 @@ function buildInvGrid(items, gridW, gridH, cellPx=29, insertContext={}) {
   // gaps). Without it, `display:grid` as a block-level element fills the parent's full
   // width and the grid's background color bleeds into the empty space on the right —
   // visible on the Stash tab where the grid isn't nested inside a flex container.
-  let html = `<div class="inv-grid-wrap" id="${gridId}" data-grid-w="${gridW}" data-grid-h="${gridH}" data-cell-px="${cellPx}" data-storage="${insertContext.storage||0}" style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${gridH},${cellPx}px);gap:1px;background:rgba(60,46,22,0.4);border:1px solid rgba(60,46,22,0.5);padding:0;position:relative;width:max-content">`;
+  let html = `<div class="inv-grid-wrap" id="${gridId}" data-grid-w="${gridW}" data-grid-h="${gridH}" data-cell-px="${cellPx}" data-storage="${insertContext.storage||0}" style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${gridH},${cellPx}px);gap:1px;position:relative;width:max-content">`;
 
   const rendered = new Set();
   for (let row=0; row<gridH; row++) {
@@ -9198,7 +9304,7 @@ function renderInventory(c) {
         onmouseenter="showItemDetail(${item.byteOffset},this,true)"
         onmouseleave="closeTooltip(false)">
         <div class="pd-label">${label}</div>
-        <div class="pd-name ${cls}">${esc(name)}</div>
+        ${_paperdollVisualHtml(item, name, cls)}
         ${q&&q.code!=='normal'?`<div class="pd-qual ${cls}">${q.label}</div>`:''}
       </div>`;
     }
@@ -9326,7 +9432,7 @@ function renderInventory(c) {
           onclick="showItemDetail(${item.byteOffset},this);pinTooltip()"
           onmouseenter="showItemDetail(${item.byteOffset},this,true)"
           onmouseleave="closeTooltip(false)">
-          <div class="pd-name ${cls}" style="font-size:8px">${esc(name.slice(0,5))}</div>
+          ${_paperdollVisualHtml(item, name.slice(0,5), cls)}
         </div>`;
       } else if (isActive) {
         beltHtml+=`<div class="pd-slot empty" style="width:${BELT_CELL}px;height:${BELT_CELL}px;cursor:pointer"
@@ -11753,6 +11859,14 @@ window.loadSharedStash = function(file) {
       showPopup(L('ui_invalid_d2i','Invalid .d2i file — expected 0x55AA55AA signature.'));
       return;
     }
+    const kind = detectEditorFileKind(buf);
+    if (kind) {
+      const kindLabel = kind === 'vault' ? L('ui_tab_vault','Vault') : L('ui_tab_grail','Grail');
+      showPopup(Lfmt('ui_ss_wrong_kind',
+        'This looks like a {kind} file saved by the editor, not a Shared Stash. Load it from the {kind} tab instead.',
+        { kind: kindLabel }));
+      return;
+    }
     sharedStashData = buf;
     sharedStashName = file.name;
     sharedStashOpenTab = '';
@@ -11999,7 +12113,7 @@ function buildSharedStashGrid(items, gridW, gridH, cellPx) {
   // width:max-content matches buildInvGrid so the grid box hugs the tracks instead of
   // stretching to fill the tab's full width (which would paint empty background on the
   // right side of the grid — the same bug the personal stash had).
-  let html = `<div class="inv-grid-wrap" style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${gridH},${cellPx}px);gap:1px;background:rgba(60,46,22,0.4);border:1px solid rgba(60,46,22,0.5);padding:0;position:relative;width:max-content">`;
+  let html = `<div class="inv-grid-wrap" style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${gridH},${cellPx}px);gap:1px;position:relative;width:max-content">`;
 
   const rendered = new Set();
   for (let row=0; row<gridH; row++) {
@@ -12344,6 +12458,7 @@ function addItemsToGrail(itemEntries) {
     grailD2i = new Uint8Array(header.length + jm.length);
     grailD2i.set(header);
     grailD2i.set(jm, header.length);
+    stampGrailMagic(grailD2i);
     grailFileName = 'grail.d2i';
     parseGrailD2i();
   }
@@ -12450,6 +12565,11 @@ window.loadGrailFile = function(file) {
       showPopup(L('ui_invalid_d2i','Invalid .d2i file — expected 0x55AA55AA signature.'));
       return;
     }
+    if (hasVaultMagic(buf)) {
+      showPopup(L('ui_grail_wrong_kind_vault',
+        'This looks like a Vault .d2i, not a Grail file. Load it from the Vault tab instead.'));
+      return;
+    }
     grailD2i = buf;
     grailFileName = file.name;
     grailDirty = false;
@@ -12463,6 +12583,10 @@ window.loadGrailFile = function(file) {
 
 window.saveGrailFile = function() {
   if (!grailD2i) { showPopup(L('ui_grail_no_data','No grail data to save.')); return; }
+  // Belt-and-suspenders: any legacy grail .d2i that got loaded without our
+  // "GRL1" tag gets stamped on its way back out so the next load can reject
+  // it from the Shared Stash slot.
+  stampGrailMagic(grailD2i);
   const blob = new Blob([grailD2i], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -13165,7 +13289,7 @@ function buildGrailCategoryGrid(items, gridW, gridH, cellPx, pageIndex) {
         cellOccupied.add(`${p.x + dx},${p.y + dy}`);
   }
 
-  let html = `<div class="inv-grid-wrap" style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${displayH},${cellPx}px);gap:1px;background:rgba(60,46,22,0.4);border:1px solid rgba(60,46,22,0.5);padding:0;position:relative">`;
+  let html = `<div class="inv-grid-wrap" style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${displayH},${cellPx}px);gap:1px;position:relative;width:max-content">`;
 
   const rendered = new Set();
   for (let row = 0; row < displayH; row++) {
@@ -13194,8 +13318,13 @@ function buildGrailCategoryGrid(items, gridW, gridH, cellPx, pageIndex) {
           </div>`;
         } else {
           const slotName = abbreviateItemName(p.entry.name, p.w, p.h);
-          html += `<div style="grid-column:${col + 1}/span ${p.w};grid-row:${row + 1}/span ${p.h};background:rgba(40,40,40,0.6);display:flex;align-items:center;justify-content:center;border:1px solid rgba(60,60,60,0.4);opacity:0.35;cursor:default" title="${esc(p.entry.name)} (not found)">
-            <div style="font-size:8px;color:var(--d2-text-dim);text-align:center;line-height:1.1;word-break:break-word;padding:1px">${esc(slotName)}</div>
+          // Unfound grail slots: match the dark cell base used everywhere else
+          // (same radial + inset-bevel treatment as .inv-cell-empty). The old
+          // opacity:0.35 was letting the wrapper's gold/brown background bleed
+          // through ~65%, which made the whole grail page read as tan. We
+          // dim via text colour instead so the slot itself stays cleanly dark.
+          html += `<div style="grid-column:${col + 1}/span ${p.w};grid-row:${row + 1}/span ${p.h};background:radial-gradient(ellipse at center,#141109 0%,#0a0805 70%,#060503 100%);box-shadow:inset 1px 1px 0 rgba(120,90,40,0.06),inset -1px -1px 0 rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;cursor:default" title="${esc(p.entry.name)} (not found)">
+            <div style="font-size:8px;color:rgba(160,140,100,0.35);text-align:center;line-height:1.1;word-break:break-word;padding:1px">${esc(slotName)}</div>
           </div>`;
         }
       } else if (!cellOccupied.has(key)) {
@@ -13530,7 +13659,7 @@ function renderMercenary(c) {
       const q = ITEM_QUALITY[item.quality];
       return `<div class="pd-slot has-item ${borderCls}" style="${style}" onclick="showItemDetail(${item.byteOffset},this);pinTooltip()" title="${esc(label)}: ${esc(name)}">
         <div class="pd-label">${label}</div>
-        <div class="pd-name ${cls}">${esc(name)}</div>
+        ${_paperdollVisualHtml(item, name, cls)}
         ${q&&q.code!=='normal'?`<div class="pd-qual ${cls}">${q.label}</div>`:''}
       </div>`;
     }
@@ -14033,6 +14162,11 @@ window.loadVaultFile = function(file) {
         showPopup(L('ui_invalid_d2i','Invalid .d2i file — expected 0x55AA55AA signature.'));
         return;
       }
+      if (hasGrailMagic(buf)) {
+        showPopup(L('ui_vault_wrong_kind_grail',
+          'This looks like a Grail .d2i, not a Vault file. Load it from the Grail tab instead.'));
+        return;
+      }
       const hdr = decodeVaultHeader(buf);
       const items = parseVaultItems(buf, hdr.jmOffset, hdr.itemPageIds);
       vaultD2i       = buf;
@@ -14144,7 +14278,7 @@ function buildVaultPageGrid(pageId, cellPx) {
     ondragover="vaultDragOver(event)"
     ondrop="vaultDropOnVault(event)"
     ondragleave="vaultDragLeave(event)"
-    style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${gridH},${cellPx}px);gap:1px;background:rgba(60,46,22,0.4);border:1px solid rgba(60,46,22,0.5);padding:0;position:relative;width:max-content">`;
+    style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${gridH},${cellPx}px);gap:1px;position:relative;width:max-content">`;
   const rendered = new Set();
   for (let row = 0; row < gridH; row++) {
     for (let col = 0; col < gridW; col++) {
@@ -14229,7 +14363,7 @@ function buildVaultQuadGrid(quad, cellPx) {
     ondragover="vaultDragOver(event)"
     ondrop="vaultDropOnVault(event)"
     ondragleave="vaultDragLeave(event)"
-    style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${gridH},${cellPx}px);gap:1px;background:rgba(60,46,22,0.4);border:1px solid rgba(60,46,22,0.5);padding:0;position:relative;width:max-content">`;
+    style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${gridH},${cellPx}px);gap:1px;position:relative;width:max-content">`;
   const rendered = new Set();
   for (let row = 0; row < gridH; row++) {
     for (let col = 0; col < gridW; col++) {
@@ -14401,7 +14535,7 @@ function buildVaultSourceGrid(items, gridW, gridH, cellPx, sourceKind) {
         occupied.add(`${x + dx},${y + dy}`);
   }
 
-  let html = `<div class="inv-grid-wrap vault-source-drop" data-grid-w="${gridW}" data-grid-h="${gridH}" data-cell-px="${cellPx}" ${dropAttrs} ondragleave="vaultDragLeave(event)" style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${gridH},${cellPx}px);gap:1px;background:rgba(60,46,22,0.4);border:1px solid rgba(60,46,22,0.5);padding:0;position:relative;width:max-content">`;
+  let html = `<div class="inv-grid-wrap vault-source-drop" data-grid-w="${gridW}" data-grid-h="${gridH}" data-cell-px="${cellPx}" ${dropAttrs} ondragleave="vaultDragLeave(event)" style="display:grid;grid-template-columns:repeat(${gridW},${cellPx}px);grid-template-rows:repeat(${gridH},${cellPx}px);gap:1px;position:relative;width:max-content">`;
   const rendered = new Set();
   for (let row = 0; row < gridH; row++) {
     for (let col = 0; col < gridW; col++) {
