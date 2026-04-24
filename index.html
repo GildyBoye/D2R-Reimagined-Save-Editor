@@ -12873,9 +12873,9 @@ function renderGrail(c) {
       <span style="color:var(--d2-text-dim);font-size:12px">${grailD2i ? esc(grailFileName) : esc(L('ui_grail_no_loaded','No grail loaded'))}</span>
     </div>
     <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-      <button class="btn" onclick="saveGrailFile()" ${grailD2i ? '' : 'disabled'}>${esc(L('ui_grail_save_btn','Save Grail .d2i'))}</button>
-      <button class="btn" data-cloud-btn onclick="cloudUploadGrail()" ${grailD2i ? '' : 'disabled'} style="${_cloudUser ? '' : 'display:none'}">☁ ${esc(L('ui_grail_cloud_upload','Upload to Cloud'))}</button>
-      <button class="btn" data-cloud-btn onclick="cloudLoadGrail()" style="${_cloudUser ? '' : 'display:none'}">☁ ${esc(L('ui_grail_cloud_load','Load from Cloud'))}</button>
+      <button class="btn btn-primary" onclick="saveGrailFile()" ${grailD2i ? '' : 'disabled'}>${esc(L('ui_grail_save_btn','Save Grail .d2i'))}</button>
+      <button class="btn btn-primary" data-cloud-btn onclick="cloudUploadGrail()" ${grailD2i ? '' : 'disabled'} style="${_cloudUser ? '' : 'display:none'}">☁ ${esc(L('ui_grail_cloud_upload','Upload to Cloud'))}</button>
+      <button class="btn btn-primary" data-cloud-btn onclick="cloudLoadGrail()" style="${_cloudUser ? '' : 'display:none'}">☁ ${esc(L('ui_grail_cloud_load','Load from Cloud'))}</button>
     </div>
 
     <!-- ── Search input ── -->
@@ -15364,14 +15364,14 @@ function renderVault(c) {
   c.innerHTML = `
     <div style="padding:16px">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
-        <button type="button" class="btn" onclick="openAuxFileForKind('vault')">
+        <button type="button" class="btn btn-primary" onclick="openAuxFileForKind('vault')">
           ${esc(L('ui_vault_load_btn','Load Vault .d2i'))}
         </button>
         <input type="file" accept=".d2i" id="vaultFileInput" style="display:none" onchange="loadVaultFile(this.files[0])">
         <span style="color:var(--d2-text-dim);font-size:12px;flex:1">${fileInfo}</span>
-        <button class="btn" data-cloud-btn onclick="cloudLoadVault()" style="${_cloudUser ? '' : 'display:none'}">☁ ${esc(L('ui_vault_cloud_load','Load from Cloud'))}</button>
-        <button class="btn" data-cloud-btn onclick="cloudUploadVault()" ${loaded ? '' : 'disabled'} style="${_cloudUser ? '' : 'display:none'}">☁ ${esc(L('ui_vault_cloud_upload','Upload to Cloud'))}</button>
-        <button class="btn" onclick="saveVaultFile()" ${loaded ? '' : 'disabled'}>
+        <button class="btn btn-primary" data-cloud-btn onclick="cloudLoadVault()" style="${_cloudUser ? '' : 'display:none'}">☁ ${esc(L('ui_vault_cloud_load','Load from Cloud'))}</button>
+        <button class="btn btn-primary" data-cloud-btn onclick="cloudUploadVault()" ${loaded ? '' : 'disabled'} style="${_cloudUser ? '' : 'display:none'}">☁ ${esc(L('ui_vault_cloud_upload','Upload to Cloud'))}</button>
+        <button class="btn btn-primary" onclick="saveVaultFile()" ${loaded ? '' : 'disabled'}>
           ${esc(L('ui_vault_save_btn','Save Vault .d2i'))}
         </button>
       </div>
@@ -15415,14 +15415,14 @@ function renderVault(c) {
         <div style="flex:0 0 auto;margin-left:auto">
           <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
             <span style="font-family:'Cinzel',serif;color:var(--d2-gold);font-size:13px;letter-spacing:1px">${esc(L('ui_vault_vault_label','VAULT'))}</span>
-            <button class="btn" onclick="vaultGoToPrev()" ${_vaultPrevPage() !== null ? '' : 'disabled'}>◄</button>
+            <button class="btn btn-primary" onclick="vaultGoToPrev()" ${_vaultPrevPage() !== null ? '' : 'disabled'}>◄</button>
             <div style="min-width:180px;text-align:center;font-family:'Cinzel',serif;color:var(--d2-gold)">
               ${pageName} <span style="color:#888;font-size:11px">${inQuad ? esc(L('ui_vault_quad_label','(quad · 4 pages)')) : `(${vaultActivePage + 1}/${VAULT_PAGE_COUNT})`}</span>
             </div>
-            <button class="btn" onclick="vaultGoToNext()" ${_vaultNextPage() !== null ? '' : 'disabled'}>►</button>
+            <button class="btn btn-primary" onclick="vaultGoToNext()" ${_vaultNextPage() !== null ? '' : 'disabled'}>►</button>
             <input type="number" min="1" max="${VAULT_PAGE_COUNT}" value="${vaultActivePage + 1}"
                    id="vaultPageInput" style="width:60px" onchange="vaultGoToPage(this.value - 1)">
-            <button class="btn" onclick="vaultRenamePage()">${esc(L('ui_vault_rename_btn','Rename'))}</button>
+            <button class="btn btn-primary" onclick="vaultRenamePage()">${esc(L('ui_vault_rename_btn','Rename'))}</button>
             <!-- Fixed-width so growing numbers don't shift the page-nav row.
                  Label column is flex:1, value column is right-aligned. The
                  Merge/Unmerge button sits directly below so quad controls
@@ -15438,12 +15438,12 @@ function renderVault(c) {
                 <span style="color:var(--d2-text)">${vaultItems.length}</span>
               </div>
               ${inQuad
-                ? `<button class="btn" onclick="vaultUnmergeQuad(${quadInfo.quadIndex})"
+                ? `<button class="btn btn-primary" onclick="vaultUnmergeQuad(${quadInfo.quadIndex})"
                            style="width:100%;font-size:10px;letter-spacing:1px;padding:4px 0;
                                   border-color:var(--d2-red);color:#d46060">
                      ${esc(L('ui_vault_unmerge_btn','Unmerge'))}
                    </button>`
-                : `<button class="btn" onclick="openVaultQuadModal()" ${loaded ? '' : 'disabled'}
+                : `<button class="btn btn-primary" onclick="openVaultQuadModal()" ${loaded ? '' : 'disabled'}
                            title="${esc(L('ui_vault_quad_tooltip','Merge 4 consecutive pages into one 32×26 quad tab'))}"
                            style="width:100%;font-size:10px;letter-spacing:1px;padding:4px 0">
                      ${esc(L('ui_vault_quad_btn','Merge to Quad'))}
