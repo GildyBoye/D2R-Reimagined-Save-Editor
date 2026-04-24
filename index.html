@@ -6694,11 +6694,22 @@ window.openAdvancedOptions = function() {
        </div>`;
 
   // ── Item sprites toggle (independent of auto-save) ──
+  // Same "load a character first" gate as auto-save — there's nothing to
+  // render sprites for without a loaded save, and the toggle visibly doing
+  // nothing is worse UX than a clear "load first, then enable" hint.
+  // Turning OFF is always allowed (covers the "was on from a previous
+  // session, reloaded with no char" edge case).
+  const canFlipSprite = hasChar || _itemSpriteMode;
+  const showSpriteHint = !hasChar && !_itemSpriteMode;
+  const spriteNeedCharMsg = L('ui_sprites_need_char','Load a character save first, then return here to enable item sprites.');
   const spriteToggle = `
-    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;
+    <label style="display:flex;align-items:center;gap:10px;
+                  cursor:${canFlipSprite ? 'pointer' : 'not-allowed'};
+                  opacity:${canFlipSprite ? '1' : '0.55'};
                   padding:10px 12px;margin-top:10px;border:1px solid var(--d2-border);
                   border-radius:2px;background:var(--d2-surface2)">
       <input type="checkbox" id="itemSpriteToggle" ${_itemSpriteMode ? 'checked' : ''}
+             ${canFlipSprite ? '' : 'disabled'}
              onchange="onItemSpriteToggleChange(this)">
       <span style="flex:1">
         <div style="color:var(--d2-gold);font-family:'Cinzel',serif;
@@ -6708,6 +6719,7 @@ window.openAdvancedOptions = function() {
         <div style="color:var(--d2-text-dim);font-size:11px">
           ${esc(L('ui_adv_sprites_desc','Render item cells using the game\'s .sprite files from base/sprites/ instead of abbreviated names. Missing files fall back to the name.'))}
         </div>
+        ${showSpriteHint ? `<div style="color:#c8a030;font-size:10px;margin-top:6px;font-style:italic">${esc(spriteNeedCharMsg)}</div>` : ''}
       </span>
     </label>`;
 
@@ -15892,23 +15904,18 @@ function _updateCloudUi() {
   });
 }
 
-// Auto-init the SDK on page load in two cases:
-//   1. There's already a stored session (returning signed-in user).
-//   2. The URL looks like an OAuth callback (has #access_token=… from
-//      implicit flow or ?code=… from PKCE flow). Without this check we
-//      stall the returning user — the token/code just sits in the URL
-//      and nothing processes it until they click Sign in a second time.
-// Anonymous visitors with neither condition pay zero network cost.
+// Always init the Supabase client on page load. The SDK is ~20 KB gzipped
+// from the jsDelivr CDN and its createClient() is what processes the OAuth
+// return hash/query string. Previously I gated this behind URL-sniffing
+// heuristics to save that 20 KB on anonymous visits, but the heuristics
+// kept racing with real OAuth returns — the fresh redirect hash would
+// sometimes not be detected until the user clicked Sign in a second time,
+// which is exactly when everything finally worked. Simpler to always init:
+// signed-in users get session restore, OAuth returners get their session
+// picked up from the URL, anon users pay 20 KB. Worth it.
 window.addEventListener('DOMContentLoaded', () => {
   _ensureCloudAuthWidget();
-  const ref = (CLOUD_SUPABASE_URL.match(/https:\/\/([^.]+)/) || [])[1];
-  const hasLocalToken = ref && localStorage.getItem('sb-' + ref + '-auth-token');
-  const looksLikeOAuthReturn =
-    /[#&](access_token|refresh_token|error)=/i.test(window.location.hash) ||
-    /[?&](code|error_description)=/i.test(window.location.search);
-  if (hasLocalToken || looksLikeOAuthReturn) {
-    _cloudClient().catch(err => _logCaught('cloudClient.autoRestore', err));
-  }
+  _cloudClient().catch(err => _logCaught('cloudClient.init', err));
 });
 
 // ═══════════════════════════════════════════════════════════
