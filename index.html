@@ -12734,18 +12734,16 @@ function renderGrail(c) {
 
   let html = `<div style="padding:20px;max-width:800px;margin:0 auto">
     <h2 style="color:var(--d2-gold);font-family:'Cinzel',serif;margin:0 0 16px">${esc(L('ui_grail_heading','Holy Grail'))}</h2>
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap">
-      <button type="button" class="btn btn-primary" style="margin:0" onclick="openAuxFileForKind('grail')">
-        ${esc(L('ui_grail_load_btn','Load Grail .d2i'))}
-      </button>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="openAuxFileForKind('grail')">${esc(L('ui_grail_load_btn','Load Grail .d2i'))}</button>
       <input type="file" accept=".d2i" id="grailFileInput" style="display:none" onchange="loadGrailFile(this.files[0])">
       <button class="btn btn-primary" onclick="moveItemsToGrail()">${esc(L('ui_grail_copy_items_btn','Copy Items to Grail'))}</button>
       <span style="color:var(--d2-text-dim);font-size:12px">${grailD2i ? esc(grailFileName) : esc(L('ui_grail_no_loaded','No grail loaded'))}</span>
     </div>
-    <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
       <button class="btn btn-primary" onclick="saveGrailFile()" ${grailD2i ? '' : 'disabled'}>${esc(L('ui_grail_save_btn','Save Grail .d2i'))}</button>
-      <button class="btn btn-primary" data-cloud-btn onclick="cloudUploadGrail()" ${grailD2i ? '' : 'disabled'} style="${_cloudUser ? '' : 'display:none'}">☁ ${esc(L('ui_grail_cloud_upload','Upload to Cloud'))}</button>
-      <button class="btn btn-primary" data-cloud-btn onclick="cloudLoadGrail()" style="${_cloudUser ? '' : 'display:none'}">☁ ${esc(L('ui_grail_cloud_load','Load from Cloud'))}</button>
+      <button class="btn btn-primary" data-cloud-btn onclick="cloudUploadGrail()" ${grailD2i ? '' : 'disabled'} style="margin-left:auto${_cloudUser ? '' : ';display:none'}">☁ ${esc(L('ui_grail_cloud_upload','Upload to Cloud'))}</button>
+      <button class="btn btn-primary" data-cloud-btn onclick="cloudLoadGrail()" ${_cloudUser ? '' : 'style="display:none"'}>☁ ${esc(L('ui_grail_cloud_load','Load from Cloud'))}</button>
     </div>
 
     <!-- ── Search input ── -->
@@ -15225,17 +15223,15 @@ function renderVault(c) {
 
   c.innerHTML = `
     <div style="padding:16px">
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
-        <button type="button" class="btn btn-primary" onclick="openAuxFileForKind('vault')">
-          ${esc(L('ui_vault_load_btn','Load Vault .d2i'))}
-        </button>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="openAuxFileForKind('vault')">${esc(L('ui_vault_load_btn','Load Vault .d2i'))}</button>
         <input type="file" accept=".d2i" id="vaultFileInput" style="display:none" onchange="loadVaultFile(this.files[0])">
         <span style="color:var(--d2-text-dim);font-size:12px;flex:1">${fileInfo}</span>
-        <button class="btn btn-primary" data-cloud-btn onclick="cloudLoadVault()" style="${_cloudUser ? '' : 'display:none'}">☁ ${esc(L('ui_vault_cloud_load','Load from Cloud'))}</button>
-        <button class="btn btn-primary" data-cloud-btn onclick="cloudUploadVault()" ${loaded ? '' : 'disabled'} style="${_cloudUser ? '' : 'display:none'}">☁ ${esc(L('ui_vault_cloud_upload','Upload to Cloud'))}</button>
-        <button class="btn btn-primary" onclick="saveVaultFile()" ${loaded ? '' : 'disabled'}>
-          ${esc(L('ui_vault_save_btn','Save Vault .d2i'))}
-        </button>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="saveVaultFile()" ${loaded ? '' : 'disabled'}>${esc(L('ui_vault_save_btn','Save Vault .d2i'))}</button>
+        <button class="btn btn-primary" data-cloud-btn onclick="cloudUploadVault()" ${loaded ? '' : 'disabled'} style="margin-left:auto${_cloudUser ? '' : ';display:none'}">☁ ${esc(L('ui_vault_cloud_upload','Upload to Cloud'))}</button>
+        <button class="btn btn-primary" data-cloud-btn onclick="cloudLoadVault()" ${_cloudUser ? '' : 'style="display:none"'}>☁ ${esc(L('ui_vault_cloud_load','Load from Cloud'))}</button>
       </div>
 
       <!-- ── Vault search — scans every item on every page by display name + type code ── -->
@@ -15461,6 +15457,10 @@ function _vaultSuggestQuadStart() {
 
 // Merge modal: starting page (1-indexed) + name.
 window.openVaultQuadModal = function() {
+  if (!vaultItems || vaultItems.length === 0) {
+    showPopup(L('ui_vault_quad_needs_items','Add at least one item to the vault before merging pages into a quad.'));
+    return;
+  }
   const suggestedStart = _vaultSuggestQuadStart();
   if (suggestedStart < 0) {
     showPopup(L('ui_vault_quad_no_room','No 4 consecutive free pages available. Unmerge a quad first or delete other quads.'));
@@ -15635,10 +15635,49 @@ async function cloudSignOut() {
 }
 window.cloudSignOut = cloudSignOut;
 
+async function _cloudExistingSave(kind) {
+  const s = await _cloudClient();
+  if (!_cloudUser) return null;
+  const { data, error } = await s.from('saves')
+    .select('size_bytes, meta, updated_at')
+    .eq('user_id', _cloudUser.id)
+    .eq('kind', kind)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data;
+}
+
+function _cloudConfirmOverwrite(kind, existing) {
+  return new Promise(resolve => {
+    let done = false;
+    const resolveOnce = (v) => { if (!done) { done = true; resolve(v); } };
+    const size = existing.size_bytes ? (existing.size_bytes / 1024).toFixed(1) + ' KB' : '?';
+    const when = existing.updated_at ? new Date(existing.updated_at).toLocaleString() : '';
+    const details = when ? `${size}, last updated ${when}` : size;
+    const kindLabel = kind === 'grail'
+      ? L('ui_tab_grail','Grail')
+      : kind === 'vault' ? L('ui_tab_vault','Vault') : kind;
+    showDialog({
+      title: Lfmt('ui_cloud_overwrite_title','Overwrite cloud {kind}?', { kind: kindLabel }),
+      titleTone: 'red',
+      message: Lfmt('ui_cloud_overwrite_msg',
+        'You already have a {kind} saved in the cloud ({details}). Uploading will replace it — this cannot be undone.',
+        { kind: kindLabel, details }),
+      dismissOnBackdrop: false,
+      buttons: [
+        { label: L('ui_cloud_overwrite_ok','Overwrite'), tone: 'danger',  onClick: () => resolveOnce(true) },
+        { label: L('ui_cancel','Cancel'),                 tone: 'ghost',   onClick: () => resolveOnce(false) },
+      ],
+    });
+  });
+}
+
 async function _cloudUploadAuxFile(kind, bytes, name, meta) {
   if (!bytes || !bytes.length) { showPopup(`No ${kind} data to upload.`); return; }
   const s = await _cloudClient();
   if (!_cloudUser) { showPopup('Sign in first.'); return; }
+  const existing = await _cloudExistingSave(kind);
+  if (existing && !(await _cloudConfirmOverwrite(kind, existing))) return;
   const path = `${_cloudUser.id}/${kind}.bin`;
   const { error: upErr } = await s.storage
     .from('saves')
