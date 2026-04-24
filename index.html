@@ -12732,6 +12732,8 @@ function renderGrail(c) {
     setGroups = filteredSg;
   }
 
+  const grailHasItems = !!grailD2i && (grailParsed?.tabs || []).some(t => (t.items || []).length > 0);
+
   let html = `<div style="padding:20px;max-width:800px;margin:0 auto">
     <h2 style="color:var(--d2-gold);font-family:'Cinzel',serif;margin:0 0 16px">${esc(L('ui_grail_heading','Holy Grail'))}</h2>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
@@ -12742,7 +12744,7 @@ function renderGrail(c) {
     </div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
       <button class="btn btn-primary" onclick="saveGrailFile()" ${grailD2i ? '' : 'disabled'}>${esc(L('ui_grail_save_btn','Save Grail .d2i'))}</button>
-      <button class="btn btn-primary" data-cloud-btn onclick="cloudUploadGrail()" ${grailD2i ? '' : 'disabled'} style="margin-left:auto${_cloudUser ? '' : ';display:none'}">☁ ${esc(L('ui_grail_cloud_upload','Upload to Cloud'))}</button>
+      <button class="btn btn-primary" data-cloud-btn onclick="cloudUploadGrail()" ${grailHasItems ? '' : 'disabled'} style="margin-left:auto${_cloudUser ? '' : ';display:none'}" title="${esc(grailHasItems ? L('ui_grail_cloud_upload','Upload to Cloud') : L('ui_cloud_upload_empty_grail','Add at least one item to the grail before uploading.'))}">☁ ${esc(L('ui_grail_cloud_upload','Upload to Cloud'))}</button>
       <button class="btn btn-primary" data-cloud-btn onclick="cloudLoadGrail()" ${_cloudUser ? '' : 'style="display:none"'}>☁ ${esc(L('ui_grail_cloud_load','Load from Cloud'))}</button>
     </div>
 
@@ -15230,7 +15232,7 @@ function renderVault(c) {
       </div>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
         <button class="btn btn-primary" onclick="saveVaultFile()" ${loaded ? '' : 'disabled'}>${esc(L('ui_vault_save_btn','Save Vault .d2i'))}</button>
-        <button class="btn btn-primary" data-cloud-btn onclick="cloudUploadVault()" ${loaded ? '' : 'disabled'} style="margin-left:auto${_cloudUser ? '' : ';display:none'}">☁ ${esc(L('ui_vault_cloud_upload','Upload to Cloud'))}</button>
+        <button class="btn btn-primary" data-cloud-btn onclick="cloudUploadVault()" ${vaultItems.length > 0 ? '' : 'disabled'} style="margin-left:auto${_cloudUser ? '' : ';display:none'}" title="${esc(vaultItems.length > 0 ? L('ui_vault_cloud_upload','Upload to Cloud') : L('ui_cloud_upload_empty_vault','Add at least one item to the vault before uploading.'))}">☁ ${esc(L('ui_vault_cloud_upload','Upload to Cloud'))}</button>
         <button class="btn btn-primary" data-cloud-btn onclick="cloudLoadVault()" ${_cloudUser ? '' : 'style="display:none"'}>☁ ${esc(L('ui_vault_cloud_load','Load from Cloud'))}</button>
       </div>
 
@@ -15716,6 +15718,7 @@ async function cloudUploadGrail() {
   if (!grailD2i) { showPopup('Load a grail .d2i first.'); return; }
   const tabCount  = (grailParsed?.tabs?.length) || 0;
   const itemCount = (grailParsed?.tabs || []).reduce((sum, t) => sum + t.items.length, 0);
+  if (itemCount === 0) { showPopup(L('ui_cloud_upload_empty_grail','Add at least one item to the grail before uploading.')); return; }
   await _cloudUploadAuxFile('grail', grailD2i, grailFileName || 'grail.d2i', {
     tabCount, itemCount,
   });
@@ -15733,6 +15736,7 @@ window.cloudLoadGrail = cloudLoadGrail;
 
 async function cloudUploadVault() {
   if (!vaultD2i) { showPopup('Load a vault .d2i first.'); return; }
+  if (vaultItems.length === 0) { showPopup(L('ui_cloud_upload_empty_vault','Add at least one item to the vault before uploading.')); return; }
   await _cloudUploadAuxFile('vault', vaultD2i, vaultFileName || 'vault.d2i', {
     itemCount: vaultItems.length,
     pageNameCount: Object.keys(vaultPageNames || {}).length,
