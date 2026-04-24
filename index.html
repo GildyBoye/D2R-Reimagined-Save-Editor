@@ -15892,12 +15892,21 @@ function _updateCloudUi() {
   });
 }
 
-// Auto-restore existing session on page load. Only touches the SDK if a
-// token is already in localStorage — anonymous users pay zero network cost.
+// Auto-init the SDK on page load in two cases:
+//   1. There's already a stored session (returning signed-in user).
+//   2. The URL looks like an OAuth callback (has #access_token=… from
+//      implicit flow or ?code=… from PKCE flow). Without this check we
+//      stall the returning user — the token/code just sits in the URL
+//      and nothing processes it until they click Sign in a second time.
+// Anonymous visitors with neither condition pay zero network cost.
 window.addEventListener('DOMContentLoaded', () => {
   _ensureCloudAuthWidget();
   const ref = (CLOUD_SUPABASE_URL.match(/https:\/\/([^.]+)/) || [])[1];
-  if (ref && localStorage.getItem('sb-' + ref + '-auth-token')) {
+  const hasLocalToken = ref && localStorage.getItem('sb-' + ref + '-auth-token');
+  const looksLikeOAuthReturn =
+    /[#&](access_token|refresh_token|error)=/i.test(window.location.hash) ||
+    /[?&](code|error_description)=/i.test(window.location.search);
+  if (hasLocalToken || looksLikeOAuthReturn) {
     _cloudClient().catch(err => _logCaught('cloudClient.autoRestore', err));
   }
 });
