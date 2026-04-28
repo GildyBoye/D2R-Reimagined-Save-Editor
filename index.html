@@ -8367,12 +8367,15 @@ function renderSkills(c) {
 }
 
 window.applySkills = function() {
-  // Write skill levels — clamp to valid skill level range [0, 20] per D2 convention.
-  // Per-skill inputs have HTML min/max but those aren't re-enforced on commit.
+  // Clamp matches the per-input max=${skillMax} above: 25 is the Reimagined
+  // hard cap, but if a loaded save already had a higher value (legacy / mod
+  // edge cases) we don't trample it. HTML min/max on the input isn't
+  // re-enforced on commit, so the same clamp has to live here.
   document.querySelectorAll('.skill-cell-input[data-skill-idx]').forEach(inp => {
     const idx = parseInt(inp.dataset.skillIdx || '-1', 10);
     if (idx < 0 || idx >= 30) return;
-    const lvl = Math.max(0, Math.min(20, parseInt(inp.value || '0', 10) || 0));
+    const cap = Math.max(25, _skillsOnLoad[idx] || 0);
+    const lvl = Math.max(0, Math.min(cap, parseInt(inp.value || '0', 10) || 0));
     commitSkill(idx, lvl);
     inp.classList.remove('modified');
   });
@@ -10926,6 +10929,9 @@ const _FORCE_SHOW_BASE_CODES = new Set([
   'pk1','pk2','pk3',
   'box','bks',
   'hst','qf2',
+  // Prime evil organs (Pandemonium quest line — drop from Uber Tristram bosses,
+  // spawnable=0 in misc.txt so otherwise excluded from the insert modal)
+  'dhn','bey','mbr',
   // D2RR-specific potions (spawnable=0 in misc.txt — monster drops / vendor items only;
   // force-showing so the user can insert them for testing and belt fills)
   'hpo','hpf','mpo','mpf','rvs','rvl','vps',
