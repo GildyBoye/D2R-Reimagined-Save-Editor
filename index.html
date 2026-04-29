@@ -10705,16 +10705,21 @@ window.startCopyItem = function(byteOffset) {
   const item = (parsedChar.items||[]).find(it => it.byteOffset === byteOffset);
   if (!item || !workBytes) return;
 
-  const allItems = parsedChar.items || [];
-  // Find corpse JM as section boundary
+  // Length-bounding stays inside the item's own section (player vs merc) —
+  // mixing them lets a section-trailing item's slice run past the section's
+  // JM marker into the next section's bytes.
+  const isMerc = !!item.isMerc;
+  const sectionItems = (parsedChar.items || []).filter(x => !!x.isMerc === isMerc);
   let sectionEnd = 0;
-  const jmOff = parsedChar.itemsOffset;
-  if (jmOff >= 0) {
-    for (let i = jmOff + 4; i < workBytes.length - 1; i++) {
-      if (workBytes[i] === 0x4a && workBytes[i + 1] === 0x4d) { sectionEnd = i; break; }
+  if (!isMerc) {
+    const jmOff = parsedChar.itemsOffset;
+    if (jmOff >= 0) {
+      for (let i = jmOff + 4; i < workBytes.length - 1; i++) {
+        if (workBytes[i] === 0x4a && workBytes[i + 1] === 0x4d) { sectionEnd = i; break; }
+      }
     }
   }
-  const len = getItemBinaryLength(workBytes, byteOffset, allItems, sectionEnd);
+  const len = getItemBinaryLength(workBytes, byteOffset, sectionItems, sectionEnd);
   const itemBytes = new Uint8Array(workBytes.slice(byteOffset, byteOffset + len));
   const { w, h } = getItemSize(item.typeCode);
   const { name } = itemDisplayName(item);
@@ -12641,14 +12646,26 @@ window.executeGrailTransfer = function(removeOriginals) {
 
   for (const { item, key, source } of eligible) {
     const sourceBuf = source === 'shared' ? sharedStashData : workBytes;
-    const sourceItems = source === 'shared'
-      ? (sharedStashParsed ? sharedStashParsed.tabs.flatMap(t => t.items) : [])
-      : (parsedChar.items || []);
+    // Length-bounding must stay inside the item's own section. Char items get
+    // filtered to player-only or merc-only (matching the source). Shared stash
+    // items get filtered to their own tab. Without these filters, tab- or
+    // section-trailing items get sliced past their actual end byte and the
+    // copy lands in grail with a JM marker / next-section bytes embedded.
+    let sourceItems;
+    if (source === 'shared') {
+      const ownerTab = sharedStashParsed
+        ? sharedStashParsed.tabs.find(t => t.items.includes(item))
+        : null;
+      sourceItems = ownerTab ? ownerTab.items : [];
+    } else {
+      const isMerc = !!item.isMerc;
+      sourceItems = (parsedChar.items || []).filter(x => !!x.isMerc === isMerc);
+    }
 
-    // Determine section end boundary for accurate item length
+    // Section end: corpse JM for char player items; rest fall through to the
+    // JM scan inside getItemBinaryLength (per-tab/per-section).
     let sectionEnd = 0;
-    if (source !== 'shared' && parsedChar) {
-      // For character items, find the corpse JM as boundary
+    if (source !== 'shared' && parsedChar && !item.isMerc) {
       const jmOff = parsedChar.itemsOffset;
       if (jmOff >= 0) {
         for (let i = jmOff + 4; i < sourceBuf.length - 1; i++) {
@@ -12911,31 +12928,39 @@ window.removeGrailItem = function(byteOffset) {
   const { name } = itemDisplayName(item);
 
   showConfirm(`${L('ui_confirm_remove_grail_prompt','Are you sure you want to remove this item?')}\n\n${name}`, function() {
-    const grailAllItems = grailParsed.tabs.flatMap(t => t.items);
-    const len = getItemBinaryLength(grailD2i, byteOffset, grailAllItems);
-
-    // Find which tab this item belongs to
     let ownerTab = null;
     for (const tab of grailParsed.tabs) {
       if (tab.items.some(it => it.byteOffset === byteOffset)) { ownerTab = tab; break; }
     }
     if (!ownerTab) return;
 
-    // Remove the item bytes from the d2i
-    const newD2i = new Uint8Array(grailD2i.length - len);
-    newD2i.set(grailD2i.slice(0, byteOffset));
-    newD2i.set(grailD2i.slice(byteOffset + len), byteOffset);
+    // Collect the parent + any socketed children (parent=6 items the cascade
+    // walker finds right after this one). All of them must be removed in a
+    // single contiguous slice; without this, removing a socketed unique would
+    // leave its gems orphaned in the file, parsing back as junk on reload.
+    const children = findSocketedChildren(grailD2i, ownerTab.items, item);
+    const removalOffsets = [byteOffset, ...children.map(c => c.byteOffset)].sort((a, b) => a - b);
+    const startOff = removalOffsets[0];
+    // Length-bounding stays inside this tab only — flat cross-tab item lists
+    // would over-extend into the next tab's JM marker for tab-trailing items.
+    const lastOff = removalOffsets[removalOffsets.length - 1];
+    const lastLen = getItemBinaryLength(grailD2i, lastOff, ownerTab.items);
+    const totalLen = (lastOff - startOff) + lastLen;
+
+    const newD2i = new Uint8Array(grailD2i.length - totalLen);
+    newD2i.set(grailD2i.slice(0, startOff));
+    newD2i.set(grailD2i.slice(startOff + totalLen), startOff);
     grailD2i = newD2i;
 
-    // Decrement item count for this tab
-    const tabJmOff = ownerTab.jmOff < byteOffset ? ownerTab.jmOff : ownerTab.jmOff - len;
-    const cnt = Math.max(0, (grailD2i[tabJmOff + 2] | (grailD2i[tabJmOff + 3] << 8)) - 1);
+    const removedCount = removalOffsets.length;
+    const tabJmOff = ownerTab.jmOff < startOff ? ownerTab.jmOff : ownerTab.jmOff - totalLen;
+    const cnt = Math.max(0, (grailD2i[tabJmOff + 2] | (grailD2i[tabJmOff + 3] << 8)) - removedCount);
     grailD2i[tabJmOff + 2] = cnt & 0xFF;
     grailD2i[tabJmOff + 3] = (cnt >> 8) & 0xFF;
 
     writeU32LE(grailD2i, 16, grailD2i.length);
     recalcChecksum(grailD2i);
-    parseGrailD2i(); // this calls scanGrailFound which rebuilds grailFound set
+    parseGrailD2i();
     markGrailDirty();
 
     closeTooltip(true);
@@ -12950,14 +12975,28 @@ window.startGrailCopyToInventory = function(byteOffset) {
   const item = findGrailItem(byteOffset);
   if (!item || !grailD2i) return;
 
-  // Get the grail item's source items list for accurate length calc
-  const grailAllItems = grailParsed ? grailParsed.tabs.flatMap(t => t.items) : [];
-  const len = getItemBinaryLength(grailD2i, byteOffset, grailAllItems);
+  // Length-bounding must stay within this item's own grail tab — flattening
+  // every tab's items would over-extend the slice past the tab's trailing
+  // JM marker on tab-final items.
+  let ownerTab = null;
+  for (const tab of grailParsed.tabs) {
+    if (tab.items.some(it => it.byteOffset === byteOffset)) { ownerTab = tab; break; }
+  }
+  const tabItems = ownerTab ? ownerTab.items : [];
+  const len = getItemBinaryLength(grailD2i, byteOffset, tabItems);
   const itemBytes = new Uint8Array(grailD2i.slice(byteOffset, byteOffset + len));
   const { w, h } = getItemSize(item.typeCode);
   const { name } = itemDisplayName(item);
 
-  _grailCopyItem = { bytes: itemBytes, typeCode: item.typeCode, w, h, name, srcOffset: byteOffset };
+  // Capture socketed children too — copying a socketed unique without its
+  // gems would leave the inventory copy with bogus socket flags but no fill.
+  const children = findSocketedChildren(grailD2i, tabItems, item);
+  const childBytes = children.map(ch => {
+    const cLen = getItemBinaryLength(grailD2i, ch.byteOffset, tabItems);
+    return { bytes: new Uint8Array(grailD2i.slice(ch.byteOffset, ch.byteOffset + cLen)), typeCode: ch.typeCode };
+  });
+
+  _grailCopyItem = { bytes: itemBytes, typeCode: item.typeCode, w, h, name, srcOffset: byteOffset, children: childBytes };
 
   // Close tooltip and switch to inventory tab with placement mode
   closeTooltip(true);
@@ -13068,9 +13107,41 @@ function placeGrailItemAt(x, y) {
   };
 
   parsedChar.items.push(newItem);
+
+  // Cascade socketed children captured at copy time. Their bytes already
+  // carry parent=6 from the source grail, and pushing them right after the
+  // parent keeps the items-array adjacency the save-time walker uses to find
+  // a parent's children. Without this a socketed unique copied from grail
+  // lands in inventory with its socket flags set but no actual gems inside.
+  const children = Array.isArray(_grailCopyItem.children) ? _grailCopyItem.children : [];
+  for (const ch of children) {
+    parsedChar.items.push({
+      byteOffset:    nextFakeOffset(),
+      typeCode:      ch.typeCode,
+      typeIndex:     0,
+      identified:    1,
+      socketed:      0,
+      simple:        0,
+      ethereal:      0,
+      personalized:  0,
+      runeword:      0,
+      parent:        6,
+      equipSlot:     0,
+      x: 0, y: 0,
+      storage:       0,
+      location:      6,
+      numSockets:    0,
+      itemLevel:     0,
+      quality:       0,
+      isMerc:        false,
+      isVirtual:     true,
+      _grailCopyBytes: ch.bytes,
+      _propsDecoded: false,
+      _mods: [],
+    });
+  }
   markDirty();
 
-  // Clean up placement mode
   cancelGrailPlacement();
   renderTab();
   showPopup(L('ui_grail_placed','{name} placed in inventory.').replace('{name}', name));
@@ -14833,11 +14904,20 @@ function _resolveSourceForMove(byteOffset) {
           if (workBytes[i] === 0x4a && workBytes[i + 1] === 0x4d) { sectionEnd = i; break; }
         }
       }
-      // lengthItems (for getItemBinaryLength) must include pending-delete offsets so
-      // out-of-byte-order batch moves don't skip over a deleted neighbour's byte range.
+      // Length-bounding must stay within the source's section. Mixing player
+      // items with merc items in `lengthItems` makes the last player item's
+      // getItemBinaryLength reach across the merc JM marker to the first merc
+      // item, producing a slice that swallows the JM bytes + merc data. The
+      // bloated blob saves to vault fine but its embedded JM corrupts the
+      // re-parse on next load → items downstream re-render as white quality.
+      const isMerc = !!it.isMerc;
+      const sameKindItems = parsedChar.items.filter(x => !!x.isMerc === isMerc);
+      const sameKindDeleted = Array.from(_deletedItemOffsets).filter(off =>
+        isMerc ? (sectionEnd && off > sectionEnd) : (off > 0 && (!sectionEnd || off < sectionEnd))
+      );
       const lengthItems = [
-        ...parsedChar.items,
-        ...Array.from(_deletedItemOffsets).map(off => ({ byteOffset: off })),
+        ...sameKindItems,
+        ...sameKindDeleted.map(off => ({ byteOffset: off })),
       ];
       return { kind: 'char', item: it, buf: workBytes, items: parsedChar.items, lengthItems, sectionEnd };
     }
