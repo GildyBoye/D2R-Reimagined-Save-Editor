@@ -7834,7 +7834,6 @@ function getSkillsForClass(cls) {
 
   const treeNames = CLASS_TREE_NAMES[cls] || ['Tree I','Tree II','Tree III'];
   const trees = [0,1,2].map(i => ({
-    name: treeNames[i],
     page: i + 1,
     grid: {},
     maxRow: 0,
@@ -7849,9 +7848,15 @@ function getSkillsForClass(cls) {
     if (col > t.maxCol) t.maxCol = col;
   });
 
-  // D2 displays skill tabs right-to-left: Tab3 is leftmost in-game, Tab1 is rightmost.
-  // Reverse to match in-game visual order (left to right).
-  return trees.filter(t => Object.keys(t.grid).length > 0).reverse();
+  // SkillCategory{Class}{N} string keys are indexed by IN-GAME TAB POSITION
+  // (N=1 = leftmost tab), not by skilldesc.txt page number — they're inverted.
+  // Reverse the trees to match in-game left-to-right visual order, then assign
+  // names by display index. For Paladin: leftmost tab gets SkillCategoryPa1
+  // ("Defensive Auras") + page-3 skills, rightmost gets SkillCategoryPa3
+  // ("Combat Skills") + page-1 skills. Same convention for every class.
+  const ordered = trees.filter(t => Object.keys(t.grid).length > 0).reverse();
+  ordered.forEach((t, i) => { t.name = treeNames[i] || `Tree ${i + 1}`; });
+  return ordered;
 }
 
 function getSkillListForClass(cls) {
