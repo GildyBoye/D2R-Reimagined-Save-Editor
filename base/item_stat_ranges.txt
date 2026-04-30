@@ -1,0 +1,194 @@
+stat	descstrpos	range	parrange	perLevel
+strength	%+d to Strength	-32 - 223		
+energy	%+d to Energy	-32 - 95		
+dexterity	%+d to Dexterity	-32 - 95		
+vitality	%+d to Vitality	-32 - 95		
+maxhp	%+d to Life	-32 - 479		
+maxmana	%+d to Mana	-32 - 223		
+item_armor_percent	%+d%% Enhanced Defense	0 - 511		
+item_maxdamage_percent	%+d%% Enhanced Maximum Weapon Damage	0 - 511		
+item_mindamage_percent	%+d%% Enhanced Minimum Weapon Damage	0 - 511		
+tohit	%+d to Attack Rating	0 - 1023		
+toblock	%d%% Increased Chance of Blocking	0 - 127		
+mindamage	%+d to Minimum Weapon Damage	0 - 255		
+maxdamage	%+d to Maximum Weapon Damage	0 - 511		
+secondary_mindamage	%+d to Minimum Weapon Damage	0 - 255		
+secondary_maxdamage	%+d to Maximum Weapon Damage	0 - 511		
+damagepercent	%+d%% Enhanced Weapon Damage	0 - 255		
+manarecoverybonus	%+d%% Mana Regeneration	0 - 255		
+armorclass	%+d Defense	-10 - 2037		
+armorclass_vs_missile	%+d Defense vs. Missile	0 - 511		
+armorclass_vs_hth	%+d Defense vs. Melee	0 - 255		
+normal_damage_reduction	Physical Damage Reduced By %d	0 - 63		
+magic_damage_reduction	Magic Damage Reduced By %d	0 - 63		
+damageresist	%+d%% Physical Damage Reduction	-200 - 311		
+magicresist	%+d%% Magic Resistance	-200 - 311		
+maxmagicresist	%+d%% to Maximum Magic Resistance	0 - 31		
+fireresist	%+d%% Fire Resistance	-200 - 311		
+maxfireresist	%+d%% to Maximum Fire Resistance	0 - 31		
+lightresist	%+d%% Lightning Resistance	-200 - 311		
+maxlightresist	%+d%% to Maximum Lightning Resistance	0 - 31		
+coldresist	%+d%% Cold Resistance	-200 - 311		
+maxcoldresist	%+d%% to Maximum Cold Resistance	0 - 31		
+poisonresist	%+d%% Poison Resistance	-200 - 311		
+maxpoisonresist	%+d%% to Maximum Poison Resistance	0 - 31		
+firemindam	%+d to Weapon Minimum Fire Damage	0 - 255		
+firemaxdam	%+d to Weapon Maximum Fire Damage	0 - 511		
+lightmindam	%+d to Weapon Minimum Lightning Damage	0 - 63		
+lightmaxdam	%+d to Weapon Maximum Lightning Damage	0 - 1023		
+magicmindam	%+d Weapon Magic Damage	0 - 255		
+magicmaxdam	%+d Weapon Magic Damage	0 - 511		
+coldmindam	%+d to Weapon Minimum Cold Damage	0 - 255		
+coldmaxdam	%+d to Weapon Maximum Cold Damage	0 - 511		
+poisonmindam	%+d to Weapon Minimum Poison Damage	0 - 1023		
+poisonmaxdam	%+d to Weapon Maximum Poison Damage	0 - 1023		
+lifedrainmindam	%+d%% Life stolen per hit	0 - 127		
+manadrainmindam	%+d%% Mana stolen per hit	0 - 127		
+hpregen	Replenish Life %+d	-30 - 33		
+item_maxdurability_percent	%+d%% Increased Maximum Durability	-20 - 107		
+item_maxhp_percent	%+d%% Increased Maximum Life	-10 - 53		
+item_maxmana_percent	%+d%% Increased Maximum Mana	-10 - 53		
+item_attackertakesdamage	Attacker Takes Damage of %d	0 - 127		
+item_goldbonus	%+d%% Extra Gold from Monsters	-100 - 411		
+item_magicbonus	%+d%% Chance Items Roll Magic or Better	-100 - 411		
+item_knockback	Knockback	0 - 127		
+item_addclassskills	%+d to %s Skill Levels	0 - 7	0-7	
+item_addexperience	%+d%% to Experience Gained	-50 - 461		
+item_healafterkill	%+d Life after each Kill	0 - 127		
+item_reducedprices	Vendor Prices Reduced By %d%%	0 - 127		
+item_lightradius	%+d to Light Radius	-4 - 11		
+item_req_percent	Requirements Increased By %d%%	-100 - 155		
+item_levelreq	%+d to Required Level	-6 - 249		
+item_fasterattackrate	%+d%% Increased Attack Speed	-20 - 107		
+item_fastermovevelocity	%+d%% Faster Run/Walk Speed	-20 - 107		
+item_fastergethitrate	%+d%% Faster Hit Recovery	-20 - 107		
+item_fasterblockrate	%+d%% Faster Block Rate	-20 - 107		
+item_fastercastrate	%+d%% Faster Cast Rate	-20 - 107		
+item_singleskill	%+d to %s %s	0 - 7	0-511	
+item_restinpeace	Slain Monsters Rest in Peace	0 - 1		
+item_poisonlengthresist	Poison Length Reduced by %d%%	-20 - 235		
+item_normaldamage	%+d Damage	-20 - 491		
+item_howl	%+d%% Hits Cause Monsters to Flee	1 - 128		
+item_stupidity	Hit Blinds Target	0 - 127		
+item_damagetomana	%+d%% Damage Taken Added To Mana	0 - 63		
+item_ignoretargetac	Ignore Target's Defense	0 - 1		
+item_fractionaltargetac	-%d%% Target Defense	0 - 127		
+item_preventheal	Prevent Monster Heal	0 - 127		
+item_halffreezeduration	Half Freeze Duration	0 - 1		
+item_tohit_percent	%+d%% Bonus to Attack Rating	-20 - 491		
+item_damagetargetac	%d to Monster Defense Per Hit	-128 - -1		
+item_demondamage_percent	%+d%% Damage to Demons	-20 - 491		
+item_undeaddamage_percent	%+d%% Damage to Undead	-20 - 491		
+item_demon_tohit	%+d to Attack Rating against Demons	-128 - 895		
+item_undead_tohit	%+d to Attack Rating against Undead	-128 - 895		
+item_throwable	Throwable	0 - 1		
+item_allskills	%+d to All Skills	0 - 7		
+item_attackertakeslightdamage	Attacker Takes Lightning Damage of %d	0 - 31		
+item_freeze	Freezes target	0 - 31		
+item_openwounds	%+d%% Chance of Open Wounds	0 - 127		
+item_crushingblow	%+d%% Chance of Crushing Blow	0 - 127		
+item_kickdamage	%+d Kick Damage	0 - 127		
+item_manaafterkill	%+d to Mana after each Kill	0 - 127		
+item_healafterdemonkill	%+d Life after each Demon Kill	0 - 127		
+item_deadlystrike	%+d%% Deadly Strike	0 - 127		
+item_absorbfire_percent	%+d%% Fire Damage Absorbed	0 - 127		
+item_absorbfire	%+d Fire Damage Absorbed	0 - 127		
+item_absorblight_percent	%+d%% Lightning Damage Absorbed	0 - 127		
+item_absorblight	%+d Lightning Damage Absorbed	0 - 127		
+item_absorbmagic_percent	%+d%% Magic Damage Absorbed	0 - 127		
+item_absorbmagic	%+d Magic Damage Absorbed	0 - 127		
+item_absorbcold_percent	%+d%% Cold Damage Absorbed	0 - 127		
+item_absorbcold	%+d Cold Damage Absorbed	0 - 127		
+item_slow	Slows Target by %d%%	0 - 127		
+item_aura	Level %d %s Aura When Equipped	0 - 31	0-511	
+item_indesctructible	Indestructible	0 - 1		
+item_cannotbefrozen	Cannot Be Frozen	0 - 1		
+item_reanimate	%0%% Reanimate as: %1	0 - 127	0-1023	
+item_pierce	%+d%% Piercing Attack	0 - 127		
+item_magicarrow	Fires Magic Arrows	0 - 127		
+item_explosivearrow	Fires Explosive Arrows or Bolts	0 - 127		
+item_addskill_tab	%+d to Javelin and Spear Skills	0 - 7	0-65535	
+item_skillonattack	%d%% Chance to cast level %d %s on attack	0 - 127	0-65535	
+item_skillonkill	%d%% Chance to cast level %d %s when you Kill an Enemy	0 - 127	0-65535	
+item_skillondeath	%d%% Chance to cast level %d %s when you Die	0 - 127	0-65535	
+item_skillonhit	%d%% Chance to cast level %d %s on striking	0 - 127	0-65535	
+item_skillonlevelup	%d%% Chance to cast level %d %s when you Level-Up	0 - 127	0-65535	
+item_charge_noconsume	%+d%% chance for finishing moves to not consume charges	0 - 127		
+item_skillongethit	%d%% Chance to cast level %d %s when struck	0 - 127	0-65535	
+item_charged_skill	Level %d %s (%d/%d Charges)	0 - 65535	0-65535	
+item_noconsume	%+d%% Chance to not consume Quantity	0 - 127		
+item_armor_perlevel	%+d Defense	0 - 63		8ths
+item_armorpercent_perlevel	%+d%% Enhanced Defense	0 - 63		8ths
+item_hp_perlevel	%+d to Life	0 - 63		8ths
+item_mana_perlevel	%+d to Mana	0 - 63		8ths
+item_maxdamage_perlevel	%+d to Maximum Weapon Damage	0 - 63		8ths
+item_maxdamage_percent_perlevel	%+d%% Enhanced Maximum Weapon Damage	0 - 63		8ths
+item_strength_perlevel	%+d to Strength	0 - 63		8ths
+item_dexterity_perlevel	%+d to Dexterity	0 - 63		8ths
+item_energy_perlevel	%+d to Energy	0 - 63		8ths
+item_vitality_perlevel	%+d to Vitality	0 - 63		8ths
+item_tohit_perlevel	%+d to Attack Rating	0 - 63		2ths
+item_tohitpercent_perlevel	%+d%% Bonus to Attack Rating	0 - 63		2ths
+item_cold_damagemax_perlevel	%+d to Weapon Maximum Cold Damage	0 - 63		8ths
+item_fire_damagemax_perlevel	%+d to Weapon Maximum Fire Damage	0 - 63		8ths
+item_ltng_damagemax_perlevel	%+d to Weapon Maximum Lightning Damage	0 - 63		8ths
+item_pois_damagemax_perlevel	%+d to Weapon Maximum Poison Damage	0 - 63		8ths
+item_resist_cold_perlevel	%+d%% Cold Resistance	0 - 63		8ths
+item_resist_fire_perlevel	%+d%% Fire Resistance	0 - 63		8ths
+item_resist_ltng_perlevel	%+d%% Lightning Resistance	0 - 63		8ths
+item_resist_pois_perlevel	%+d%% Poison Resistance	0 - 63		8ths
+item_absorb_cold_perlevel	Absorbs %d Cold Damage	0 - 63		8ths
+item_absorb_fire_perlevel	Absorbs %d Fire Damage	0 - 63		8ths
+item_absorb_ltng_perlevel	Absorbs %d Lightning Damage	0 - 63		8ths
+item_thorns_perlevel	Attacker Takes Damage of %d	0 - 31		8ths
+item_find_gold_perlevel	%+d%% Extra Gold from Monsters	0 - 63		8ths
+item_find_magic_perlevel	%+d%% Chance Items Roll Magic or Better	0 - 63		8ths
+item_damage_demon_perlevel	%+d%% Damage to Demons	0 - 63		8ths
+item_damage_undead_perlevel	%+d%% Damage to Undead	0 - 63		8ths
+item_tohit_demon_perlevel	%+d to Attack Rating against Demons	0 - 63		2ths
+item_tohit_undead_perlevel	%+d to Attack Rating against Undead	0 - 63		2ths
+item_crushingblow_perlevel	%+d%% Chance of Crushing Blow	0 - 63		8ths
+item_openwounds_perlevel	%+d%% Chance of Open Wounds	0 - 63		8ths
+item_kick_damage_perlevel	%+d Kick Damage	0 - 63		8ths
+item_deadlystrike_perlevel	%+d%% Deadly Strike	0 - 63		8ths
+item_replenish_durability	Repairs %d durability per second	0 - 63		
+item_replenish_quantity	Replenishes quantity	0 - 63		
+item_pierce_cold	-%d%% to Enemy Cold Resistance	-50 - 205		
+item_pierce_fire	-%d%% to Enemy Fire Resistance	-50 - 205		
+item_pierce_ltng	-%d%% to Enemy Lightning Resistance	-50 - 205		
+item_pierce_pois	-%d%% to Enemy Poison Resistance	-50 - 205		
+passive_fire_mastery	%+d%% to Fire Skill Damage	-50 - 461		
+passive_ltng_mastery	%+d%% to Lightning Skill Damage	-50 - 461		
+passive_cold_mastery	%+d%% to Cold Skill Damage	-50 - 461		
+passive_pois_mastery	%+d%% to Poison Skill Damage	-50 - 461		
+passive_fire_pierce	-%d%% to Enemy Fire Resistance	0 - 255		
+passive_ltng_pierce	-%d%% to Enemy Lightning Resistance	0 - 255		
+passive_cold_pierce	-%d%% to Enemy Cold Resistance	0 - 255		
+passive_pois_pierce	-%d%% to Enemy Poison Resistance	0 - 255		
+passive_mag_mastery	%+d%% to Magic Skill Damage	-50 - 461		
+passive_mag_pierce	-%d%% to Enemy Magic Resistance	0 - 255		
+pl_maxdamage_percent	%+d%% Extra Maximum Weapon Damage	-100 - 411		
+pl_mindamage_percent	%+d%% Extra Minimum Weapon Damage	-100 - 411		
+hpregen_perlevel	Replenish Life %+d	-30 - 33		4ths
+heal_afterhit	Life Per Hit	0 - 127		
+item_nonclassskill_display	%+d to %s (oskill)	0 - 63	0-511	
+item_mindamage_perlvl	%+d to Minimum Weapon Damage	0 - 63		
+upgrade_minor	Enchantments: %d / 2	0 - 255		
+upgrade_medium	Enchantments: %d / 3	0 - 255		
+upgrade_major	Enchantments: %d / 5	0 - 255		
+upgrade_uber	Enchantments: %d / 10	0 - 255		
+item_elemskillfire	%+d to Fire Skills	0 - 7	0-7	
+item_elemskillcold	%+d to Cold Skills	0 - 7	0-7	
+item_elemskilllight	%+d to Lightning Skills	0 - 7	0-7	
+item_elemskillpoison	%+d to Poison Skills	0 - 7	0-7	
+item_elemskillmagic	%+d to Magic Skills	0 - 7	0-7	
+item_strength_percent	%+d%% to Strength	-63 - 64		
+item_dexterity_percent	%+d%% to Dexterity	-63 - 64		
+item_vitality_percent	%+d%% to Vitality	-63 - 64		
+item_energy_percent	%+d%% to Energy	-63 - 64		
+pl_maxthrowdmg_percent	%+d%% Extra Minimum Throwing Weapon Damage	-100 - 411		
+pl_minthrowdmg_percent	%+d%% Extra Maximum Throwing Weapon Damage	-100 - 411		
+upgrade_uber_charm_small	Upgrades: %d / 6	0 - 255		
+upgrade_uber_charm_large	Upgrades: %d / 10	0 - 255		
+item_magic_damagemax_perlevel	%+d to Maximum Magic Damage	0 - 63		8ths
+passive_dmg_pierce	-%d%% to Enemy Physical Damage Resistance	0 - 255		
