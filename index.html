@@ -4549,7 +4549,15 @@ function parseSpA1(buf) {
   const expected  = width * height * 4;
   const payload   = buf.byteLength - pixOffset;
   let bpp = view.getUint32(0x24, true);
-  if (bpp === 0 && payload === expected) bpp = 4; // Reimagined exports leave bpp zero-filled
+  // Reimagined's mod re-exports leave bpp zero-filled. Older inference logic
+  // required `payload === expected` to assume bpp=4, but Reimagined's orb
+  // sprites (and presumably others) have a few hundred trailing bytes of
+  // unknown metadata past the RGBA payload. Allow `payload >= expected` and
+  // just slice the first w*h*4 bytes — the trailing data isn't pixel data
+  // and isn't read. Without this, orbs throw "Unsupported bpp: 0" silently
+  // and the cell falls back to the text name even though every other check
+  // (URL reachable, items.json populated, canvas hydrated) passed.
+  if (bpp === 0 && payload >= expected) bpp = 4;
   if (bpp !== 4) throw new Error('Unsupported SpA1 bpp: ' + bpp);
   if (payload < expected) throw new Error('Truncated SpA1 sprite');
   const rgba = new Uint8Array(buf.slice(pixOffset, pixOffset + expected));
