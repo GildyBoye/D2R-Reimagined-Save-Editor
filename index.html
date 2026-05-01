@@ -4466,19 +4466,29 @@ function _loadAdvOptsState() {
   try {
     _advOptsAcknowledged = localStorage.getItem(ADV_OPTS_STORAGE.acknowledged) === '1';
     _advOptsRemember     = localStorage.getItem(ADV_OPTS_STORAGE.remember)     === '1';
+    // Sprite mode is purely cosmetic (display-only, never touches save bytes)
+    // so it persists unconditionally — no gate, no opt-in. Edit mode CAN
+    // affect saves so it stays behind the remember checkbox + acknowledgment.
+    _itemSpriteMode = localStorage.getItem(ADV_OPTS_STORAGE.spriteMode) === '1';
     if (_advOptsRemember) {
-      _itemSpriteMode = localStorage.getItem(ADV_OPTS_STORAGE.spriteMode) === '1';
-      _itemEditMode   = localStorage.getItem(ADV_OPTS_STORAGE.editMode)   === '1';
+      _itemEditMode = localStorage.getItem(ADV_OPTS_STORAGE.editMode) === '1';
     }
   } catch (_) { /* localStorage unavailable — soldier on with defaults */ }
 }
 _loadAdvOptsState();
 
+// Sprite mode persists independently of the gate. No opt-in needed since the
+// toggle never affects save bytes — it just swaps cell rendering between
+// .sprite canvases and abbreviated names.
+function _saveItemSpriteMode() {
+  try { localStorage.setItem(ADV_OPTS_STORAGE.spriteMode, _itemSpriteMode ? '1' : '0'); }
+  catch (_) {}
+}
+
 function _saveAdvOptsToggleStates() {
   if (!_advOptsRemember) return;
   try {
-    localStorage.setItem(ADV_OPTS_STORAGE.spriteMode, _itemSpriteMode ? '1' : '0');
-    localStorage.setItem(ADV_OPTS_STORAGE.editMode,   _itemEditMode   ? '1' : '0');
+    localStorage.setItem(ADV_OPTS_STORAGE.editMode, _itemEditMode ? '1' : '0');
   } catch (_) {}
 }
 
@@ -4503,7 +4513,7 @@ window._advOptsToggleRemember = function(checked) {
     if (_advOptsRemember) {
       _saveAdvOptsToggleStates();
     } else {
-      localStorage.removeItem(ADV_OPTS_STORAGE.spriteMode);
+      // Only clear gated toggles. Sprite mode persists independently.
       localStorage.removeItem(ADV_OPTS_STORAGE.editMode);
     }
   } catch (_) {}
@@ -6757,18 +6767,16 @@ window.openAdvancedOptions = function() {
          ${esc(L('ui_adv_autosave_unavailable','Auto-save requires File System Access API (Chrome, Edge, or Brave).'))}
        </div>`;
 
-  // Item sprites toggle — same char-loaded gate as auto-save.
-  const canFlipSprite = hasChar || _itemSpriteMode;
-  const showSpriteHint = !hasChar && !_itemSpriteMode;
-  const spriteNeedCharMsg = L('ui_sprites_need_char','Load a character save first, then return here to enable item sprites.');
+  // Item sprites toggle — purely cosmetic, never touches save bytes. Lives
+  // OUTSIDE the gated section so users don't have to acknowledge the safety
+  // warning to flip a display-only preference. Always interactive — no
+  // char-loaded dependency since the toggle just sets a render mode that
+  // applies whenever items eventually get rendered.
   const spriteToggle = `
-    <label style="display:flex;align-items:center;gap:10px;
-                  cursor:${canFlipSprite ? 'pointer' : 'not-allowed'};
-                  opacity:${canFlipSprite ? '1' : '0.55'};
-                  padding:10px 12px;margin-top:10px;border:1px solid var(--d2-border);
+    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;
+                  padding:10px 12px;border:1px solid var(--d2-border);
                   border-radius:2px;background:var(--d2-surface2)">
       <input type="checkbox" id="itemSpriteToggle" ${_itemSpriteMode ? 'checked' : ''}
-             ${canFlipSprite ? '' : 'disabled'}
              onchange="onItemSpriteToggleChange(this)">
       <span style="flex:1">
         <div style="color:var(--d2-gold);font-family:'Cinzel',serif;
@@ -6778,7 +6786,6 @@ window.openAdvancedOptions = function() {
         <div style="color:var(--d2-text-dim);font-size:11px">
           ${esc(L('ui_adv_sprites_desc','Render item cells using the game\'s .sprite files from base/sprites/ instead of abbreviated names. Missing files fall back to the name.'))}
         </div>
-        ${showSpriteHint ? `<div style="color:#c8a030;font-size:10px;margin-top:6px;font-style:italic">${esc(spriteNeedCharMsg)}</div>` : ''}
       </span>
     </label>`;
 
@@ -6842,12 +6849,25 @@ window.openAdvancedOptions = function() {
       </span>
     </label>`;
 
+  // Section headers — small uppercase labels distinguish "always-on display
+  // preferences" from "save-affecting options behind the warning gate".
+  const sectionHeader = (text) => `
+    <div style="color:var(--d2-text-dim);font-family:'Cinzel',serif;font-size:10px;
+                letter-spacing:2px;text-transform:uppercase;margin:14px 0 8px 2px;
+                border-bottom:1px solid var(--d2-border);padding-bottom:4px">
+      ${esc(text)}
+    </div>`;
+
   showDialog({
     title:   L('ui_adv_options_title', 'Advanced Options'),
     titleTone: 'gold',
     bodyHtml: `<div style="padding:4px 2px 8px 2px;font-size:13px;line-height:1.5">
+      ${sectionHeader(L('ui_adv_section_display','Display'))}
+      ${spriteToggle}
+
+      ${sectionHeader(L('ui_adv_section_saves','Save-affecting options'))}
       ${gateBanner}
-      <div id="advOptsToggles" style="${toggleStyle}">${toggleRow}${targetsHtml}${spriteToggle}${editToggle}</div>
+      <div id="advOptsToggles" style="${toggleStyle}">${toggleRow}${targetsHtml}${editToggle}</div>
       ${rememberRow}
     </div>`,
     buttons: [{ label: L('ui_btn_close', 'Close'), tone: 'ghost' }],
@@ -6861,11 +6881,13 @@ window.onItemEditToggleChange = function(checkbox) {
   _saveAdvOptsToggleStates();
 };
 
-// Item sprite toggle handler. Flipping it re-renders the current tab so
-// cells immediately swap between sprite canvases and name divs.
+// Item sprite toggle handler. Display-only; persists unconditionally via
+// _saveItemSpriteMode (no gate, no remember-required) since flipping it
+// never touches save bytes. Flipping triggers a re-render so cells swap
+// immediately between sprite canvases and name divs.
 window.onItemSpriteToggleChange = function(checkbox) {
   _itemSpriteMode = !!checkbox.checked;
-  _saveAdvOptsToggleStates();
+  _saveItemSpriteMode();
   if (activeTab) renderTab();
 };
 
@@ -7875,11 +7897,15 @@ function commitQuest(diff, questIndex, flags) {
   markDirty();
 }
 
-// bit 0 = complete, bit 12 = swirling-fire animation seen
+// bit 0 = complete, bit 12 = swirling-fire animation seen. Per-quest extra
+// bits (e.g. Anya's "scroll consumed" bit 7 that triggers the +10 all-res
+// runtime bonus) come from QUEST_DEFS[i].extraFlags so completing through
+// the editor matches what the game would have written.
 function completeAllQuests(diff) {
   for (let i = 0; i < QUEST_BYTE_OFFSETS.length; i++) {
     const wasComplete = !!((parsedChar.quests[diff]?.[i] || 0) & 0x0001);
-    commitQuest(diff, i, 0x1001);
+    const extra = (QUEST_DEFS[i] && QUEST_DEFS[i].extraFlags) || 0;
+    commitQuest(diff, i, 0x1001 | extra);
     if (!wasComplete) applyQuestReward(i, true);
   }
   _setActProgressionFlags(diff, true);
@@ -8291,6 +8317,102 @@ function diffTabsHtml(){
 }
 function pickDiff(el){el.parentElement.querySelectorAll('.diff-tab').forEach(b=>b.classList.remove('active'));el.classList.add('active');}
 
+// Anya's quest is index 23 in QUEST_DEFS. The +10 all-res reward triggers
+// off bit 7 (0x80, "scroll consumed") of the quest flags — completing the
+// quest alone (bit 0) doesn't apply it. Returns { perDiff, count, repairable }
+// where perDiff[d] is true if the reward is applied on difficulty d, and
+// repairable is true if any difficulty has the quest marked complete (bit 0)
+// but the reward bit (bit 7) missing — i.e. the save needs a one-click fix.
+const ANYA_QUEST_INDEX = 23;
+const ANYA_RES_BIT     = 0x0080;
+function _anyaResistanceBonus() {
+  const perDiff = [false, false, false];
+  let repairable = false;
+  if (parsedChar && parsedChar.quests) {
+    for (let d = 0; d < 3; d++) {
+      const f = (parsedChar.quests[d] && parsedChar.quests[d][ANYA_QUEST_INDEX]) || 0;
+      const done    = !!(f & 0x0001);
+      const applied = !!(f & ANYA_RES_BIT);
+      perDiff[d] = applied;
+      if (done && !applied) repairable = true;
+    }
+  }
+  return { perDiff, count: perDiff.filter(Boolean).length, repairable };
+}
+
+// Recovery handler: OR in bit 7 of Anya's quest flags on every difficulty
+// where the quest is marked complete (bit 0 set). Used to fix saves edited
+// by older editor builds that wrote 0x1001 instead of 0x1081 on completion.
+window.repairAnyaReward = function() {
+  if (!parsedChar || !parsedChar.quests) return;
+  let touched = 0;
+  for (let d = 0; d < 3; d++) {
+    const cur = (parsedChar.quests[d] && parsedChar.quests[d][ANYA_QUEST_INDEX]) || 0;
+    if ((cur & 0x0001) && !(cur & ANYA_RES_BIT)) {
+      commitQuest(d, ANYA_QUEST_INDEX, cur | ANYA_RES_BIT);
+      touched++;
+    }
+  }
+  if (touched > 0) {
+    showPopup(Lfmt('ui_anya_repaired','Applied Anya’s resistance reward on {n} difficulty/difficulties. Save the file and reload in-game to see the bonus.', { n: touched }));
+  }
+  renderTab();
+};
+
+// Resistances section for renderChar. Shows the four resist slots side by
+// side with a quest-bonus value (Anya's +10 per completed difficulty) plus a
+// per-difficulty breakdown so the user can see which Anya tiers contribute.
+//
+// We only display the quest bonus — item-equipped resistance, class base
+// values, and difficulty penalties all live outside the save's stat block
+// (computed at game runtime), so they'd be misleading to render here.
+function _renderCharResistancesSection() {
+  const { perDiff, count, repairable } = _anyaResistanceBonus();
+  const total = count * 10;
+  const diffNames = [L('ui_diff_normal','Normal'), L('ui_diff_nightmare','Nightmare'), L('ui_diff_hell','Hell')];
+  const tickStyle  = 'color:var(--d2-green);font-family:\'Cinzel\',serif';
+  const crossStyle = 'color:var(--d2-text-dim);font-family:\'Cinzel\',serif';
+  const perDiffHtml = perDiff.map((on, i) => {
+    const mark = on ? '✓' : '·';
+    const style = on ? tickStyle : crossStyle;
+    return `<div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0">
+      <span style="color:var(--d2-text-dim)">${esc(diffNames[i])}</span>
+      <span style="${style}">${esc(mark)} ${on ? '+10' : '—'}</span>
+    </div>`;
+  }).join('');
+  const valueHtml = `<div class="stat-input" style="cursor:default;opacity:0.85;color:${total > 0 ? 'var(--d2-gold-bright)' : 'var(--d2-text-dim)'}">+${total}</div>`;
+  const breakdownCard = `<div class="stat-card">
+    <div class="stat-label">${esc(L('ui_anya_breakdown','Anya: per difficulty'))}</div>
+    <div style="background:var(--d2-surface);border:1px solid var(--d2-border);border-radius:2px;padding:6px 8px;min-height:34px">${perDiffHtml}</div>
+  </div>`;
+  // Recovery banner — surfaces only when the quest is complete on at least
+  // one difficulty but the reward bit is missing (older editor builds wrote
+  // 0x1001 instead of 0x1081 when completing). One-click button OR's bit 7
+  // back in without touching anything else on the save.
+  const repairBanner = repairable ? `
+    <div style="margin:6px 0 10px;padding:8px 12px;border:1px solid var(--d2-gold-dim);background:rgba(120,90,40,0.10);border-radius:2px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span style="flex:1;color:var(--d2-text);font-size:12px;line-height:1.4">
+        ${esc(L('ui_anya_repair_hint','Anya’s quest is marked complete but the resistance reward bit is missing on at least one difficulty — likely because this save was edited before the reward-bit fix landed. Click to apply the missing bit so the +10 all-res takes effect in-game.'))}
+      </span>
+      <button type="button" class="btn-apply" onclick="repairAnyaReward()" style="margin:0">
+        ${esc(L('ui_anya_repair_btn','Apply Anya’s Reward'))}
+      </button>
+    </div>` : '';
+  return `
+    ${h2(L('ui_resistances','Resistances'))}
+    <div class="stat-label-hint" style="margin:-6px 0 8px;color:var(--d2-text-dim);font-size:11px;font-style:italic">
+      ${esc(L('ui_resist_note','Quest bonus only (Anya’s Scroll of Resistance, +10 all res per completed difficulty). Item bonuses and difficulty penalties are applied by the game at runtime.'))}
+    </div>
+    ${repairBanner}
+    <div class="stat-grid">
+      ${card(L('ui_resist_fire','Fire Resistance'),      valueHtml)}
+      ${card(L('ui_resist_cold','Cold Resistance'),      valueHtml)}
+      ${card(L('ui_resist_light','Lightning Resistance'), valueHtml)}
+      ${card(L('ui_resist_poison','Poison Resistance'),  valueHtml)}
+      ${breakdownCard}
+    </div>`;
+}
+
 // ═══════════════════════════════════════════════════════════
 //  TAB RENDERERS
 // ═══════════════════════════════════════════════════════════
@@ -8333,6 +8455,7 @@ function renderChar(c) {
       ${card(L('ui_life','Life'), `<div class="stat-input" style="cursor:default;opacity:0.8" id="stLifeDisplay">${g('maxhp')}</div>`)}
       ${card(L('ui_mana','Mana'), `<div class="stat-input" style="cursor:default;opacity:0.8" id="stManaDisplay">${g('maxmana')}</div>`)}
     </div>
+    ${_renderCharResistancesSection()}
     ${h2(L('ui_gold','Gold'))}
     <div class="stat-grid">
       ${card(
@@ -11102,10 +11225,15 @@ function _itemEditSpliceItemBytes(oldItemBytes, ext, newPropBits, qualityChange)
 // file-size header field. Caller must call recalcChecksum afterwards.
 function _itemEditReplaceItemBytes(item, newItemBytes) {
   const itemList = (parsedChar.items || []).filter(x => !!x.isMerc === !!item.isMerc);
-  // See comment in _applyItemEdits — use the parsed merc-section offset
-  // rather than scanning for a "JM" byte pair that can occur randomly inside
-  // bit-packed property data and lead to a truncated slice.
-  const sectionEnd = parsedChar.mercItemsOffset > 0 ? parsedChar.mercItemsOffset : 0;
+  // Same dynamic scan as _applyItemEdits — corpse JM is the player section
+  // end. See comment there for why mercItemsOffset is wrong.
+  let sectionEnd = 0;
+  const jmStart = parsedChar.itemsOffset;
+  if (jmStart >= 0) {
+    for (let i = jmStart + 4; i < workBytes.length - 1; i++) {
+      if (workBytes[i] === 0x4a && workBytes[i + 1] === 0x4d) { sectionEnd = i; break; }
+    }
+  }
   const oldLen = getItemBinaryLength(workBytes, item.byteOffset, itemList, sectionEnd);
   const newLen = newItemBytes.length;
   const delta  = newLen - oldLen;
@@ -11313,11 +11441,28 @@ window.openItemEditor = function(byteOffset) {
   if (resolved.reject === 'type')     { _showItemEditTypeNotAllowed();      return; }
   if (resolved.reject === 'runeword') { _showItemEditRunewordNotAllowed();  return; }
   if (resolved.reject === 'unid')     { _showItemEditUnidNotAllowed();      return; }
-  const { item, buf } = resolved;
-  if (item.isVirtual || item.simple || item.byteOffset < 0) {
+  const { item } = resolved;
+
+  // Editor-inserted items live in parsedChar.items as `isVirtual=true` with a
+  // negative byteOffset until the next save flushes them. The edit splicer
+  // works against real bytes in workBytes, so flush them right here — no
+  // reason to make the user save first just to edit a freshly-added item.
+  // After flush the item's byteOffset is real and isVirtual is cleared.
+  if (item.isVirtual) {
+    flushVirtualItems();
+    markDirty();  // workBytes mutated by the flush; keep the dirty flag honest
+    if (item.isVirtual || item.byteOffset < 0) {
+      // Flush couldn't write this one (typeCode unknown, _virtualBytes missing,
+      // some other edge case). Don't try to edit — caller would read garbage.
+      _showItemEditTypeNotAllowed();
+      return;
+    }
+  }
+  if (item.simple || item.byteOffset < 0) {
     _showItemEditTypeNotAllowed();
     return;
   }
+  const buf = workBytes;
 
   // Re-decode fresh from the buffer so we have current bit-positions for the
   // value fields. The item's cached _mods may be stale if other edits happened.
@@ -11356,10 +11501,13 @@ const ITEM_EDIT_MOD_CAP = 30;
 // list — these IDs only drive the displayed name.
 
 // Conservative cap on rare-name indices. RareNames.txt isn't loaded by the
-// editor (the game resolves it client-side), so we pick from a range that's
-// guaranteed to be populated in both vanilla D2R and Reimagined. Vanilla ships
-// ~155 entries; 50 is comfortably below any plausible mod's row count.
-const ITEM_EDIT_RARE_NAME_RANGE = 50;
+// editor (the game resolves it client-side), so we have to guess a range that
+// won't index past whatever the active mod has. Originally 50, but a user
+// reported D2R crashing on a save promoted to rare with name1=18, name2=43,
+// and rather than eat the risk we now pick from 1..10 — small enough that any
+// mod's RareNames.txt with at least 10 prefix-class and 10 suffix-class rows
+// (i.e. functionally any non-empty file) will resolve cleanly.
+const ITEM_EDIT_RARE_NAME_RANGE = 10;
 
 // Stable per-item seed so re-applying an edit doesn't reshuffle the picked
 // affix names every save. byteOffset alone shifts when items above grow/shrink,
@@ -11427,24 +11575,67 @@ function _itemEditBuildMagicQualityBlock(item, hasPrefix, hasSuffix) {
 }
 
 // Rare quality block = 8-bit name1 + 8-bit name2 + 6 × (1 flag + opt 11 affix).
-// We stamp valid name1/name2 indices so the item displays a real rare name
-// ("Hailstone Spike" instead of "Rare Sword"), then leave all 6 affix slots
-// empty (flag=0) — the binary property list is our source of truth for mods,
-// and filling affix slots with real IDs risks D2R re-adding their inherent
-// mods on top of what's already in the property list.
+// Slots 0-2 are prefix slots, 3-5 are suffix slots. We MUST fill at least
+// one slot — D2R's natural rare-item generator never produces a "0 affixes,
+// just names" rare, and a user reported D2R crashing on a save we wrote with
+// all-empty slots. Filling slots with valid affix IDs (matching the item's
+// itype filter) replicates the structure D2R expects.
 //
-// prefixCount / suffixCount come in for forward-compat (and to differentiate
-// edits in the seed) but currently don't drive slot-fill counts.
-function _itemEditBuildRareQualityBlock(item /*, prefixCount, suffixCount*/) {
+// Mod doubling concern (an earlier worry that motivated the empty-slot
+// version): the binary property list IS the source of truth for actual
+// mod values. The affix-slot indices are read by D2R for tooltip-source
+// attribution and rare-name validation, not for re-adding inherent mods on
+// load — D2 always serializes the rolled mods into the property list at gen
+// time, so re-adding them on load would double-stack on every save/load
+// cycle, which clearly isn't how it works.
+function _itemEditBuildRareQualityBlock(item, prefixCount, suffixCount) {
+  const { prefixIds, suffixIds } = _itemEditValidAffixIds(item);
   const seed = _itemEditSeed(item);
+
   const name1 = ((seed >>> 0) % ITEM_EDIT_RARE_NAME_RANGE) + 1;
   const name2 = (((seed * 2654435761) >>> 0) % ITEM_EDIT_RARE_NAME_RANGE) + 1;
+
+  // Fill slots based on role count. Cap at 3 each (D2's max) and clamp to 1
+  // minimum — even when neither prefixCount nor suffixCount provided a
+  // positive (degenerate edit), we still need at least one filled slot for
+  // D2R not to choke on it.
+  const pCap = Math.min(3, Math.max(0, prefixCount | 0));
+  const sCap = Math.min(3, Math.max(0, suffixCount | 0));
+  // Pick distinct affix IDs per slot using different seed offsets so two
+  // adjacent slots don't collide on the same affix.
+  const pickPrefix = (k) => prefixIds.length ? _itemEditPickFromSeed(prefixIds, seed, 10 + k) : 0;
+  const pickSuffix = (k) => suffixIds.length ? _itemEditPickFromSeed(suffixIds, seed, 20 + k) : 0;
+
+  let slotIds = [
+    pCap > 0 ? pickPrefix(0) : 0,
+    pCap > 1 ? pickPrefix(1) : 0,
+    pCap > 2 ? pickPrefix(2) : 0,
+    sCap > 0 ? pickSuffix(0) : 0,
+    sCap > 1 ? pickSuffix(1) : 0,
+    sCap > 2 ? pickSuffix(2) : 0,
+  ];
+  // Fallback: if NO slot got an ID (because both role counts were 0 and/or
+  // the affix tables came back empty), force one. Prefer prefix slot 0 with
+  // a prefix ID; failing that, suffix slot 3 with a suffix ID. If neither
+  // table produced anything (item type chain unresolvable), we have to
+  // accept the empty-slot risk — log it via the console for diagnosis.
+  if (!slotIds.some(id => id > 0)) {
+    if (prefixIds.length) slotIds[0] = pickPrefix(0);
+    else if (suffixIds.length) slotIds[3] = pickSuffix(0);
+    else if (typeof console !== 'undefined') console.warn('rare quality block: no valid affix IDs for', item.typeCode);
+  }
 
   const bits = [];
   for (let i = 0; i < 8; i++) bits.push((name1 >> i) & 1);
   for (let i = 0; i < 8; i++) bits.push((name2 >> i) & 1);
-  // 6 empty slots: 6 zero flag bits, no IDs.
-  for (let i = 0; i < 6; i++) bits.push(0);
+  for (const id of slotIds) {
+    if (id > 0) {
+      bits.push(1);                                       // flag
+      for (let i = 0; i < 11; i++) bits.push((id >> i) & 1);  // 11-bit affix ID
+    } else {
+      bits.push(0);                                       // empty slot
+    }
+  }
   return bits;
 }
 
@@ -11750,6 +11941,43 @@ window._itemEditRemoveMod = function(idx) {
   _renderItemEditDialog();
 };
 
+// Reads the Add row's stat/role/value selections and pushes a new mod onto
+// state.mods. Pure mutation — does not re-render. Returns true if a mod was
+// committed, false if the row was empty/closed/invalid. Shared by the green
+// Add button and by the Apply path so a user who types a value into the Add
+// row and clicks Apply directly (without first clicking Add) doesn't silently
+// lose their entry.
+function _itemEditCommitPendingAdd(state) {
+  if (!state || !state.addOpen) return false;
+  if (state.mods.length >= ITEM_EDIT_MOD_CAP) return false;
+  const sel    = document.getElementById('itemEditAddStat');
+  const roleEl = document.getElementById('itemEditAddRole');
+  const valEl  = document.getElementById('itemEditAddValue');
+  if (!sel || !valEl) return false;
+  const id = parseInt(sel.value, 10);
+  const meta = state.addable.find(s => s.id === id);
+  if (!meta) return false;
+  const role  = (roleEl && roleEl.value === 'suffix') ? 'suffix' : 'prefix';
+  const range = STAT_RANGES[id] || {};
+  const fbMin = -meta.saveAdd;
+  const fbMax = ((1 << meta.saveBits) - 1) - meta.saveAdd;
+  const min   = (range.min != null) ? range.min : fbMin;
+  const max   = (range.max != null) ? range.max : fbMax;
+  const raw   = parseInt(valEl.value || '0', 10);
+  const value = Math.max(min, Math.min(max, isNaN(raw) ? 0 : raw));
+  state.mods.push({
+    id, param: 0, value, value2: undefined, value3: undefined,
+    stored: value + meta.saveAdd,
+    valueBits: meta.saveBits, paramBits: 0,
+    paramBitOff: -1, valueBitOff: -1,  // unused — re-encoder doesn't need them
+    saveAdd: meta.saveAdd,
+    _isNew: true,
+    _role:   role,
+  });
+  state.addOpen = false;
+  return true;
+}
+
 window._itemEditAddMod = function() {
   const state = _itemEditState;
   if (!state) return;
@@ -11760,32 +11988,9 @@ window._itemEditAddMod = function() {
     return;
   }
   _itemEditCaptureInputs();
-  const sel = document.getElementById('itemEditAddStat');
-  const roleEl = document.getElementById('itemEditAddRole');
-  const valEl = document.getElementById('itemEditAddValue');
-  if (!sel || !valEl) return;
-  const id = parseInt(sel.value, 10);
-  const meta = state.addable.find(s => s.id === id);
-  if (!meta) return;
-  const role = (roleEl && roleEl.value === 'suffix') ? 'suffix' : 'prefix';
-  const range = STAT_RANGES[id] || {};
-  const fallbackMin = -meta.saveAdd;
-  const fallbackMax = ((1 << meta.saveBits) - 1) - meta.saveAdd;
-  const min = (range.min != null) ? range.min : fallbackMin;
-  const max = (range.max != null) ? range.max : fallbackMax;
-  const raw = parseInt(valEl.value || '0', 10);
-  const value = Math.max(min, Math.min(max, isNaN(raw) ? 0 : raw));
-  state.mods.push({
-    id, param: 0, value, value2: undefined, value3: undefined,
-    stored: value + meta.saveAdd,
-    valueBits: meta.saveBits, paramBits: 0,
-    paramBitOff: -1, valueBitOff: -1,  // unused — re-encoder doesn't need them
-    saveAdd: meta.saveAdd,
-    _isNew: true,
-    _role: role,
-  });
-  state.addOpen = false; // collapse back to the + button after a successful add
-  _renderItemEditDialog();
+  if (_itemEditCommitPendingAdd(state)) {
+    _renderItemEditDialog();
+  }
 };
 
 // Single-field write-back: clamps a raw input into the slot's bounds and sets
@@ -11875,6 +12080,12 @@ function _applyItemEditsInner(state) {
   // edits all land on the right field. Must run BEFORE clearing the global
   // since the helper reads _itemEditState.
   _itemEditCaptureInputs();
+  // If the Add row is open with a valid pending entry, commit it before
+  // applying. Otherwise a user who picks stat/role/value in the Add row and
+  // clicks Apply directly (without clicking the green Add button first) would
+  // silently lose their addition — and a freshly-added affix would fail to
+  // promote a white item to magic because the count would still be zero.
+  _itemEditCommitPendingAdd(state);
   _itemEditState = null;
   const { item, ext } = state;
 
@@ -11882,12 +12093,20 @@ function _applyItemEditsInner(state) {
   // set-bonus / runeword bits + padding) so the splicer can preserve everything
   // outside the main list.
   const itemList = (parsedChar.items || []).filter(x => !!x.isMerc === !!item.isMerc);
-  // Player section ends at the merc-section offset ('jf' marker), parsed at
-  // load time. Avoid byte-scanning for "JM" — bit-packed property data can
-  // accidentally produce a 0x4A 0x4D pair at a byte boundary, and a stale
-  // hit on a downstream item would truncate the slice. Resolver already
-  // blocks merc-item editing, so we only need the player section's end.
-  const sectionEnd = parsedChar.mercItemsOffset > 0 ? parsedChar.mercItemsOffset : 0;
+  // Player section ends at the corpse-list JM marker (the second JM in the
+  // file). Dynamically byte-scan for it rather than relying on a cached
+  // offset — flushVirtualItems / flushDeletedItems shift bytes and don't
+  // update any cached "section end" field, so a cached value goes stale.
+  // mercItemsOffset is the wrong marker entirely — it points at 'jf' which
+  // sits AFTER the corpse list, so using it includes the corpse section in
+  // the slice and the splicer ends up corrupting it.
+  let sectionEnd = 0;
+  const jmStart = parsedChar.itemsOffset;
+  if (jmStart >= 0) {
+    for (let i = jmStart + 4; i < workBytes.length - 1; i++) {
+      if (workBytes[i] === 0x4a && workBytes[i + 1] === 0x4d) { sectionEnd = i; break; }
+    }
+  }
   const oldLen = getItemBinaryLength(workBytes, item.byteOffset, itemList, sectionEnd);
   const oldItemBytes = workBytes.slice(item.byteOffset, item.byteOffset + oldLen);
 
@@ -12923,7 +13142,13 @@ const QUEST_DEFS = [
   // Act V (indices 21-26)
   {act:'Act V',   name:"Siege on Harrogath"},
   {act:'Act V',   name:"Rescue on Mount Arreat"},
-  {act:'Act V',   name:"Prison of Ice",             reward:{allres:10}, rewardDesc:'+10 All Resistances'},
+  // Anya's quest: the +10 all-res reward is gated on bit 7 (QF_REWARD_CONSUMED
+  // in D2 source) — the bit the game sets when the player USES the Scroll of
+  // Resistance, not the bit it sets on quest completion. Setting only the
+  // standard "complete" bit (0x0001) marks the quest done in the log but
+  // gives no resistance bonus. extraFlags adds the consumed-reward bit so the
+  // game's runtime applies the +10 res.
+  {act:'Act V',   name:"Prison of Ice",             reward:{allres:10}, rewardDesc:'+10 All Resistances', extraFlags:0x0080},
   {act:'Act V',   name:"Betrayal of Harrogath"},
   {act:'Act V',   name:"Rite of Passage"},
   {act:'Act V',   name:"Eve of Destruction"},
@@ -14664,7 +14889,10 @@ window.toggleQuest = function(diff, index, complete) {
     return;
   }
   const wasComplete = !!((parsedChar.quests[diff]?.[index] || 0) & 0x0001);
-  const flags = complete ? 0x1001 : 0x0000;
+  // Same per-quest extraFlags treatment as completeAllQuests — Anya needs
+  // bit 7 (0x0080, "scroll consumed") for the +10 all-res reward to apply.
+  const extra = (QUEST_DEFS[index] && QUEST_DEFS[index].extraFlags) || 0;
+  const flags = complete ? (0x1001 | extra) : 0x0000;
   commitQuest(diff, index, flags);
 
   // Apply quest rewards when completing (not already complete) or revoking (was complete via editor)

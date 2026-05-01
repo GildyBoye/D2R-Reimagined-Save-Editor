@@ -2363,5 +2363,53 @@
     {
         "Key": "ui_adv_sprites_desc",
         "enUS": "Render item cells using the game's .sprite files from base/sprites/ instead of abbreviated names. Missing files fall back to the name."
+    },
+    {
+        "Key": "ui_adv_section_display",
+        "enUS": "Display"
+    },
+    {
+        "Key": "ui_adv_section_saves",
+        "enUS": "Save-affecting options"
+    },
+    {
+        "Key": "ui_resistances",
+        "enUS": "Resistances"
+    },
+    {
+        "Key": "ui_resist_fire",
+        "enUS": "Fire Resistance"
+    },
+    {
+        "Key": "ui_resist_cold",
+        "enUS": "Cold Resistance"
+    },
+    {
+        "Key": "ui_resist_light",
+        "enUS": "Lightning Resistance"
+    },
+    {
+        "Key": "ui_resist_poison",
+        "enUS": "Poison Resistance"
+    },
+    {
+        "Key": "ui_anya_breakdown",
+        "enUS": "Anya: per difficulty"
+    },
+    {
+        "Key": "ui_resist_note",
+        "enUS": "Quest bonus only (Anya’s Scroll of Resistance, +10 all res per completed difficulty). Item bonuses and difficulty penalties are applied by the game at runtime."
+    },
+    {
+        "Key": "ui_anya_repair_hint",
+        "enUS": "Anya’s quest is marked complete but the resistance reward bit is missing on at least one difficulty — likely because this save was edited before the reward-bit fix landed. Click to apply the missing bit so the +10 all-res takes effect in-game."
+    },
+    {
+        "Key": "ui_anya_repair_btn",
+        "enUS": "Apply Anya’s Reward"
+    },
+    {
+        "Key": "ui_anya_repaired",
+        "enUS": "Applied Anya’s resistance reward on {n} difficulty/difficulties. Save the file and reload in-game to see the bonus."
     }
 ]
