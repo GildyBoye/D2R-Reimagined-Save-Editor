@@ -2411,5 +2411,9 @@
     {
         "Key": "ui_anya_repaired",
         "enUS": "Applied Anya’s resistance reward on {n} difficulty/difficulties. Save the file and reload in-game to see the bonus."
+    },
+    {
+        "Key": "ui_quantity",
+        "enUS": "Quantity"
     }
 ]

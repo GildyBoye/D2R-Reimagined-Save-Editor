@@ -10789,6 +10789,13 @@ function buildItemTooltipHtml(item, options) {
   if(item._enchantCount > 0 && item._maxEnchants > 0){
     flags.push(`<span style="color:#c060ff">Enchanted ${item._enchantCount}/${item._maxEnchants}</span>`);
   }
+  // Reimagined per-item stack count (shared-stash specialty items only — gems,
+  // runes, skulls, orbs). Surfaces the qty so a "1 binary entry × qty=23" item
+  // shows the same number the in-game UI does. Only flag when count > 1; a
+  // bare "Quantity: 1" is clutter on a single-item view.
+  if (item.advancedQty != null && item.advancedQty > 1) {
+    flags.push(`<span style="color:var(--d2-gold-bright)">${esc(L('ui_quantity','Quantity'))}: ${item.advancedQty}</span>`);
+  }
   // Resolve item stats from txt tables (not binary prop list)
   const resolved = resolveItemMods(item);
   // For items with decoded binary mods, show ALL stats in one list
@@ -11045,12 +11052,22 @@ window.showSharedStashItemDetail = function(byteOffsets, triggerEl, fromHover) {
     }
     content.innerHTML = buildItemTooltipHtml(item, { actionButtons });
   } else {
-    let html = `<div class="tt-name" style="color:var(--d2-gold)">Stack x${byteOffsets.length}</div><hr class="tt-divider">`;
+    // Sum advancedQty across every binary entry so the stack header reflects
+    // the true total — e.g. one ka3 entry with qty=7 + another with qty=3
+    // shows "Stack x10", not "Stack x2".
+    let total = 0;
+    const itemsForStack = [];
     for (const off of byteOffsets) {
       const item = findSharedStashItem(off);
       if (!item) continue;
+      itemsForStack.push(item);
+      total += (item.advancedQty != null ? item.advancedQty : 1);
+    }
+    let html = `<div class="tt-name" style="color:var(--d2-gold)">Stack x${total}</div><hr class="tt-divider">`;
+    for (const item of itemsForStack) {
       const {name,cls} = itemDisplayName(item);
-      html += `<div class="tt-stack-item"><div class="tt-name ${cls}" style="font-size:12px">${esc(name)}</div></div>`;
+      const qtySuffix = (item.advancedQty != null && item.advancedQty > 1) ? ` ×${item.advancedQty}` : '';
+      html += `<div class="tt-stack-item"><div class="tt-name ${cls}" style="font-size:12px">${esc(name)}${qtySuffix}</div></div>`;
     }
     content.innerHTML = html;
   }
@@ -13338,20 +13355,57 @@ function parseSharedStash() {
     const itemStart = jmOff + 4;
     const endOff = nextJm;
 
-    // Scan for items using the same pattern as the d2s parser
-    const items = [];
+    // pageType at sectionStart+0x14 (u32 LE). See doc/ARCHITECTURE.md § .d2i
+    // section layout. Computed up here (instead of after the item loop where
+    // it used to live) because the item loop needs it: pageType=1 specialty
+    // tabs carry per-item Reimagined qty fields that we read inline.
+    const sectionStart = jmOff - 0x40;
+    const pageTypeOff = sectionStart + 0x14;
+    const pageType = (sectionStart >= 0 && pageTypeOff + 4 <= buf.length)
+      ? (buf[pageTypeOff] | (buf[pageTypeOff+1]<<8) | (buf[pageTypeOff+2]<<16) | (buf[pageTypeOff+3]<<24)) >>> 0
+      : 0;
+    const isSpecialtyTab = (pageType === 1);
+
+    // Scan for items using the byte-pattern signature. The scanner is loose
+    // by design (matches any 5 bytes with the right bit shape), so it picks
+    // up false positives in dead space at the end of a section. Two filters
+    // catch those: huffman + itemNameByCode validation up front, and a hard
+    // stop at `count` items per section's JM header below — D2's per-section
+    // count is authoritative, so anything found past that is dead-space junk.
+    const candidates = [];
     for (let i = 0; i < endOff - itemStart - 4; i++) {
       const off = itemStart + i;
       const b0 = buf[off], b2 = buf[off + 2], b4 = buf[off + 4];
       if ((b0 & 0xE0) === 0x00 && (b2 & 0x80) && (b4 & 0x05) === 0x05) {
         try {
-          const [typeCode] = huffDecodeType(off);
+          const [typeCode, bitAfterHuff] = huffDecodeType(off);
           if (!typeCode || !typeCode.match(/^[a-zA-Z0-9]{2,3}$/) || !itemNameByCode[typeCode]) continue;
-          items.push({
+          const simple = rb(off, 21, 1);
+          // Reimagined's AdvancedStashStackable mechanism: compact items in
+          // the specialty section (gems, runes, skulls, orbs) carry a per-
+          // item quantity at bit_after_huff + 2, 9 bits, LSB-first. The 2
+          // leading bits appear to be a Reimagined marker (consistently
+          // observed as 0,1). Verified empirically against user-confirmed
+          // counts: ka3=7, oos=4, ooi=23, ooa=12, ooc=12.
+          //
+          // qty=0 is a real "zero items" value — Reimagined keeps slot
+          // entries even when fully consumed, so a Cham rune slot with no
+          // runes shows qty=0. We do NOT clamp 0 to 1; that would cause
+          // the editor to falsely show "1 Cham rune" when the user has none.
+          // Only the high-end bound is clamped (>511 indicates the byte
+          // read crossed into another item's bytes — false-positive guard).
+          let advancedQty = 1;
+          if (simple && isSpecialtyTab) {
+            try {
+              advancedQty = rb(off, bitAfterHuff + 2, 9);
+              if (advancedQty < 0 || advancedQty > 511) advancedQty = 0;
+            } catch (_) { advancedQty = 0; }
+          }
+          candidates.push({
             byteOffset: off,
             identified: rb(off, 4, 1),
             socketed: rb(off, 11, 1),
-            simple: rb(off, 21, 1),
+            simple,
             ethereal: rb(off, 22, 1),
             personalized: rb(off, 24, 1),
             runeword: rb(off, 26, 1),
@@ -13365,6 +13419,7 @@ function parseSharedStash() {
             numSockets: 0,
             itemLevel: 0,
             quality: 0,
+            advancedQty,                       // Reimagined per-item stack count
             isSharedStash: true,
             _propsDecoded: false,
           });
@@ -13375,12 +13430,14 @@ function parseSharedStash() {
       }
     }
 
-    // pageType at sectionStart+0x14 (u32 LE). See doc/ARCHITECTURE.md § .d2i section layout.
-    const sectionStart = jmOff - 0x40;
-    const pageTypeOff = sectionStart + 0x14;
-    const pageType = (sectionStart >= 0 && pageTypeOff + 4 <= buf.length)
-      ? (buf[pageTypeOff] | (buf[pageTypeOff+1]<<8) | (buf[pageTypeOff+2]<<16) | (buf[pageTypeOff+3]<<24)) >>> 0
-      : 0;
+    // Hard limit: D2 stores the section's item count in the JM header. Take
+    // exactly that many candidates in byte-order — items pack contiguously,
+    // so the first `count` candidates are real and anything past that is
+    // false-positive byte alignment in dead space. Without this cap, a tab
+    // that ends with 200+ bytes of unused space would surface phantom items
+    // (commonly Cham/Lo/Pul runes whose huffman encodings are short enough
+    // to randomly match against zero-padded bytes).
+    const items = candidates.slice(0, count);
 
     tabs.push({ jmOff, count, items, pageType });
   }
@@ -13394,16 +13451,28 @@ window.toggleSharedStashTab = function(tabId) {
   renderSharedStashTabs();
 };
 
-// Bucket a specialty-tab item by its type code. Reimagined stores gems, runes, and
-// materials together in one physical section (pageType=1), and the game splits them
-// into 3 visual tabs at render time based on code pattern. We mirror that rule here.
-//   - Runes:     /^r\d{2}$/         (r01..r33)
-//   - Gems:      /^g[a-z]{2}$/      (gcv, gfy, gpy, gsr, gzv, gmm, ...)
-//   - Materials: everything else in this tab (skl, ooc, ooa, ka3, pk1, ua1, 1gc, ...)
+// In-game, Reimagined's specialty stash splits visually into three sub-
+// panels even though the binary stores everything in one pageType=1 section:
+//
+//   GEMS panel:      gems (gc?/gf?/gs?/gl?/gp?), skulls (sk?), orbs (oo? +
+//                    ka3 + Orb of Renewal), super tier (gmm/gmt/gms/gme/
+//                    gmr/gmd/gmk/gmo). The CR/SH/RE/SO/IN/AS/CV charm-
+//                    looking icons in the user's screenshot are these orbs.
+//   RUNES panel:     r01..r33.
+//   MATERIALS panel: pandemonium keys, boss souls, worldstone shards, uber
+//                    ancient mats, boss items, pliers, rejuv potions, etc.
+//
+// Earlier the categorizer routed orbs into 'mats' (because they don't match
+// the /^g../ or /^r../ regexes). The list below restores the in-game split.
 function _specialtyCategory(typeCode) {
   if (!typeCode) return 'mats';
   if (/^r\d{2}$/.test(typeCode)) return 'runes';
-  if (/^g[a-z]{2}$/.test(typeCode)) return 'gems';
+  if (/^g[a-z]{2}$/.test(typeCode)) return 'gems';     // all gem tiers + super
+  if (/^sk[a-z]$/.test(typeCode))  return 'gems';     // skulls (skc/skf/sku/skl/skz)
+  if (/^oo[a-z]$/.test(typeCode))  return 'gems';     // Orbs of x (oos/ooi/ooa/ooc/ooe/oor)
+  if (typeCode === 'ka3')          return 'gems';     // Orb of Corruption (named differently)
+  if (typeCode === 'jwp' || typeCode === 'rup') return 'gems';  // Jewel/Rune Pliers — share the gems panel in-game
+  if (typeCode === '1gc')                       return 'gems';  // Gem Cluster — sits after Chaos Onyx in the gem grid
   return 'mats';
 }
 
@@ -13413,9 +13482,10 @@ function renderSharedStashTabs() {
 
   const stashW = 16, stashH = 13, cellPx = 29;
 
-  // Flatten physical tabs into a list of virtual tabs. pageType=1 (combined specialty
-  // section) becomes 3 virtual sub-tabs (Gems/Runes/Materials) so the editor shows the
-  // same split the game does in-game. pageType=0 tabs render as the normal numbered tabs.
+  // Flatten physical tabs into a list of virtual tabs. pageType=1 (specialty
+  // section) becomes 3 virtual sub-tabs (Gems / Runes / Materials) so the
+  // editor matches the 3 visual panels the in-game UI splits this section
+  // into. pageType=0 tabs render as the normal numbered tabs.
   const vtabs = [];
   let regularIdx = 0;
   for (let t = 0; t < sharedStashParsed.tabs.length; t++) {
@@ -13428,12 +13498,12 @@ function renderSharedStashTabs() {
         else if (cat === 'runes') runes.push(it);
         else mats.push(it);
       }
-      vtabs.push({ id: 's'+t+'_gems',  label: L('ui_ss_cat_gems','Gems'),           items: gems });
-      vtabs.push({ id: 's'+t+'_runes', label: L('ui_ss_cat_runes','Runes'),         items: runes });
-      vtabs.push({ id: 's'+t+'_mats',  label: L('ui_ss_cat_materials','Materials'), items: mats });
+      vtabs.push({ id: 's'+t+'_gems',  label: L('ui_ss_cat_gems','Gems'),           items: gems,  kind: 'specialty' });
+      vtabs.push({ id: 's'+t+'_runes', label: L('ui_ss_cat_runes','Runes'),         items: runes, kind: 'specialty' });
+      vtabs.push({ id: 's'+t+'_mats',  label: L('ui_ss_cat_materials','Materials'), items: mats,  kind: 'specialty' });
     } else {
       regularIdx++;
-      vtabs.push({ id: 't'+t, label: `${L('ui_ss_tab_prefix','Tab')} ${regularIdx}`, items: tab.items });
+      vtabs.push({ id: 't'+t, label: `${L('ui_ss_tab_prefix','Tab')} ${regularIdx}`, items: tab.items, kind: 'regular' });
     }
   }
 
@@ -13469,7 +13539,19 @@ function renderSharedStashTabs() {
 
     if (isOpen) {
       html += `<div style="padding:4px 14px 14px;border-top:1px solid var(--d2-border)">`;
-      html += buildSharedStashGrid(vt.items, stashW, stashH, cellPx);
+      // Specialty tabs (gems/runes/mats) use a by-type grouping that mirrors
+      // the in-game UI: each type gets one cell with a stack count, regardless
+      // of how the binary's x/y positions were stored. Regular tabs keep the
+      // literal-position grid since arbitrary placements matter there.
+      // Specialty sub-tabs: pull the layout kind from the vtab id suffix
+      // ('s5_gems' → 'gems', 's5_runes' → 'runes', 's5_mats' → 'mats') so
+      // the renderer picks the right slot table.
+      let layoutKind = 'gems';
+      if (vt.id.endsWith('_runes')) layoutKind = 'runes';
+      else if (vt.id.endsWith('_mats')) layoutKind = 'mats';
+      html += (vt.kind === 'specialty')
+        ? buildSpecialtyStashGrid(vt.items, stashW, stashH, cellPx, layoutKind)
+        : buildSharedStashGrid(vt.items, stashW, stashH, cellPx);
       html += `</div>`;
     }
 
@@ -13498,6 +13580,253 @@ window.sharedStashJumpToHit = function(byteOffset, vtabId) {
   renderSharedStashTabs();
   _scrollSearchHitIntoView(byteOffset);
 };
+
+// Specialty-tab grid layouts. Reimagined's specialty stash uses fixed
+// type-slot positions — each item type with the AdvancedStashStackable=1
+// flag in misc.txt gets a dedicated cell in the grid. Empty slots show
+// even when the player has none of that type, so the layout is identical
+// across all characters and all save states.
+//
+// We can't read the game's internal slot table directly, so this is a
+// hand-built layout based on the in-game screenshot + misc.txt grouping
+// rules. Each map entry is `code -> { x, y }`. Codes not in the map fall
+// back to row-major auto-fill at the end.
+//
+// GEMS sub-tab layout — matches the in-game "gems" panel exactly:
+//
+//   Row 0: vanilla diamonds × 5, vanilla emeralds × 5, vanilla rubies × 5
+//          (gcw gfw gsw glw gpw | gcg gfg gsg glg gpg | gcr gfr gsr glr gpr)
+//
+//   Row 1: vanilla topaz × 5, vanilla amethyst × 5, vanilla sapphire × 5
+//          (gcy gfy gsy gly gpy | gcv gfv gsv gzv gpv | gcb gfb gsb glb gpb)
+//          (gzv = flawless amethyst — Reimagined uses 'z' instead of 'l' for
+//           that one slot, special-cased below.)
+//
+//   Row 2: ka3 (Corruption), ooe (Shadows), oor (Renewal), [empty],
+//          5 vanilla skulls (skc skf sku skl skz), [empty],
+//          jwp (Jewel/Gem Pliers), rup (Rune Pliers)
+//
+//   Row 3: oos (Socketing), ooi (Infusion), ooa (Assemblage), ooc (Conversion),
+//          super tier: gmd gme gmr gmt gmm gms (6 colors),
+//          gmk (super skull), gmo (Chaos Onyx)
+//
+// RUNES sub-tab: r01..r33 packed left-to-right, 16 per row.
+//
+// MATERIALS sub-tab: grouped by purpose (pandemonium keys, boss souls,
+// worldstone shards, uber ancient mats, boss items, gem cluster, rejuv
+// potions, magic-find / experience potions). Orbs and pliers are NOT here —
+// they belong in the gems panel.
+const SPECIALTY_GEM_LAYOUT = (() => {
+  const out = {};
+  // Helper: place a list of codes left-to-right starting at (x, y)
+  const place = (codes, x, y) => codes.forEach((c, i) => { out[c] = { x: x + i, y }; });
+
+  // Row 0: diamonds, emeralds, rubies (3 × 5 tiers = 15 cells)
+  place(['gcw','gfw','gsw','glw','gpw'], 0,  0);  // chipped → perfect diamond
+  place(['gcg','gfg','gsg','glg','gpg'], 5,  0);  // chipped → perfect emerald
+  place(['gcr','gfr','gsr','glr','gpr'], 10, 0);  // chipped → perfect ruby
+
+  // Row 1: topaz, amethyst, sapphire (note gzv for flawless amethyst)
+  place(['gcy','gfy','gsy','gly','gpy'], 0,  1);  // chipped → perfect topaz
+  place(['gcv','gfv','gsv','gzv','gpv'], 5,  1);  // chipped → perfect amethyst
+  place(['gcb','gfb','gsb','glb','gpb'], 10, 1);  // chipped → perfect sapphire
+
+  // Row 2: 3 orbs, blank, 5 skulls, blank, 2 pliers
+  place(['ka3','ooe','oor'],             0,  2);  // Corruption / Shadows / Renewal
+  place(['skc','skf','sku','skl','skz'], 4,  2);  // 5 vanilla skulls
+  place(['jwp','rup'],                   10, 2);  // Jewel pliers, Rune pliers
+
+  // Row 3: 4 orbs, then 8 super-tier reimagined gems, then Gem Cluster
+  place(['oos','ooi','ooa','ooc'],       0,  3);  // Socketing / Infusion / Assemblage / Conversion
+  place(['gmd','gme','gmr','gmt','gmm','gms','gmk','gmo','1gc'], 4, 3);
+  // gmd diamond / gme emerald / gmr ruby / gmt topaz / gmm amethyst / gms sapphire
+  // gmk super skull / gmo chaos onyx / 1gc Gem Cluster (sits right after Onyx)
+
+  return out;
+})();
+
+const SPECIALTY_RUNE_LAYOUT = (() => {
+  const out = {};
+  for (let i = 1; i <= 33; i++) {
+    const code = 'r' + String(i).padStart(2, '0');
+    out[code] = { x: (i - 1) % 16, y: Math.floor((i - 1) / 16) };
+  }
+  return out;
+})();
+
+const SPECIALTY_MAT_LAYOUT = (() => {
+  // Hand-grouped rows by purpose, packed left-to-right within each row.
+  // Orbs (ka3 + oo?), pliers (jwp, rup), and Gem Cluster (1gc) are
+  // intentionally absent — they live in the gems panel per the in-game UI.
+  const rows = [
+    // Pandemonium keys + boss souls + Token of Absolution + Standard of Heroes
+    ['pk1','pk2','pk3','dhn','bey','mbr','toa','std'],
+    // Worldstone shards (Western/Eastern/Southern/Deep/Northern)
+    ['xa1','xa2','xa3','xa4','xa5'],
+    // Uber ancient summon materials
+    ['ua1','ua2','ua3','ua4','ua5'],
+    // Boss items
+    ['mpa','blc','dia'],
+    // Consumables
+    ['rvs','rvl','mfp','xpp'],
+  ];
+  const out = {};
+  rows.forEach((codes, y) => {
+    codes.forEach((code, x) => { out[code] = { x, y }; });
+  });
+  return out;
+})();
+
+// Specialty-tab grid (gems / runes / materials). Renders the FIXED layout
+// defined above (one cell per known type, empty cells preserved between
+// them). The user's actual items are matched against the layout by type
+// code — present types render with their stack count, absent types render
+// as an empty slot. This mirrors the in-game UI exactly: every gem type
+// always has a designated slot whether the player has any or not.
+//
+// Items whose type code isn't in the layout (mod-added or unrecognized)
+// auto-fill into trailing empty cells via row-major search so nothing is
+// silently dropped. The full 16×13 grid is always rendered, matching the
+// reserved Horadric Cube area in the in-game gem panel.
+function buildSpecialtyStashGrid(items, gridW, gridH, cellPx, layoutKind) {
+  const stashItems = items.filter(it => it.parent === 0 && it.storage === 5);
+
+  // Pick the layout map for this sub-tab. Default to gems if unspecified.
+  const layout = (layoutKind === 'runes') ? SPECIALTY_RUNE_LAYOUT
+              : (layoutKind === 'mats')  ? SPECIALTY_MAT_LAYOUT
+              :                            SPECIALTY_GEM_LAYOUT;
+
+  // Group user's items by type code. Each entry collects every instance for
+  // stack count + click-tooltip purposes.
+  const typeStacks = new Map();
+  for (const item of stashItems) {
+    const code = item.typeCode || '?';
+    if (!typeStacks.has(code)) typeStacks.set(code, []);
+    typeStacks.get(code).push(item);
+  }
+
+  // Build cellMap from the LAYOUT (fixed positions for known codes), then
+  // overflow any unknown codes into the first available free cells.
+  const cellMap = new Map(); // "x,y" -> code
+  const known = new Set(Object.keys(layout));
+  for (const code of known) {
+    const { x, y } = layout[code];
+    if (x >= 0 && x < gridW && y >= 0 && y < gridH) {
+      cellMap.set(`${x},${y}`, code);
+    }
+  }
+  const findFreeCell = () => {
+    for (let y = 0; y < gridH; y++) {
+      for (let x = 0; x < gridW; x++) {
+        if (!cellMap.has(`${x},${y}`)) return { x, y };
+      }
+    }
+    return null;
+  };
+  for (const code of typeStacks.keys()) {
+    if (known.has(code)) continue;
+    const free = findFreeCell();
+    if (!free) break;
+    cellMap.set(`${free.x},${free.y}`, code);
+  }
+
+  // Per-layout visible row & column count. Each panel only uses a subset of
+  // the 16×13 grid for real slots — the unused cells beyond would just be
+  // a sea of empty cells. Cap each panel to its filled region:
+  //   gems:  4 rows × 15 cols (deepest gem slot is col 14 in rows 0-1)
+  //   runes: 3 rows × 16 cols (16-per-row layout fills the width)
+  //   mats:  5 rows × 8  cols (widest material row is the 8-wide keys+souls)
+  // The deepestX/deepestY safeguards expand the cap if a save contains
+  // mod-added codes that auto-fill past the base cap, so nothing is hidden.
+  const baseRows = (layoutKind === 'runes') ? 3
+                 : (layoutKind === 'mats')  ? 5
+                 :                            4;
+  const baseCols = (layoutKind === 'runes') ? 16
+                 : (layoutKind === 'mats')  ? 8
+                 :                            15;
+  let deepestX = 0, deepestY = 0;
+  for (const key of cellMap.keys()) {
+    const [xs, ys] = key.split(',');
+    const x = parseInt(xs, 10), y = parseInt(ys, 10);
+    if (x > deepestX) deepestX = x;
+    if (y > deepestY) deepestY = y;
+  }
+  const visibleRows = Math.min(gridH, Math.max(baseRows, deepestY + 1));
+  const visibleCols = Math.min(gridW, Math.max(baseCols, deepestX + 1));
+
+  let html = `<div class="inv-grid-wrap" style="display:grid;grid-template-columns:repeat(${visibleCols},${cellPx}px);grid-template-rows:repeat(${visibleRows},${cellPx}px);gap:1px;position:relative;width:max-content">`;
+
+  // Build the inner-cell HTML for a "this type goes here but the player has
+  // none" placeholder slot. Renders the same sprite/name as a real item but
+  // with reduced opacity, so the user can see at a glance what gem/orb/rune
+  // belongs in each cell. Uses a phantom item with just typeCode + quality=2
+  // so _itemCellVisualHtml's sprite-resolver picks the right asset.
+  const buildEmptySlot = (code) => {
+    const slotName = (itemNameByCode && itemNameByCode[code]) || code;
+    const phantom  = { typeCode: code, quality: 2 };
+    const displayName = abbreviateItemName(slotName, 1, 1);
+    const visual = _itemCellVisualHtml(phantom, displayName, 'iq-norm');
+    // Wrap in an inv-item-style cell so the visual fills the same area as a
+    // real stacked cell, then apply the dim+desaturate to make it clearly
+    // distinguishable from active stacks.
+    return `<div class="inv-item iq-norm" title="${esc(slotName)} (none)"
+      style="position:relative;opacity:0.30;filter:grayscale(0.6);pointer-events:none">
+      ${visual}
+    </div>`;
+  };
+
+  for (let y = 0; y < visibleRows; y++) {
+    for (let x = 0; x < visibleCols; x++) {
+      const code = cellMap.get(`${x},${y}`);
+      if (!code) {
+        // No type assigned to this cell at all (gap between groups in the
+        // layout, e.g. row 2 between orbs and skulls). Render a plain empty
+        // inventory cell.
+        html += `<div class="inv-cell-empty"></div>`;
+        continue;
+      }
+      const stack = typeStacks.get(code);
+      // Sum the per-instance advancedQty across the stack. 1 ka3 entry with
+      // qty=7 → 7. Two entries with qty=3 each → 6. Falls back to entry count
+      // when advancedQty isn't set (regular tabs, non-Reimagined saves), which
+      // still gives the right number for non-stackable item categories.
+      const count = stack
+        ? stack.reduce((sum, it) => sum + (it.advancedQty != null ? it.advancedQty : 1), 0)
+        : 0;
+      if (!stack || stack.length === 0 || count === 0) {
+        // Reserved slot (player has none of this type, OR Reimagined's qty=0
+        // placeholder marking a fully-consumed stack). Show the slot's sprite
+        // greyed out so the user sees what belongs here.
+        html += buildEmptySlot(code);
+        continue;
+      }
+      const topItem = stack[0];
+      const { name, cls } = itemDisplayName(topItem);
+      // Always render the stack count badge — the in-game UI shows "1" for
+      // single items, not just for stacks of 2+. Lets the user immediately
+      // see how many of each type they have without hovering.
+      const countBadge = `<div style="position:absolute;bottom:1px;right:2px;font-size:9px;font-weight:bold;color:var(--d2-gold-bright);font-family:'Crimson Text',serif;text-shadow:0 0 3px #000,0 0 3px #000;line-height:1">${count}</div>`;
+      const clickList = stack.map(it => it.byteOffset).join(',');
+      const borderCls = itemQualityCls(topItem);
+      const displayName = abbreviateItemName(name, 1, 1);
+      const visual = _itemCellVisualHtml(topItem, displayName, cls);
+      const stackHit = stack.some(it => it.byteOffset === _itemSearchHighlightOffset);
+      const hitCls = stackHit ? ' search-hit' : '';
+      const hitAttr = stackHit ? ` data-search-hit-offset="${_itemSearchHighlightOffset}"` : '';
+      html += `<div class="inv-item ${borderCls}${hitCls}"${hitAttr}
+        style="position:relative"
+        onclick="showSharedStashItemDetail([${clickList}],this);pinTooltip()"
+        onmouseenter="showSharedStashItemDetail([${clickList}],this,true)"
+        onmouseleave="closeTooltip(false)"
+        title="${esc(name)} ×${count}">
+        ${countBadge}
+        ${visual}
+      </div>`;
+    }
+  }
+  html += '</div>';
+  return html;
+}
 
 function buildSharedStashGrid(items, gridW, gridH, cellPx) {
   // Only show items actually stored on this stash page (parent=0, storage=5)
