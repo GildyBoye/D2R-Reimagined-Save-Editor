@@ -2066,6 +2066,24 @@ function _parseMagicMods(row) {
   return mods;
 }
 
+// Parse the itype1..N + etype1..N filter columns from a magicprefix/suffix row.
+// itype = "this affix can roll on items whose type chain includes any of these"
+// etype = "this affix is excluded from items whose type chain includes any of these"
+// Empty itype list = the affix has no item-class restriction (rolls on anything
+// not blocked by etype). The editor uses these to filter the Add Property
+// dropdown to only stats that would actually appear on the open item.
+function _parseAffixTypeFilters(row) {
+  const grab = (prefix) => {
+    const out = [];
+    for (let j = 1; j <= 7; j++) {
+      const v = (row[`${prefix}${j}`] || '').trim();
+      if (v) out.push(v);
+    }
+    return out;
+  };
+  return { itypes: grab('itype'), etypes: grab('etype') };
+}
+
 function _parseItemProps(row, maxJ) {
   const props = [];
   for (let j = 1; j <= maxJ; j++) {
@@ -2088,8 +2106,9 @@ function buildMagicAffixModTables() {
       const id = i + 1;
       const name = (row['name'] || row['Name'] || '').trim();
       const mods = _parseMagicMods(row);
+      const filt = _parseAffixTypeFilters(row);
       if (name || mods.length) {
-        MAGIC_PREFIX_MODS[id] = { name: stringTable[name] || name, mods };
+        MAGIC_PREFIX_MODS[id] = { name: stringTable[name] || name, mods, itypes: filt.itypes, etypes: filt.etypes };
       }
     });
     console.log(`buildMagicAffixModTables: ${Object.keys(MAGIC_PREFIX_MODS).length} prefix mod entries`);
@@ -2100,8 +2119,9 @@ function buildMagicAffixModTables() {
       const id = i + 1;
       const name = (row['name'] || row['Name'] || '').trim();
       const mods = _parseMagicMods(row);
+      const filt = _parseAffixTypeFilters(row);
       if (name || mods.length) {
-        MAGIC_SUFFIX_MODS[id] = { name: stringTable[name] || name, mods };
+        MAGIC_SUFFIX_MODS[id] = { name: stringTable[name] || name, mods, itypes: filt.itypes, etypes: filt.etypes };
       }
     });
     console.log(`buildMagicAffixModTables: ${Object.keys(MAGIC_SUFFIX_MODS).length} suffix mod entries`);
@@ -3374,6 +3394,41 @@ function buildItemTypeSets() {
 let MAX_SOCKETS_BY_CODE = {};  // code → max sockets (0 = not socketable)
 let ITEM_TYPE_BY_CODE = {};    // code → type string (axe, swor, helm, tors, etc.)
 
+// Item-type ancestor chains, walked from itemtypes.txt's Equiv1/Equiv2 columns.
+// Given a type code (e.g. 'swor'), the chain is the set of all ancestor types
+// it inherits from ({'swor', 'mele', 'weap', 'any'} or similar). Used by the
+// item-property editor to filter the Add dropdown — an affix that can roll
+// on type 'weap' should be addable to any weapon, not just things explicitly
+// marked 'weap' in their typeCode.
+let ITEM_ITYPE_CHAIN = {};
+
+function buildItemTypeChains() {
+  ITEM_ITYPE_CHAIN = {};
+  const data = baseData['itemtypes'];
+  if (!data) return;
+  const equiv = {};
+  for (const row of data.rows) {
+    const code = (row['Code']||'').trim();
+    if (!code) continue;
+    const eq1 = (row['Equiv1']||'').trim();
+    const eq2 = (row['Equiv2']||'').trim();
+    equiv[code] = [eq1, eq2].filter(Boolean);
+  }
+  function chain(code, visited) {
+    if (visited.has(code)) return new Set();
+    visited.add(code);
+    const out = new Set([code]);
+    for (const eq of (equiv[code] || [])) {
+      for (const c of chain(eq, visited)) out.add(c);
+    }
+    return out;
+  }
+  for (const code of Object.keys(equiv)) {
+    ITEM_ITYPE_CHAIN[code] = chain(code, new Set());
+  }
+  console.log(`buildItemTypeChains: ${Object.keys(ITEM_ITYPE_CHAIN).length} type chains`);
+}
+
 function buildSocketAndTypeMap() {
   MAX_SOCKETS_BY_CODE = {};
   ITEM_TYPE_BY_CODE = {};
@@ -3877,6 +3932,7 @@ function buildItemNameMap() {
   buildStatRangesMap();
   buildStatDescriptors();
   buildSocketAndTypeMap();
+  buildItemTypeChains();
   buildEquipRestrictions();
   // buildItemCatalog() depends on ITEM_TYPE_BY_CODE + ITEM_BODYLOC for unique-item
   // armor/weapon classification, so it must run AFTER buildSocketAndTypeMap and
@@ -4392,6 +4448,66 @@ let _itemSpriteMode = false;
 // that opens a property-editor dialog. Off by default so casual viewing
 // can't accidentally mutate properties.
 let _itemEditMode = false;
+// Has the user typed the "I know what I'm doing" phrase to unlock the
+// Advanced Options panel? Persisted across reloads — first-run only.
+let _advOptsAcknowledged = false;
+// "Remember advanced options" toggle — persists toggle states across reloads
+// when checked. Auto-save handles persist independently via IndexedDB.
+let _advOptsRemember = false;
+
+const ADV_OPTS_STORAGE = {
+  acknowledged: 'd2rr.adv.acknowledged',
+  remember:     'd2rr.adv.remember',
+  spriteMode:   'd2rr.adv.itemSpriteMode',
+  editMode:     'd2rr.adv.itemEditMode',
+};
+
+function _loadAdvOptsState() {
+  try {
+    _advOptsAcknowledged = localStorage.getItem(ADV_OPTS_STORAGE.acknowledged) === '1';
+    _advOptsRemember     = localStorage.getItem(ADV_OPTS_STORAGE.remember)     === '1';
+    if (_advOptsRemember) {
+      _itemSpriteMode = localStorage.getItem(ADV_OPTS_STORAGE.spriteMode) === '1';
+      _itemEditMode   = localStorage.getItem(ADV_OPTS_STORAGE.editMode)   === '1';
+    }
+  } catch (_) { /* localStorage unavailable — soldier on with defaults */ }
+}
+_loadAdvOptsState();
+
+function _saveAdvOptsToggleStates() {
+  if (!_advOptsRemember) return;
+  try {
+    localStorage.setItem(ADV_OPTS_STORAGE.spriteMode, _itemSpriteMode ? '1' : '0');
+    localStorage.setItem(ADV_OPTS_STORAGE.editMode,   _itemEditMode   ? '1' : '0');
+  } catch (_) {}
+}
+
+// Permissive phrase match — case-insensitive, accepts curly or straight apostrophes,
+// trims whitespace. The user types something close enough, the gate unlocks.
+function _advOptsPhraseMatches(input) {
+  const norm = (input || '').replace(/[\u2019]/g, "'").toLowerCase().trim();
+  return norm === "i know what i'm doing";
+}
+
+window._advOptsCheckGate = function(input) {
+  if (!_advOptsPhraseMatches(input)) return;
+  _advOptsAcknowledged = true;
+  try { localStorage.setItem(ADV_OPTS_STORAGE.acknowledged, '1'); } catch (_) {}
+  _refreshAdvancedOptionsDialog();
+};
+
+window._advOptsToggleRemember = function(checked) {
+  _advOptsRemember = !!checked;
+  try {
+    localStorage.setItem(ADV_OPTS_STORAGE.remember, _advOptsRemember ? '1' : '0');
+    if (_advOptsRemember) {
+      _saveAdvOptsToggleStates();
+    } else {
+      localStorage.removeItem(ADV_OPTS_STORAGE.spriteMode);
+      localStorage.removeItem(ADV_OPTS_STORAGE.editMode);
+    }
+  } catch (_) {}
+};
 // Parsed-sprite cache keyed by asset path (e.g. "charm/charm_large"). Each
 // entry is a promise resolving to { width, height, rgba } or null on any
 // failure. Failures are cached so we don't retry the same 404 forever.
@@ -6692,10 +6808,48 @@ window.openAdvancedOptions = function() {
       </span>
     </label>`;
 
+  // First-run gate — block toggle interaction until the user types the magic
+  // phrase. Acknowledgment is one-way and persists across reloads, so this
+  // banner only ever appears once per browser profile.
+  const gateBanner = !_advOptsAcknowledged ? `
+    <div style="border:1px solid var(--d2-red);background:rgba(139,32,32,0.10);padding:10px 12px;margin-bottom:12px;border-radius:2px">
+      <div style="color:#d46060;font-family:'Cinzel',serif;font-size:12px;letter-spacing:1px;margin-bottom:6px">
+        \u26A0 ${esc(L('ui_adv_gate_header','FIRST-TIME WARNING'))}
+      </div>
+      <div style="color:var(--d2-text);font-size:11px;line-height:1.5;margin-bottom:8px">
+        ${esc(L('ui_adv_gate_body','Advanced options can break saves if used carelessly. Type the phrase below to unlock the toggles.'))}
+      </div>
+      <input type="text" id="advOptsGateInput" placeholder="${esc(L('ui_adv_gate_placeholder',"Type: I know what I'm doing"))}"
+             oninput="_advOptsCheckGate(this.value)"
+             autocomplete="off" spellcheck="false"
+             style="width:100%;box-sizing:border-box;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-text);padding:6px 8px;font-family:'Crimson Text',serif;font-size:13px;outline:none">
+    </div>` : '';
+
+  // Toggle container is gated on the acknowledgment — visually dimmed and
+  // pointer-events:none until the phrase matches, then re-renders enabled.
+  const toggleStyle = !_advOptsAcknowledged ? 'opacity:0.45;pointer-events:none;user-select:none' : '';
+
+  // Remember-options checkbox at the bottom — independent of the gate. When
+  // on, every toggle change writes to localStorage; off clears any persisted
+  // state so the next reload starts with defaults.
+  const rememberRow = `
+    <label style="display:flex;align-items:center;gap:8px;padding:10px 12px;margin-top:14px;border-top:1px solid var(--d2-border);cursor:pointer">
+      <input type="checkbox" id="advOptsRememberToggle" ${_advOptsRemember ? 'checked' : ''}
+             ${!_advOptsAcknowledged ? 'disabled' : ''}
+             onchange="_advOptsToggleRemember(this.checked)">
+      <span style="flex:1;color:var(--d2-text-dim);font-size:11px">
+        ${esc(L('ui_adv_remember','Remember advanced options across reloads'))}
+      </span>
+    </label>`;
+
   showDialog({
     title:   L('ui_adv_options_title', 'Advanced Options'),
     titleTone: 'gold',
-    bodyHtml: `<div style="padding:4px 2px 8px 2px;font-size:13px;line-height:1.5">${toggleRow}${targetsHtml}${spriteToggle}${editToggle}</div>`,
+    bodyHtml: `<div style="padding:4px 2px 8px 2px;font-size:13px;line-height:1.5">
+      ${gateBanner}
+      <div id="advOptsToggles" style="${toggleStyle}">${toggleRow}${targetsHtml}${spriteToggle}${editToggle}</div>
+      ${rememberRow}
+    </div>`,
     buttons: [{ label: L('ui_btn_close', 'Close'), tone: 'ghost' }],
   });
 };
@@ -6704,12 +6858,14 @@ window.openAdvancedOptions = function() {
 // tooltip shows the Edit Item action when an item is next viewed.
 window.onItemEditToggleChange = function(checkbox) {
   _itemEditMode = !!checkbox.checked;
+  _saveAdvOptsToggleStates();
 };
 
 // Item sprite toggle handler. Flipping it re-renders the current tab so
 // cells immediately swap between sprite canvases and name divs.
 window.onItemSpriteToggleChange = function(checkbox) {
   _itemSpriteMode = !!checkbox.checked;
+  _saveAdvOptsToggleStates();
   if (activeTab) renderTab();
 };
 
@@ -9893,8 +10049,13 @@ function _readPropListAt(buf, byteOff, startBit) {
     const param=pb?rbL(bit,pb):0;bit+=pb;
     const valueBitOff=bit;
     const stored=rbL(bit,sb);bit+=sb;
-    const def=STAT_DEF[id];
-    const value=stored-(def?def[1]:0);
+    // Resolve saveAdd via STAT_DEF first (hardcoded vanilla), falling back to
+    // STAT_BY_NAME (parsed live from itemstatcost.txt) for Reimagined-added
+    // stats that STAT_DEF doesn't cover. Vanilla stats are byte-identical to
+    // before because STAT_DEF takes priority; only previously-zero-default
+    // mod stats now get their real bias applied.
+    const saveAddP = _itemEditSaveAddById(id);
+    const value=stored-saveAddP;
     // Handle follow stats (elemental damage min+max pairs, cold/poison also have length).
     // value2 captures the first follower (max damage), value3 captures the second (length
     // in frames for cold/poison — 25 frames = 1 second). Without value3 the display layer
@@ -9908,15 +10069,14 @@ function _readPropListAt(buf, byteOff, startBit) {
       if(sb2){
         bit+=pb2;
         const stored2=rbL(bit,sb2);bit+=sb2;
-        const def2=STAT_DEF[s2];
-        const v2=stored2-(def2?def2[1]:0);
+        const v2=stored2-_itemEditSaveAddById(s2);
         if(f===0)      value2=v2;
         else if(f===1) value3=v2;
       } else {
         bit+=pb2;
       }
     }
-    mods.push({id,param,stored,value,value2,value3,paramBitOff,valueBitOff,valueBits:sb,paramBits:pb,saveAdd:def?def[1]:0});
+    mods.push({id,param,stored,value,value2,value3,paramBitOff,valueBitOff,valueBits:sb,paramBits:pb,saveAdd:saveAddP});
   }
   return {mods,endBit:bit,terminated};
 }
@@ -10827,10 +10987,14 @@ function _itemEditTypeReason(item) {
 
 // Editing is policy-restricted to character inventory + personal stash AND
 // to gear types that carry editable properties. Returns:
-//   { item, buf }  → editable
-//   { reject: 'location' } → wrong storage / merc / vault / grail / shared
-//   { reject: 'type' }     → wrong item type (potion / gem / rune / etc.)
-//   null                   → not found in char.items at all
+//   { item, buf }       → editable
+//   { reject: 'location' }  → wrong storage / merc / vault / grail / shared
+//   { reject: 'type' }      → wrong item type (potion / gem / rune / etc.)
+//   { reject: 'runeword' }  → runeword item (separate runeword prop list would
+//                             double-encode on splice; mods come from rune combo)
+//   { reject: 'unid' }      → item is unidentified (mods would be invisible
+//                             until ID'd in-game; refuse to keep edits visible)
+//   null                    → not found in char.items at all
 function _itemEditResolveItem(byteOffset) {
   if (!parsedChar?.items) return null;
   const it = parsedChar.items.find(x => x.byteOffset === byteOffset);
@@ -10840,6 +11004,12 @@ function _itemEditResolveItem(byteOffset) {
   }
   if (_itemEditTypeReason(it)) {
     return { reject: 'type' };
+  }
+  if (it.runeword) {
+    return { reject: 'runeword' };
+  }
+  if (!it.identified) {
+    return { reject: 'unid' };
   }
   return { item: it, buf: workBytes };
 }
@@ -10872,9 +11042,8 @@ function _itemEditEncodePropList(mods) {
       const sb2 = (s2 < SAVE_BITS.length ? SAVE_BITS[s2] : 0);
       if (sb2) {
         pushBits(0, pb2);
-        const def2 = STAT_DEF[s2];
         const fv = (f === 0 ? m.value2 : m.value3) || 0;
-        pushBits(fv + (def2 ? def2[1] : 0), sb2);
+        pushBits(fv + _itemEditSaveAddById(s2), sb2);
       }
     }
   }
@@ -10933,15 +11102,10 @@ function _itemEditSpliceItemBytes(oldItemBytes, ext, newPropBits, qualityChange)
 // file-size header field. Caller must call recalcChecksum afterwards.
 function _itemEditReplaceItemBytes(item, newItemBytes) {
   const itemList = (parsedChar.items || []).filter(x => !!x.isMerc === !!item.isMerc);
-  let sectionEnd = 0;
-  if (!item.isMerc) {
-    const jmOff = parsedChar.itemsOffset;
-    if (jmOff >= 0) {
-      for (let i = jmOff + 4; i < workBytes.length - 1; i++) {
-        if (workBytes[i] === 0x4a && workBytes[i + 1] === 0x4d) { sectionEnd = i; break; }
-      }
-    }
-  }
+  // See comment in _applyItemEdits — use the parsed merc-section offset
+  // rather than scanning for a "JM" byte pair that can occur randomly inside
+  // bit-packed property data and lead to a truncated slice.
+  const sectionEnd = parsedChar.mercItemsOffset > 0 ? parsedChar.mercItemsOffset : 0;
   const oldLen = getItemBinaryLength(workBytes, item.byteOffset, itemList, sectionEnd);
   const newLen = newItemBytes.length;
   const delta  = newLen - oldLen;
@@ -10963,46 +11127,162 @@ function _itemEditReplaceItemBytes(item, newItemBytes) {
   writeU32LE(workBytes, 8, workBytes.length);
 }
 
-// Stats safe to surface in the Add Property dropdown:
-//   - saveBits > 0  (0-bit stats can't be encoded meaningfully)
-//   - paramBits == 0 (skill-grant / charged-skill / aura mods need a param,
-//     which the simple Add UI doesn't yet support — Phase 3)
-//   - Not a follow stat (followers are added as part of their parent stat,
-//     not standalone — adding a maxdmg without its mindmg partner produces
-//     a mid-stream parse failure on game load)
-// STAT_RANGES is consulted for bounds when available, but its absence no
-// longer disqualifies a stat — we fall back to the bit-width's natural max
-// so the Add flow still works on builds where item_stat_ranges.txt failed
-// to load.
-function _itemEditAddableStats() {
+// Stat IDs that should never appear in the Add dropdown regardless of what
+// the affix tables say. "dye" / "state" stats are cosmetic / engine-internal —
+// editing them produces visual or behavioural surprises rather than the
+// gameplay properties a user actually wants on an item.
+function _itemEditIsBlockedStat(name) {
+  if (!name) return true;
+  if (/dye/i.test(name)) return true;
+  if (/^state$/i.test(name)) return true;
+  return false;
+}
+
+function _itemEditIsFollowerStat(id) {
+  for (let parent = 0; parent < FOLLOW_STATS.length; parent++) {
+    const cnt = FOLLOW_STATS[parent] || 0;
+    for (let f = 1; f <= cnt; f++) {
+      if (parent + f === id) return true;
+    }
+  }
+  return false;
+}
+
+// Stats whose binary encoding REQUIRES inline follower values (elemental
+// damage min always followed by max; cold/poison also carry length). The
+// simple Add UI only collects one value, so adding a follow-parent without
+// also setting its followers produces "fire damage 10-0" garbage. Until
+// the UI grows a dual-value form, hide these from the dropdown — existing
+// follow stats already on items can still be edited (their value2/value3
+// are decoded and round-tripped by the splicer).
+function _itemEditHasFollowers(id) {
+  return id >= 0 && id < FOLLOW_STATS.length && FOLLOW_STATS[id] > 0;
+}
+
+// Build the set of stat IDs the open item could legally roll, classified by
+// affix role. Driven by magicprefix.txt + magicsuffix.txt (itype/etype
+// filters per item type) and properties.txt (prop code → stat IDs). Each
+// stat carries the roles it can fill on this item — `prefix`, `suffix`, or
+// both — so the Add UI can lock the role dropdown to what D2 actually allows
+// (a stat that only ever rolls as a suffix won't be selectable as a prefix).
+function _itemEditAddableStatsForItem(item) {
+  if (!item) return [];
+
+  const code     = (item.typeCode || '').trim();
+  const baseType = ITEM_TYPE_BY_CODE[code] || '';
+  const chain    = baseType ? (ITEM_ITYPE_CHAIN[baseType] || new Set([baseType])) : new Set();
+
+  const collectRoleStats = (table) => {
+    const propCodes = new Set();
+    for (const id of Object.keys(table)) {
+      const entry = table[id];
+      if (!entry) continue;
+      const itypeOk = !entry.itypes.length || entry.itypes.some(t => chain.has(t));
+      const etypeBlocked = entry.etypes.some(t => chain.has(t));
+      if (!itypeOk || etypeBlocked) continue;
+      for (const m of entry.mods) if (m.code) propCodes.add(m.code);
+    }
+    const statIds = new Set();
+    for (const propCode of propCodes) {
+      const def = PROP_ENGINE[propCode];
+      if (!def) continue;
+      for (let f = 1; f <= 7; f++) {
+        const sn = def[`stat${f}`];
+        if (!sn) continue;
+        const meta = STAT_BY_NAME[sn];
+        if (meta) statIds.add(meta.id);
+      }
+    }
+    return statIds;
+  };
+  const prefixStatIds = collectRoleStats(MAGIC_PREFIX_MODS);
+  const suffixStatIds = collectRoleStats(MAGIC_SUFFIX_MODS);
+  const validStatIds  = new Set([...prefixStatIds, ...suffixStatIds]);
+
+  // If we couldn't derive a per-item set (data files missing / unknown type),
+  // fall back to "everything" with both roles so the editor stays usable.
+  const useFiltered = validStatIds.size > 0;
+
   const out = [];
   for (const [name, meta] of Object.entries(STAT_BY_NAME)) {
     if (!meta.saveBits) continue;
     if (meta.saveParamBits > 0) continue;
-    let isFollower = false;
-    for (let parent = 0; parent < FOLLOW_STATS.length; parent++) {
-      const cnt = FOLLOW_STATS[parent] || 0;
-      for (let f = 1; f <= cnt; f++) {
-        if (parent + f === meta.id) { isFollower = true; break; }
-      }
-      if (isFollower) break;
-    }
-    if (isFollower) continue;
-    out.push({ id: meta.id, name, saveBits: meta.saveBits, saveAdd: STAT_DEF[meta.id]?.[1] || 0 });
+    if (_itemEditIsFollowerStat(meta.id)) continue;
+    if (_itemEditHasFollowers(meta.id)) continue;
+    if (_itemEditIsBlockedStat(name)) continue;
+    // Require a display descriptor (descfunc != 0). Stats without one are
+    // engine-internal — instance state, character-only stats, hidden flags.
+    // The game can store them but they're never user-visible properties on
+    // an item, so they shouldn't be addable here.
+    if (!STAT_DESCRIPTORS[meta.id]) continue;
+    if (useFiltered && !validStatIds.has(meta.id)) continue;
+
+    const roles = [];
+    if (!useFiltered || prefixStatIds.has(meta.id)) roles.push('prefix');
+    if (!useFiltered || suffixStatIds.has(meta.id)) roles.push('suffix');
+    if (!roles.length) continue; // shouldn't trigger given the validStatIds gate, but defensive
+
+    out.push({
+      id: meta.id, name,
+      label:    _itemEditFriendlyStatLabel(meta.id, name),
+      saveBits: meta.saveBits,
+      saveAdd:  _itemEditSaveAddById(meta.id),
+      roles,
+    });
   }
-  out.sort((a, b) => a.name.localeCompare(b.name));
+  // Sort by the localized label, not the raw stat name — alphabetical order
+  // should reflect what the user actually sees in the dropdown.
+  out.sort((a, b) => a.label.localeCompare(b.label));
   return out;
 }
 
-function _itemEditStatLabel(mod) {
-  // Friendly stat name for the editor — falls back to the raw stat name from
-  // itemstatcost when no friendlier descriptor is available.
-  const def = STAT_DEF[mod.id];
-  if (def && def[0]) return def[0];
-  for (const [name, meta] of Object.entries(STAT_BY_NAME)) {
-    if (meta.id === mod.id) return name;
+// Strip `%+d`, `%d`, `%s`, `%%` format tokens and tidy whitespace from a
+// localized stat template — turns "%+d to Strength" into "to Strength" and
+// then "to Strength" into "Strength" for the dropdown / row labels. The
+// leading "to " strip is cosmetic: D2's descstrpos templates include it
+// because they're meant to follow a number; without the number visible in
+// our UI it reads awkwardly.
+function _itemEditCleanStatTemplate(s) {
+  return String(s || '')
+    .replace(/%[+\-]?\d*[di]/g, '')
+    .replace(/%s/g, '')
+    .replace(/%%/g, '%')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^to\s+/i, '');
+}
+
+// Localized stat label, sourced from itemstatcost.txt's descstrpos / descstr2
+// columns via the active stringTable. Falls back through STAT_DEF and the
+// raw stat name so unknown stats still show *something*. Switching the
+// localization automatically updates labels because stringTable is rebuilt
+// on language change.
+function _itemEditFriendlyStatLabel(id, fallbackName) {
+  const desc = STAT_DESCRIPTORS[id];
+  if (desc) {
+    const tryKeys = [desc.strPos, desc.str2, desc.strNeg].filter(Boolean);
+    for (const key of tryKeys) {
+      const tmpl = stringTable[key] || key;
+      const cleaned = _itemEditCleanStatTemplate(tmpl);
+      if (cleaned) return cleaned;
+    }
   }
-  return 'Stat #' + mod.id;
+  const def = STAT_DEF[id];
+  if (def && def[0]) {
+    const cleaned = _itemEditCleanStatTemplate(def[0]);
+    if (cleaned) return cleaned;
+  }
+  return fallbackName || ('Stat #' + id);
+}
+
+function _itemEditStatLabel(mod) {
+  // Resolve a friendly fallback name from STAT_BY_NAME if the descriptor
+  // tables don't have an entry for this id.
+  let fallback = '';
+  for (const [name, meta] of Object.entries(STAT_BY_NAME)) {
+    if (meta.id === mod.id) { fallback = name; break; }
+  }
+  return _itemEditFriendlyStatLabel(mod.id, fallback);
 }
 
 // Two distinct rejection messages — wrong location vs. wrong type — so the
@@ -11015,14 +11295,24 @@ function _showItemEditNotAllowed() {
 function _showItemEditTypeNotAllowed() {
   showPopup(L('ui_edit_type_not_allowed','Only equippable items (weapons, armor, rings, amulets, jewels) and charms can be edited. Potions, gems, runes, scrolls, and other consumables are skipped to avoid breaking saves.'));
 }
+function _showItemEditRunewordNotAllowed() {
+  showPopup(L('ui_edit_runeword_not_allowed','Runewords can\u2019t be edited \u2014 their mods come from the inserted runes, not the property list. Editing them would corrupt the save on every apply. Change the rune combination instead.'));
+}
+function _showItemEditUnidNotAllowed() {
+  showPopup(L('ui_edit_unid_not_allowed','Identify the item first \u2014 unidentified items hide their mods until an ID scroll is used in-game, so any edits would be invisible until then.'));
+}
 window._showItemEditNotAllowed = _showItemEditNotAllowed;
 window._showItemEditTypeNotAllowed = _showItemEditTypeNotAllowed;
+window._showItemEditRunewordNotAllowed = _showItemEditRunewordNotAllowed;
+window._showItemEditUnidNotAllowed = _showItemEditUnidNotAllowed;
 
 window.openItemEditor = function(byteOffset) {
   const resolved = _itemEditResolveItem(byteOffset);
   if (!resolved) { _showItemEditNotAllowed(); return; }
-  if (resolved.reject === 'location') { _showItemEditNotAllowed(); return; }
-  if (resolved.reject === 'type')     { _showItemEditTypeNotAllowed(); return; }
+  if (resolved.reject === 'location') { _showItemEditNotAllowed();          return; }
+  if (resolved.reject === 'type')     { _showItemEditTypeNotAllowed();      return; }
+  if (resolved.reject === 'runeword') { _showItemEditRunewordNotAllowed();  return; }
+  if (resolved.reject === 'unid')     { _showItemEditUnidNotAllowed();      return; }
   const { item, buf } = resolved;
   if (item.isVirtual || item.simple || item.byteOffset < 0) {
     _showItemEditTypeNotAllowed();
@@ -11043,13 +11333,214 @@ window.openItemEditor = function(byteOffset) {
   _itemEditState = {
     item, buf, ext,
     mods: mods.map(m => ({ ...m })),  // working copy — values get edited, entries removed/added
-    addable: _itemEditAddableStats(),
+    addable: _itemEditAddableStatsForItem(item),
     addOpen: false,                    // toggled by the green + button
   };
   _renderItemEditDialog();
 };
 
 let _itemEditState = null;
+
+// Hard ceiling on how many mods a single item can carry through the editor.
+// 30 leaves comfortable headroom over the largest legitimate D2 roll (a triple-
+// affix rare with ~12 stats after follower expansion + runeword bonuses) while
+// keeping us well clear of any plausible bit-field overflow when the encoder
+// re-emits the list. The decoder's safety cap is 300 — this is a separate UX
+// limit applied at edit time so users can't pile on stats indefinitely.
+const ITEM_EDIT_MOD_CAP = 30;
+
+// ── Affix / rare-name picking for white→magic/rare promotion ─────────────────
+// We pick valid prefix/suffix table IDs (and rare-name table indices) so that
+// promoted items show a realistic name like "Sturdy Sword of the Bear" instead
+// of an empty header. Mods themselves still come from the binary property
+// list — these IDs only drive the displayed name.
+
+// Conservative cap on rare-name indices. RareNames.txt isn't loaded by the
+// editor (the game resolves it client-side), so we pick from a range that's
+// guaranteed to be populated in both vanilla D2R and Reimagined. Vanilla ships
+// ~155 entries; 50 is comfortably below any plausible mod's row count.
+const ITEM_EDIT_RARE_NAME_RANGE = 50;
+
+// Stable per-item seed so re-applying an edit doesn't reshuffle the picked
+// affix names every save. byteOffset alone shifts when items above grow/shrink,
+// so mix in the type code for additional stability inside a single save.
+function _itemEditSeed(item) {
+  let seed = ((item && item.byteOffset) | 0) ^ 0x9e3779b9;
+  const code = (item && item.typeCode) || '';
+  for (let i = 0; i < code.length; i++) seed = (seed * 31 + code.charCodeAt(i)) | 0;
+  return seed >>> 0;
+}
+function _itemEditPickFromSeed(arr, seed, slot) {
+  if (!arr || !arr.length) return 0;
+  const x = ((seed * 1103515245 + 12345 + slot * 2654435761) | 0) >>> 0;
+  return arr[x % arr.length];
+}
+
+// Walk magicprefix.txt / magicsuffix.txt, return IDs whose itype/etype filters
+// allow this base item. Same filter rules the addable-stats walker uses; here
+// we keep the IDs themselves rather than expanding to stat IDs.
+//
+// Graceful degradation: when the type chain can't be resolved (Reimagined-
+// specific code missing from ITEM_TYPE_BY_CODE / ITEM_ITYPE_CHAIN), we drop
+// the itype/etype filter and accept any named affix instead of returning an
+// empty list. Picking a slightly mismatched name beats writing prefix=0
+// (which is the unnamed-magic-blue regression we just fixed).
+function _itemEditValidAffixIds(item) {
+  const code     = (item && item.typeCode || '').trim();
+  const baseType = ITEM_TYPE_BY_CODE[code] || '';
+  const chain    = baseType ? (ITEM_ITYPE_CHAIN[baseType] || new Set([baseType])) : new Set();
+  const haveChain = chain.size > 0;
+  const collect = (table) => {
+    const ids = [];
+    for (const id of Object.keys(table)) {
+      const entry = table[id];
+      if (!entry || !entry.name) continue;
+      if (haveChain) {
+        const itypeOk      = !entry.itypes.length || entry.itypes.some(t => chain.has(t));
+        const etypeBlocked = entry.etypes.some(t => chain.has(t));
+        if (!itypeOk || etypeBlocked) continue;
+      }
+      ids.push(parseInt(id, 10));
+    }
+    ids.sort((a, b) => a - b);
+    return ids;
+  };
+  return {
+    prefixIds: collect(MAGIC_PREFIX_MODS),
+    suffixIds: collect(MAGIC_SUFFIX_MODS),
+  };
+}
+
+// Magic quality block = 11-bit prefixId + 11-bit suffixId + 1-bit trailing gap.
+// hasPrefix / hasSuffix gate which sides actually get a non-zero ID, mirroring
+// the user's role choices in the Add row.
+function _itemEditBuildMagicQualityBlock(item, hasPrefix, hasSuffix) {
+  const { prefixIds, suffixIds } = _itemEditValidAffixIds(item);
+  const seed = _itemEditSeed(item);
+  const prefixId = hasPrefix ? _itemEditPickFromSeed(prefixIds, seed, 0) : 0;
+  const suffixId = hasSuffix ? _itemEditPickFromSeed(suffixIds, seed, 1) : 0;
+  const bits = new Array(23).fill(0);
+  for (let i = 0; i < 11; i++) bits[i]      = (prefixId >> i) & 1;
+  for (let i = 0; i < 11; i++) bits[11 + i] = (suffixId >> i) & 1;
+  // bits[22] = trailing gap, stays 0
+  return bits;
+}
+
+// Rare quality block = 8-bit name1 + 8-bit name2 + 6 × (1 flag + opt 11 affix).
+// We stamp valid name1/name2 indices so the item displays a real rare name
+// ("Hailstone Spike" instead of "Rare Sword"), then leave all 6 affix slots
+// empty (flag=0) — the binary property list is our source of truth for mods,
+// and filling affix slots with real IDs risks D2R re-adding their inherent
+// mods on top of what's already in the property list.
+//
+// prefixCount / suffixCount come in for forward-compat (and to differentiate
+// edits in the seed) but currently don't drive slot-fill counts.
+function _itemEditBuildRareQualityBlock(item /*, prefixCount, suffixCount*/) {
+  const seed = _itemEditSeed(item);
+  const name1 = ((seed >>> 0) % ITEM_EDIT_RARE_NAME_RANGE) + 1;
+  const name2 = (((seed * 2654435761) >>> 0) % ITEM_EDIT_RARE_NAME_RANGE) + 1;
+
+  const bits = [];
+  for (let i = 0; i < 8; i++) bits.push((name1 >> i) & 1);
+  for (let i = 0; i < 8; i++) bits.push((name2 >> i) & 1);
+  // 6 empty slots: 6 zero flag bits, no IDs.
+  for (let i = 0; i < 6; i++) bits.push(0);
+  return bits;
+}
+
+// Resolves a stat ID back to its STAT_BY_NAME entry — needed for follower
+// stats (firemaxdam, coldlength, etc.) where we have the parent's mod entry
+// but want range/label info for the inline-encoded child values.
+function _itemEditStatNameById(id) {
+  for (const name in STAT_BY_NAME) {
+    if (STAT_BY_NAME[name].id === id) return name;
+  }
+  return null;
+}
+
+// Canonical saveAdd lookup. STAT_DEF is hardcoded vanilla data; STAT_BY_NAME
+// is parsed live from itemstatcost.txt (so it covers Reimagined-added stats).
+// Prefer STAT_DEF when it carries a value (battle-tested for vanilla followers
+// and decoder symmetry), fall back to itemstatcost.txt for anything STAT_DEF
+// doesn't know about. Without this fallback, a Reimagined stat with a non-
+// zero saveAdd in the txt would silently default to 0 in the editor — values
+// would round-trip the editor fine but D2R would interpret the bits using
+// its real saveAdd, displaying the wrong number in-game.
+function _itemEditSaveAddById(id) {
+  const def = STAT_DEF[id];
+  if (def && def[1] !== undefined && def[1] !== null) return def[1];
+  for (const name in STAT_BY_NAME) {
+    if (STAT_BY_NAME[name].id === id) return STAT_BY_NAME[name].saveAdd || 0;
+  }
+  return 0;
+}
+
+// Decompose a mod into the input fields its row should expose. A vanilla
+// stat is one slot (`value`). A `paramBits > 0` stat (skill grants, charged
+// skills, skill tabs) gets a `param` slot before `value`. Damage-range parents
+// (firemindam → firemaxdam, coldmindam → coldmaxdam + coldlength, etc.) tack
+// on `value2` (and optionally `value3`) so the user can edit the whole range,
+// not just the min — the encoder writes those follower values inline and they
+// previously stayed frozen at whatever they decoded to.
+//
+// Each slot carries: { field, label, value, min, max }. `field` matches the
+// property name on the mod object that the capture step writes back into.
+function _itemEditModSlots(m) {
+  const slots = [];
+
+  // Param slot (skill ID, skill tab, charged-skill packed value, etc.).
+  if (m.paramBits > 0) {
+    slots.push({
+      field: 'param',
+      label: L('ui_edit_slot_param','param'),
+      value: m.param || 0,
+      min:   0,
+      max:   (1 << m.paramBits) - 1,
+    });
+  }
+
+  // Main value slot — for follower-bearing parents (e.g. firemindam) this is
+  // the "min" half of the range; for everything else it's just "the value".
+  const followCount = (m.id < FOLLOW_STATS.length) ? FOLLOW_STATS[m.id] : 0;
+  const range       = STAT_RANGES[m.id] || {};
+  const fallbackMin = -m.saveAdd;
+  const fallbackMax = ((1 << m.valueBits) - 1) - m.saveAdd;
+  slots.push({
+    field: 'value',
+    label: followCount > 0 ? L('ui_edit_slot_min','min') : L('ui_edit_slot_value','value'),
+    value: m.value,
+    min:   (range.min != null) ? range.min : fallbackMin,
+    max:   (range.max != null) ? range.max : fallbackMax,
+  });
+
+  // Follower slots — value2 then value3, sourced from the next stat IDs.
+  // First follower of a damage-range parent is the max half; second (cold/
+  // poison only) is the duration in frames. Labels reuse the follower stat's
+  // own friendly label so e.g. coldlength shows "frames" via its descriptor.
+  for (let f = 0; f < followCount; f++) {
+    const fId = m.id + f + 1;
+    const fSb = (fId < SAVE_BITS.length) ? SAVE_BITS[fId] : 0;
+    if (!fSb) continue;
+    const fSaveAdd = _itemEditSaveAddById(fId);
+    const fRange   = STAT_RANGES[fId] || {};
+    const fbMin    = -fSaveAdd;
+    const fbMax    = ((1 << fSb) - 1) - fSaveAdd;
+    // First follower of a damage-range parent is the "max" half; second
+    // follower (only present on cold/poison) is duration in frames.
+    const label = f === 0
+      ? L('ui_edit_slot_max','max')
+      : L('ui_edit_slot_frames','frames');
+    slots.push({
+      field: f === 0 ? 'value2' : 'value3',
+      label,
+      value: ((f === 0 ? m.value2 : m.value3) || 0),
+      min:   (fRange.min != null) ? fRange.min : fbMin,
+      max:   (fRange.max != null) ? fRange.max : fbMax,
+    });
+  }
+
+  return slots;
+}
 
 // Re-renders the editor body in place. Called after Add/Remove so the dialog
 // reflects the current working mod list without re-running decode.
@@ -11059,22 +11550,33 @@ function _renderItemEditDialog() {
   const { mods, addable } = state;
 
   const rows = mods.map((m, i) => {
-    const range = STAT_RANGES[m.id] || {};
-    const maxBits = m.valueBits;
-    const fallbackMin = -m.saveAdd;
-    const fallbackMax = ((1 << maxBits) - 1) - m.saveAdd;
-    const min = (range.min != null) ? range.min : fallbackMin;
-    const max = (range.max != null) ? range.max : fallbackMax;
+    const slots = _itemEditModSlots(m);
     const label = _itemEditStatLabel(m);
-    const help = `range ${min}…${max}` + (range.perLevel ? ` · per-level (${range.perLevel})` : '');
+    // Range help line summarises the main value's bounds. Multi-slot rows
+    // (damage-range parents, skill grants) get a more compact help string —
+    // each slot's own input already carries min/max via its native attrs and
+    // shows the bounds-mismatch via the live clamp on change.
+    const mainSlot = slots.find(s => s.field === 'value') || slots[0];
+    const range    = STAT_RANGES[m.id] || {};
+    const help     = `range ${mainSlot.min}…${mainSlot.max}` + (range.perLevel ? ` · per-level (${range.perLevel})` : '');
     const newTag = m._isNew
       ? `<span style="color:var(--d2-green);font-size:9px;font-family:'Cinzel',serif;letter-spacing:1px;margin-left:4px;white-space:nowrap">NEW · ${esc(((m._role || 'prefix').toUpperCase()))}</span>`
       : '';
+    // Render one input per slot. data-mod-idx + data-mod-field tell the
+    // capture step which working-mod property to write back to. The label
+    // sits inline above the input so a 3-input cold-damage row reads as
+    // "min [3] max [12] frames [100]".
+    const inputsHtml = slots.map(s => `
+      <label style="display:inline-flex;flex-direction:column;align-items:center;flex-shrink:0;gap:1px">
+        <span style="color:var(--d2-text-dim);font-size:9px;font-family:'Cinzel',serif;letter-spacing:1px;text-transform:uppercase">${esc(s.label)}</span>
+        <input type="number" data-mod-idx="${i}" data-mod-field="${esc(s.field)}" value="${s.value}" min="${s.min}" max="${s.max}"
+               onchange="_itemEditClampInput(this)"
+               style="width:72px;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-gold-bright);font-family:'Crimson Text',serif;font-size:13px;padding:3px 6px;text-align:center">
+      </label>`).join('');
     return `<div class="item-edit-row" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--d2-border);font-size:12px">
       <span style="flex:1;min-width:0;color:var(--d2-text);word-break:break-word">${esc(label)}${newTag}</span>
       <span style="color:var(--d2-text-dim);font-size:10px;font-style:italic;white-space:nowrap;flex-shrink:0">${esc(help)}</span>
-      <input type="number" data-mod-idx="${i}" value="${m.value}" min="${min}" max="${max}"
-             style="width:80px;flex-shrink:0;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-gold-bright);font-family:'Crimson Text',serif;font-size:13px;padding:3px 6px;text-align:center">
+      ${inputsHtml}
       <button type="button" title="${esc(L('ui_edit_remove','Remove'))}"
               style="flex-shrink:0;background:#3a0e0e;border:1px solid var(--d2-red);color:#d46060;font-family:'Cinzel',serif;font-size:11px;padding:2px 8px;border-radius:2px;cursor:pointer"
               onclick="_itemEditRemoveMod(${i})">✕</button>
@@ -11085,15 +11587,38 @@ function _renderItemEditDialog() {
   // same scrollable list as the existing properties so layout stays compact.
   let addRow = '';
   if (state.addOpen && addable.length) {
-    const addOptions = addable.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+    const roleLabels = {
+      prefix: L('ui_edit_role_prefix','Prefix'),
+      suffix: L('ui_edit_role_suffix','Suffix'),
+    };
+    // Each option carries its own roles in data-roles so the role dropdown
+    // can rebuild against the active stat's actual D2 affix membership —
+    // a stat that only rolls as a suffix shouldn't be selectable as a prefix.
+    const addOptions = addable.map(s =>
+      `<option value="${s.id}" data-roles="${esc(s.roles.join(','))}">${esc(s.label || s.name)}</option>`
+    ).join('');
+    const firstStat = addable[0];
+    const firstRoles = firstStat.roles;
+    const initialRoleOptions = firstRoles.map(r =>
+      `<option value="${r}">${esc(roleLabels[r] || r)}</option>`
+    ).join('');
+    const initialRoleDisabled = firstRoles.length <= 1 ? 'disabled' : '';
+    // Compute initial min/max bounds for the value input from the first stat.
+    const firstRange = STAT_RANGES[firstStat.id] || {};
+    const firstFallbackMin = -firstStat.saveAdd;
+    const firstFallbackMax = ((1 << firstStat.saveBits) - 1) - firstStat.saveAdd;
+    const initialMin = (firstRange.min != null) ? firstRange.min : firstFallbackMin;
+    const initialMax = (firstRange.max != null) ? firstRange.max : firstFallbackMax;
     addRow = `<div style="display:flex;align-items:center;gap:8px;padding:8px;border-top:2px solid var(--d2-green);background:rgba(0,128,0,0.08);font-size:12px;flex-wrap:wrap">
-      <select id="itemEditAddStat" style="flex:1;min-width:140px;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-text);font-family:'Crimson Text',serif;font-size:12px;padding:3px 6px">${addOptions}</select>
-      <select id="itemEditAddRole" title="${esc(L('ui_edit_role_help','Affix role drives the magic→rare promotion: 1 prefix + 1 suffix stays magic; 2 of the same kind goes rare.'))}"
+      <select id="itemEditAddStat" onchange="_itemEditUpdateAddRole();_itemEditUpdateAddBounds()"
+              style="flex:1;min-width:140px;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-text);font-family:'Crimson Text',serif;font-size:12px;padding:3px 6px">${addOptions}</select>
+      <select id="itemEditAddRole" ${initialRoleDisabled}
+              title="${esc(L('ui_edit_role_help','Affix role drives the magic→rare promotion: 1 prefix + 1 suffix stays magic; 2 of the same kind goes rare. Locked when the stat only rolls as one or the other in D2.'))}"
               style="flex-shrink:0;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-text);font-family:'Crimson Text',serif;font-size:12px;padding:3px 6px">
-        <option value="prefix">${esc(L('ui_edit_role_prefix','Prefix'))}</option>
-        <option value="suffix">${esc(L('ui_edit_role_suffix','Suffix'))}</option>
+        ${initialRoleOptions}
       </select>
-      <input type="number" id="itemEditAddValue" value="0" placeholder="value"
+      <input type="number" id="itemEditAddValue" value="0" min="${initialMin}" max="${initialMax}" placeholder="value"
+             onchange="_itemEditClampInput(this)"
              style="width:70px;flex-shrink:0;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-gold-bright);font-family:'Crimson Text',serif;font-size:13px;padding:3px 6px;text-align:center">
       <button type="button" style="flex-shrink:0;background:#0e2a0e;border:1px solid var(--d2-green);color:#7fc77f;font-family:'Cinzel',serif;font-size:11px;padding:3px 12px;border-radius:2px;cursor:pointer" onclick="_itemEditAddMod()">${esc(L('ui_edit_add_btn','Add'))}</button>
       <button type="button" title="${esc(L('ui_cancel','Cancel'))}"
@@ -11103,11 +11628,15 @@ function _renderItemEditDialog() {
 
   // Single + button under (and outside) the scrollable property list, so it
   // stays visible no matter how many existing mods the item carries. Disabled
-  // visual state when the add row is open or when there's nothing to add.
-  const addBtnDisabled = state.addOpen || !addable.length;
-  const addBtnTitle = !addable.length
-    ? L('ui_edit_add_none','No addable stats — item_stat_ranges.txt is empty or unreachable.')
-    : (state.addOpen ? L('ui_edit_add_open','Add row already open above.') : L('ui_edit_add_new','Add a new property'));
+  // when the add row is already open, when there's nothing to add, or when
+  // the item is at the property cap.
+  const atCap = mods.length >= ITEM_EDIT_MOD_CAP;
+  const addBtnDisabled = state.addOpen || !addable.length || atCap;
+  const addBtnTitle = atCap
+    ? Lfmt('ui_edit_at_cap','At the {n}-property cap — remove an existing property before adding a new one.', { n: ITEM_EDIT_MOD_CAP })
+    : !addable.length
+      ? L('ui_edit_add_none','No addable stats — item_stat_ranges.txt is empty or unreachable.')
+      : (state.addOpen ? L('ui_edit_add_open','Add row already open above.') : L('ui_edit_add_new','Add a new property'));
   const addButtonRow = `<div style="padding:8px;display:flex;justify-content:center;margin-top:6px">
     <button type="button" title="${esc(addBtnTitle)}" ${addBtnDisabled ? 'disabled' : ''}
             style="background:#0e2a0e;border:1px solid var(--d2-green);color:#7fc77f;font-family:'Cinzel',serif;font-size:18px;font-weight:bold;padding:4px 22px;border-radius:2px;cursor:${addBtnDisabled ? 'not-allowed' : 'pointer'};line-height:1;${addBtnDisabled ? 'opacity:0.4;' : ''}"
@@ -11119,9 +11648,6 @@ function _renderItemEditDialog() {
     titleTone:'gold',
     maxWidth: 'min(640px, 92vw)',
     bodyHtml: `<div style="text-align:left">
-      <div style="color:var(--d2-text-dim);font-size:11px;margin-bottom:8px;line-height:1.4">
-        ${esc(L('ui_edit_intro2','Values clamp to ranges from item_stat_ranges.txt. Adds and removes splice the property list and re-checksum the save — original GUID and item-type bits are preserved.'))}
-      </div>
       <div style="max-height:42vh;overflow-y:auto;border:1px solid var(--d2-border);background:var(--d2-surface2);border-radius:2px">
         ${rows}
         ${addRow}
@@ -11131,17 +11657,80 @@ function _renderItemEditDialog() {
     dismissOnBackdrop: false,
     buttons: [
       { label: L('ui_edit_apply','Apply'), tone: 'success', onClick: () => _applyItemEdits() },
-      { label: L('ui_cancel','Cancel'),    tone: 'ghost',   onClick: () => { _itemEditState = null; } },
+      { label: L('ui_cancel','Cancel'),    tone: 'danger',  onClick: () => { _itemEditState = null; } },
     ],
   });
 }
 
+// Clamp a number input to its own min/max attributes after the user commits
+// a value. Fires on `change` (Enter / Tab / focus loss) rather than `input`
+// so we don't fight typing — a partial keystroke like "1" while heading for
+// "100" shouldn't get rewritten before the user finishes.
+window._itemEditClampInput = function(input) {
+  if (!input) return;
+  const raw = parseFloat(input.value);
+  if (isNaN(raw)) return;
+  const min = input.min !== '' ? parseFloat(input.min) : NaN;
+  const max = input.max !== '' ? parseFloat(input.max) : NaN;
+  let v = raw;
+  if (!isNaN(min) && v < min) v = min;
+  if (!isNaN(max) && v > max) v = max;
+  if (v !== raw) input.value = String(v);
+};
+
 window._itemEditOpenAdd = function() {
   const state = _itemEditState;
   if (!state) return;
+  if (state.mods.length >= ITEM_EDIT_MOD_CAP) {
+    showPopup(Lfmt('ui_edit_at_cap','At the {n}-property cap — remove an existing property before adding a new one.', { n: ITEM_EDIT_MOD_CAP }));
+    return;
+  }
   _itemEditCaptureInputs();
   state.addOpen = true;
   _renderItemEditDialog();
+};
+
+// Repopulate the role dropdown when the user picks a different stat. The
+// option's data-roles attribute is the source of truth — populated by the
+// per-item walk through magicprefix/suffix.txt — so a stat that only rolls
+// as a suffix gets a locked Suffix-only role list.
+window._itemEditUpdateAddRole = function() {
+  const statSel = document.getElementById('itemEditAddStat');
+  const roleSel = document.getElementById('itemEditAddRole');
+  if (!statSel || !roleSel) return;
+  const opt = statSel.options[statSel.selectedIndex];
+  if (!opt) return;
+  const roles = (opt.dataset.roles || 'prefix,suffix').split(',').filter(Boolean);
+  const labels = {
+    prefix: L('ui_edit_role_prefix','Prefix'),
+    suffix: L('ui_edit_role_suffix','Suffix'),
+  };
+  roleSel.innerHTML = roles.map(r =>
+    `<option value="${r}">${esc(labels[r] || r)}</option>`
+  ).join('');
+  roleSel.disabled = roles.length <= 1;
+};
+
+// Refresh the value input's min/max attributes when the user picks a different
+// stat, then re-clamp the current value into the new range. Runs alongside
+// _itemEditUpdateAddRole on the stat dropdown's change event.
+window._itemEditUpdateAddBounds = function() {
+  const state = _itemEditState;
+  if (!state) return;
+  const statSel = document.getElementById('itemEditAddStat');
+  const valEl   = document.getElementById('itemEditAddValue');
+  if (!statSel || !valEl) return;
+  const id = parseInt(statSel.value, 10);
+  const meta = state.addable.find(s => s.id === id);
+  if (!meta) return;
+  const range = STAT_RANGES[id] || {};
+  const fallbackMin = -meta.saveAdd;
+  const fallbackMax = ((1 << meta.saveBits) - 1) - meta.saveAdd;
+  const min = (range.min != null) ? range.min : fallbackMin;
+  const max = (range.max != null) ? range.max : fallbackMax;
+  valEl.min = String(min);
+  valEl.max = String(max);
+  _itemEditClampInput(valEl);
 };
 
 window._itemEditCancelAdd = function() {
@@ -11164,6 +11753,12 @@ window._itemEditRemoveMod = function(idx) {
 window._itemEditAddMod = function() {
   const state = _itemEditState;
   if (!state) return;
+  if (state.mods.length >= ITEM_EDIT_MOD_CAP) {
+    showPopup(Lfmt('ui_edit_at_cap','At the {n}-property cap — remove an existing property before adding a new one.', { n: ITEM_EDIT_MOD_CAP }));
+    state.addOpen = false;
+    _renderItemEditDialog();
+    return;
+  }
   _itemEditCaptureInputs();
   const sel = document.getElementById('itemEditAddStat');
   const roleEl = document.getElementById('itemEditAddRole');
@@ -11193,86 +11788,145 @@ window._itemEditAddMod = function() {
   _renderItemEditDialog();
 };
 
+// Single-field write-back: clamps a raw input into the slot's bounds and sets
+// the corresponding property on the mod. Re-derives `stored` only when the
+// main value changed — followers carry their own bias and the encoder reads
+// value2/value3 directly. Used by both the live-capture-on-rerender path and
+// the apply-time final capture.
+function _itemEditWriteSlot(m, field, raw) {
+  if (!m || isNaN(raw)) return;
+  if (field === 'param') {
+    const max = m.paramBits > 0 ? ((1 << m.paramBits) - 1) : 0;
+    m.param = Math.max(0, Math.min(max, raw));
+    return;
+  }
+  if (field === 'value') {
+    const range = STAT_RANGES[m.id] || {};
+    const fbMin = -m.saveAdd;
+    const fbMax = ((1 << m.valueBits) - 1) - m.saveAdd;
+    const min   = (range.min != null) ? range.min : fbMin;
+    const max   = (range.max != null) ? range.max : fbMax;
+    m.value  = Math.max(min, Math.min(max, raw));
+    m.stored = m.value + m.saveAdd;
+    return;
+  }
+  // Follower fields: value2 (first follower) / value3 (second follower).
+  const followerOff = (field === 'value2') ? 1 : (field === 'value3') ? 2 : -1;
+  if (followerOff < 0) return;
+  const fId     = m.id + followerOff;
+  const fSb     = (fId < SAVE_BITS.length) ? SAVE_BITS[fId] : 0;
+  if (!fSb) return;
+  const fSaveAdd = _itemEditSaveAddById(fId);
+  const fRange   = STAT_RANGES[fId] || {};
+  const fbMin    = -fSaveAdd;
+  const fbMax    = ((1 << fSb) - 1) - fSaveAdd;
+  const min      = (fRange.min != null) ? fRange.min : fbMin;
+  const max      = (fRange.max != null) ? fRange.max : fbMax;
+  m[field] = Math.max(min, Math.min(max, raw));
+}
+
 // Snapshot the current value-input fields back into the working mods list,
-// so Add/Remove preserves any in-progress edits across the re-render.
+// so Add/Remove preserves any in-progress edits across the re-render. Walks
+// every input — main value, param (skill grants), value2/value3 (damage range
+// followers) — and routes each one to its right field via the shared helper.
 function _itemEditCaptureInputs() {
   const state = _itemEditState;
   if (!state) return;
   document.querySelectorAll('input[data-mod-idx]').forEach(inp => {
-    const idx = parseInt(inp.dataset.modIdx, 10);
-    const m = state.mods[idx];
+    const idx   = parseInt(inp.dataset.modIdx, 10);
+    const field = inp.dataset.modField || 'value';
+    const m     = state.mods[idx];
     if (!m) return;
     const raw = parseInt(inp.value || '0', 10);
-    if (isNaN(raw)) return;
-    const range = STAT_RANGES[m.id] || {};
-    const fallbackMin = -m.saveAdd;
-    const fallbackMax = ((1 << m.valueBits) - 1) - m.saveAdd;
-    const min = (range.min != null) ? range.min : fallbackMin;
-    const max = (range.max != null) ? range.max : fallbackMax;
-    m.value = Math.max(min, Math.min(max, raw));
-    m.stored = m.value + m.saveAdd;
+    _itemEditWriteSlot(m, field, raw);
   });
 }
 
-function _applyItemEdits() {
-  const state = _itemEditState;
-  _itemEditState = null;
-  if (!state) return;
-  const { item, ext } = state;
+let _itemEditApplyInProgress = false;
 
-  // Capture final input values into the working mods list.
-  document.querySelectorAll('input[data-mod-idx]').forEach(inp => {
-    const idx = parseInt(inp.dataset.modIdx, 10);
-    const m = state.mods[idx];
-    if (!m) return;
-    const raw = parseInt(inp.value || '0', 10);
-    if (isNaN(raw)) return;
-    const range = STAT_RANGES[m.id] || {};
-    const fallbackMin = -m.saveAdd;
-    const fallbackMax = ((1 << m.valueBits) - 1) - m.saveAdd;
-    const min = (range.min != null) ? range.min : fallbackMin;
-    const max = (range.max != null) ? range.max : fallbackMax;
-    m.value = Math.max(min, Math.min(max, raw));
-    m.stored = m.value + m.saveAdd;
-  });
+function _applyItemEdits() {
+  // Reentry guard. The Apply button is auto-closing-dialog so a normal click
+  // can't double-fire, but DOM events (Enter on a focused input, fast double
+  // tap on touch) plus any synchronous re-render kicked off by markDirty/
+  // scheduleAutoSave could conceivably race a second invocation through
+  // before the first one finishes. Bail if we're already mid-apply.
+  if (_itemEditApplyInProgress) return;
+  const state = _itemEditState;
+  if (!state) return;
+  // Apply-time safety net: refuse to splice an over-cap item even if the UI
+  // gating got bypassed (devtools call, stale dialog state, etc.). Don't clear
+  // _itemEditState here so the user can keep editing and remove down to cap.
+  if (state.mods.length > ITEM_EDIT_MOD_CAP) {
+    showPopup(Lfmt('ui_edit_over_cap','Too many properties ({n}) — remove some down to {cap} before applying.',
+      { n: state.mods.length, cap: ITEM_EDIT_MOD_CAP }));
+    return;
+  }
+  _itemEditApplyInProgress = true;
+  try {
+    return _applyItemEditsInner(state);
+  } finally {
+    _itemEditApplyInProgress = false;
+  }
+}
+
+function _applyItemEditsInner(state) {
+  // Final capture before the splice — same shared helper the per-rerender
+  // path uses, so param edits, value edits and follower (value2/value3)
+  // edits all land on the right field. Must run BEFORE clearing the global
+  // since the helper reads _itemEditState.
+  _itemEditCaptureInputs();
+  _itemEditState = null;
+  const { item, ext } = state;
 
   // Pull the original item bytes (header + main prop list + any trailing
   // set-bonus / runeword bits + padding) so the splicer can preserve everything
   // outside the main list.
   const itemList = (parsedChar.items || []).filter(x => !!x.isMerc === !!item.isMerc);
-  let sectionEnd = 0;
-  if (!item.isMerc) {
-    const jmOff = parsedChar.itemsOffset;
-    if (jmOff >= 0) {
-      for (let i = jmOff + 4; i < workBytes.length - 1; i++) {
-        if (workBytes[i] === 0x4a && workBytes[i + 1] === 0x4d) { sectionEnd = i; break; }
-      }
-    }
-  }
+  // Player section ends at the merc-section offset ('jf' marker), parsed at
+  // load time. Avoid byte-scanning for "JM" — bit-packed property data can
+  // accidentally produce a 0x4A 0x4D pair at a byte boundary, and a stale
+  // hit on a downstream item would truncate the slice. Resolver already
+  // blocks merc-item editing, so we only need the player section's end.
+  const sectionEnd = parsedChar.mercItemsOffset > 0 ? parsedChar.mercItemsOffset : 0;
   const oldLen = getItemBinaryLength(workBytes, item.byteOffset, itemList, sectionEnd);
   const oldItemBytes = workBytes.slice(item.byteOffset, item.byteOffset + oldLen);
 
-  // White → magic/rare auto-promote, gated by D2's affix-slot rules:
-  //   - magic items have at most 1 prefix + 1 suffix
-  //   - rare items can carry up to 3 prefixes + 3 suffixes
-  // So 1 prefix + 1 suffix still fits magic; 2 prefixes (or 2 suffixes) does
-  // not, and the item promotes to rare. Pure value/remove edits don't
-  // promote. Already-magic/rare/unique/set items keep their quality.
-  // Runes (q=2 + rune code) are skipped — their bit layout differs.
+  // Quality transitions, in priority order:
+  //   1. Demote to white when every mod has been removed from a magic/rare
+  //      item — leaves the base item, no orphaned affix slots.
+  //   2. Promote magic→rare when the total prefix or suffix count reaches 2.
+  //      D2 magic items cap at 1 prefix + 1 suffix, so any role hitting 2
+  //      forces a rare promotion. Counts EXISTING affix slots on the magic
+  //      item plus newly-added _isNew mods, so adding one more prefix to an
+  //      already-prefixed magic item correctly bumps to rare.
+  //   3. Promote white→magic when at least one affix is added but no role
+  //      has reached 2 yet.
+  // Unique/set/crafted/inferior/superior items keep their quality. Runes
+  // (q=2 with a rune code) skip promotion since their bit layout differs.
   let qualityChange = null;
-  if (ext.quality === 2) {
-    const isRuneItem = /^[rs]\d{2}$/.test((item.typeCode || ''));
-    if (!isRuneItem) {
-      const newMods    = state.mods.filter(m => m._isNew);
-      const prefixAdds = newMods.filter(m => m._role !== 'suffix').length;
-      const suffixAdds = newMods.filter(m => m._role === 'suffix').length;
-      const goesRare   = prefixAdds >= 2 || suffixAdds >= 2;
-      const goesMagic  = !goesRare && (prefixAdds + suffixAdds) >= 1;
-      if (goesRare) {
-        qualityChange = { newQuality: 6, newQualityBlockBits: new Array(22).fill(0) };
-      } else if (goesMagic) {
-        qualityChange = { newQuality: 4, newQualityBlockBits: new Array(23).fill(0) };
-      }
+  const isRuneItem = /^[rs]\d{2}$/.test((item.typeCode || ''));
+  const newMods    = state.mods.filter(m => m._isNew);
+  const newPrefix  = newMods.filter(m => m._role !== 'suffix').length;
+  const newSuffix  = newMods.filter(m => m._role === 'suffix').length;
+
+  if ((ext.quality === 4 || ext.quality === 6) && state.mods.length === 0) {
+    // Demote — magic/rare → white when every mod is gone.
+    qualityChange = { newQuality: 2, newQualityBlockBits: [] };
+  } else if (!isRuneItem && (ext.quality === 2 || ext.quality === 4)) {
+    const existingPrefix = ext.quality === 4 && ext._prefixId ? 1 : 0;
+    const existingSuffix = ext.quality === 4 && ext._suffixId ? 1 : 0;
+    const totalPrefix = existingPrefix + newPrefix;
+    const totalSuffix = existingSuffix + newSuffix;
+    if (totalPrefix >= 2 || totalSuffix >= 2) {
+      qualityChange = {
+        newQuality: 6,
+        newQualityBlockBits: _itemEditBuildRareQualityBlock(item, totalPrefix, totalSuffix),
+      };
+    } else if (ext.quality === 2 && (newPrefix + newSuffix) >= 1) {
+      qualityChange = {
+        newQuality: 4,
+        newQualityBlockBits: _itemEditBuildMagicQualityBlock(item, totalPrefix >= 1, totalSuffix >= 1),
+      };
     }
   }
 
@@ -11295,13 +11949,26 @@ function _applyItemEdits() {
   item._mods = undefined;
   if (qualityChange) {
     item.quality = qualityChange.newQuality;
+    // ensureItemProps's overwrite gate is `if (ext._prefixId)` — truthy-only —
+    // so stale non-zero prefix/suffix/rare-name fields linger across a quality
+    // change unless we wipe them here. Clear everything; re-decode repopulates
+    // whatever the new quality actually carries.
+    item._prefixId    = undefined;
+    item._suffixId    = undefined;
+    item._rareAffixes = undefined;
+    item._rareNameId1 = undefined;
+    item._rareNameId2 = undefined;
   }
   markDirty();
   closeTooltip(true);
   renderTab();
   if (qualityChange) {
-    const label = qualityChange.newQuality === 6 ? L('ui_quality_rare','Rare') : L('ui_quality_magic','Magic');
-    showPopup(Lfmt('ui_edit_promoted','Item updated and promoted to {quality}.', { quality: label }));
+    if (qualityChange.newQuality === 2) {
+      showPopup(L('ui_edit_demoted','Item updated and reverted to white (no properties remain).'));
+    } else {
+      const label = qualityChange.newQuality === 6 ? L('ui_quality_rare','Rare') : L('ui_quality_magic','Magic');
+      showPopup(Lfmt('ui_edit_promoted','Item updated and promoted to {quality}.', { quality: label }));
+    }
   } else {
     showPopup(L('ui_edit_applied_generic','Item updated.'));
   }
