@@ -12556,7 +12556,13 @@ function _buildUniqueItemCatalog(hideCodes) {
   const uData = baseData['uniqueitems'];
   if (!uData) return;
   uData.rows.forEach((row, idx) => {
-    const uniqueName = (row['index'] || '').trim();
+    // The 'index' column is the localization KEY (e.g. "Unique Warlock Helm"),
+    // not the displayed name. The string table maps it to the actual in-game
+    // name like "Hellwarden's Will". Without this lookup, users searching
+    // for the displayed name in the grail tab can't find the item, since
+    // they'd be matching against a placeholder key instead of the real name.
+    const rawName    = (row['index'] || '').trim();
+    const uniqueName = (stringTable[rawName] || rawName).trim();
     const code       = (row['code']  || '').trim();
     if (!uniqueName || !code) return;
     if (hideCodes.has(code)) return;
@@ -12584,7 +12590,11 @@ function _buildUniqueItemCatalog(hideCodes) {
 
     UNIQUE_CATALOG.push({
       code, uniqueName, baseName, qual: 7, uniqueId: idx, category, subCategory,
-      searchKey: (uniqueName + ' ' + baseName + ' ' + code + ' ' + subCategory).toLowerCase(),
+      // Search matches against the localized name, the raw stringTable key,
+      // the base item name, the type code, and the subcategory — covers any
+      // form a user is likely to type. Without `rawName` in here, searching
+      // for "Unique Warlock Helm" wouldn't surface "Hellwarden's Will".
+      searchKey: (uniqueName + ' ' + rawName + ' ' + baseName + ' ' + code + ' ' + subCategory).toLowerCase(),
     });
     _uniqueNameById[idx] = uniqueName;
   });
@@ -12596,14 +12606,21 @@ function _buildSetItemCatalog() {
   const sData = baseData['setitems'];
   if (!sData) return;
   sData.rows.forEach((row, idx) => {
-    const setName  = (row['index'] || '').trim();
-    const setGroup = (row['set']   || '').trim();
-    const code     = (row['item']  || row['code'] || '').trim();
+    // Same stringTable-key resolution pattern as uniqueitems: the 'index'
+    // column is the localization key, the displayed name is whatever
+    // stringTable maps it to.
+    const rawSetName    = (row['index'] || '').trim();
+    const setName       = (stringTable[rawSetName] || rawSetName).trim();
+    const rawSetGroup   = (row['set']   || '').trim();
+    const setGroup      = (stringTable[rawSetGroup] || rawSetGroup).trim();
+    const code          = (row['item']  || row['code'] || '').trim();
     if (!setName || !code) return;
     const baseName = itemNameByCode[code] || code;
     SET_CATALOG.push({
       code, setName, baseName, qual: 5, setId: idx, setGroup,
-      searchKey: (setName + ' ' + setGroup + ' ' + baseName + ' ' + code).toLowerCase(),
+      // Include the raw stringTable keys so searches for either the
+      // localized or unlocalized form hit.
+      searchKey: (setName + ' ' + rawSetName + ' ' + setGroup + ' ' + rawSetGroup + ' ' + baseName + ' ' + code).toLowerCase(),
     });
     _setNameByItemId[idx] = setName;
   });
