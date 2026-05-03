@@ -3374,6 +3374,7 @@ function buildItemTypeSets() {
       if (code) newWeapon.add(code);
     }
   }
+  const newAdvStack = new Set();
   if (miscData) {
     for (const row of miscData.rows) {
       const code = (row['code'] || '').trim();
@@ -3381,13 +3382,29 @@ function buildItemTypeSets() {
       const stackable = (row['stackable'] || '').trim();
       if (stackable === '1') newStack.add(code);
       else newMisc.add(code);
+      // Items where the standard extended-item prop-list decoder produces
+      // garbage. Two categories share this property:
+      //   AdvancedStashStackable=1  → 1-bit pad before the prop list
+      //                               (Pandemonium keys, worldstone shards,
+      //                               uber ancient mats, gem cluster, etc.)
+      //   EventItem=1               → essences (tes/ceh/bet/fed) that have
+      //                               no rolled stats, so any prop-list
+      //                               read of theirs is meaningless even
+      //                               when the bit layout is standard
+      // We treat both the same way: skip prop-list decoding entirely. None
+      // of these item categories carry rolled properties, so there's no
+      // information loss.
+      const advStack  = (row['AdvancedStashStackable'] || '').trim();
+      const eventItem = (row['EventItem']              || '').trim();
+      if (advStack === '1' || eventItem === '1') newAdvStack.add(code);
     }
   }
-  ARMOR_SET  = newArmor.size  ? newArmor  : ARMOR_SET;
-  WEAPON_SET = newWeapon.size ? newWeapon : WEAPON_SET;
-  STACK_SET  = newStack.size  ? newStack  : STACK_SET;
-  MISC_SET   = newMisc.size   ? newMisc   : MISC_SET;
-  console.log(`buildItemTypeSets: armor=${ARMOR_SET.size} weapon=${WEAPON_SET.size} stack=${STACK_SET.size} misc=${MISC_SET.size} (from mod data)`);
+  ARMOR_SET     = newArmor.size    ? newArmor    : ARMOR_SET;
+  WEAPON_SET    = newWeapon.size   ? newWeapon   : WEAPON_SET;
+  STACK_SET     = newStack.size    ? newStack    : STACK_SET;
+  MISC_SET      = newMisc.size     ? newMisc     : MISC_SET;
+  ADV_STACK_SET = newAdvStack.size ? newAdvStack : ADV_STACK_SET;
+  console.log(`buildItemTypeSets: armor=${ARMOR_SET.size} weapon=${WEAPON_SET.size} stack=${STACK_SET.size} misc=${MISC_SET.size} advStack=${ADV_STACK_SET.size} (from mod data)`);
 }
 
 // ── Max sockets per item code (from gemsockets + hasinv columns) ──
@@ -10152,6 +10169,15 @@ let ARMOR_SET=new Set('cap skp hlm fhl ghm crn msk qui lea hla stu rng scl chn b
 let WEAPON_SET=new Set();
 let STACK_SET=new Set('tbk ibk tsc isc aqv cqv hp1 hp2 hp3 hp4 hp5 mp1 mp2 mp3 mp4 mp5 rvs rvl vps yps wms key'.split(' '));
 let MISC_SET=new Set('box rin amu jew cm1 cm2 cm3 cm4 gld ear toa tch bks bkd qey qhr qbr hrt brz jaw eyz hrn tal flg fng qll sol scz spe'.split(' '));
+// Codes flagged AdvancedStashStackable=1 in Reimagined's misc.txt. These items
+// (Pandemonium keys, worldstone shards, uber ancient mats, gem cluster, etc.)
+// use a non-standard extended bit layout: an extra bit (or field) sits between
+// the timestamp and the property list. The standard D2 decoder reads that
+// region as the prop list and produces garbage stats — the user reported a
+// Korlic's Pain (ua2) showing -16 to Energy / +130 to Strength. We treat
+// these items as having no decoded properties and let the per-instance qty
+// (read separately via parseSharedStash's advancedQty path) carry the count.
+let ADV_STACK_SET = new Set();
 
 // Low-level prop-list reader — decodes stats starting at exactly `startBit`. Returns
 // `{mods, endBit, terminated}` where `terminated` is true only if we reached the 511 sentinel
@@ -10231,6 +10257,21 @@ function _readPropList(buf, byteOff, startBit) {
 
 function decodeItemProperties(buf, byteOff, item) {
   if(item.simple||item.isVirtual||item.byteOffset<0)return{simple:true,mods:[]};
+  // Quest / event / specialty-stash items that don't have rolled properties.
+  // Two failure modes get folded into one bypass:
+  //   1. AdvancedStashStackable=1 items have a 1-bit pad inserted between
+  //      the timestamp and the property list — the standard decoder reads
+  //      the pad+terminator as stat ID 510 and produces phantom mods like
+  //      "-16 to Energy / +130 to Strength" on Korlic's Pain (ua2), keys,
+  //      worldstone shards, gem cluster, etc.
+  //   2. EventItem=1 items (essences tes/ceh/bet/fed) have no rolled stats
+  //      so any prop-list output is meaningless even when their bit layout
+  //      happens to be standard.
+  // ADV_STACK_SET (built from misc.txt) covers both. Skip prop-list decode
+  // for everything in it — no stats are lost because none of these items
+  // carry rolled properties to begin with.
+  if (ADV_STACK_SET && ADV_STACK_SET.has(item.typeCode||''))
+    return {simple:false, mods:[], skippedAdvStack:true};
   const rbL=(b,n)=>{let v=0;for(let i=0;i<n;i++){const p=byteOff*8+b+i;v|=((buf[p>>3]>>(p&7))&1)<<i;}return v;};
   // Advance past 4-char huffman type code from bit 53
   const hd=(bp)=>{let node=D2R_HUFFMAN,b=bp;while(Array.isArray(node)){const p=byteOff*8+b;node=node[(buf[p>>3]>>(p&7))&1];b++;}return b;};
