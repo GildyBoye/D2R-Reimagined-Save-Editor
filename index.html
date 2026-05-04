@@ -5603,7 +5603,20 @@ function encodeExtendedItem(item) {
   const storage = item.storage ?? 1;
   const parent = item.parent ?? 0;
   const equipSlot = item.equipSlot || 0;
-  const quality = item.quality || 2;
+  // Reimagined uber statues (ua1-ua5) are stored as quality=2 normal-class
+  // extended items with a bit-13 "stackable extended" marker, a 2-bit pad
+  // before the 511 terminator, and a trailing zero byte. The Insert Modal
+  // lists them under Uniques (because uniqueitems.txt has named entries) but
+  // the game format ignores those entries — force quality=2 here and skip
+  // the unique mod lookup further down.
+  //
+  // Scope: only the ua* statues are verified to use this layout. Other items
+  // flagged AdvancedStashStackable=1 (gems, potions, runes, orbs, beacons,
+  // worldstone shards, etc.) are stored either as compact items or as runes
+  // and get routed/encoded through their own paths. If any of those turn out
+  // to also need the bit-13 format, expand the regex here.
+  const isAdvStack = /^ua\d$/.test(code);
+  const quality = isAdvStack ? 2 : (item.quality || 2);
   const ilvl = item.itemLevel || 80;
 
   // Header flags
@@ -5611,6 +5624,10 @@ function encodeExtendedItem(item) {
   wb(4,  1);   // identified
   if (item.numSockets > 0) wb(11, 1);  // socketed flag
   // bit 13 and 17: NOT set on extended items (game uniques have b13=0, b17=0)
+  // EXCEPT for Reimagined AdvancedStashStackable items, which set bit 13 = 1
+  // as a "this is a stackable extended item" marker. Without this, the game's
+  // parser falls into the wrong code path and rejects the item on join.
+  if (isAdvStack) wb(13, 1);
   // bit 21 = 0 (NOT simple — this is an extended item)
   if (item.ethereal) wb(22, 1);  // ethereal flag
   wb(23, 1);   // always-1 marker (b2 & 0x80)
@@ -5748,8 +5765,21 @@ function encodeExtendedItem(item) {
   }
 
   // ── Encode actual stats from txt tables into the prop list ──
+  // AdvancedStashStackable items (ua statues, essences) carry no rolled stats
+  // and require a 2-bit pad between the standard fields and the 511 terminator.
+  // Skip the unique/set mod lookup entirely for these — even if the user picked
+  // them from the unique list, the game format ignores those entries.
   let mods = [];
-  if (quality === 7 && item.uniqueId !== undefined) {
+  if (isAdvStack) {
+    // 2-bit gap before the 511 terminator. Verified against game-dropped
+    // ua1/ua3 in Maybb.d2s: bit 121 = 0, bit 122 = 1. The first bit looks
+    // like a phase-10-style pad; the second bit is consistent across both
+    // observed statues, possibly a "no inline qty follows" flag (the game
+    // may use bit 122 = 0 + 9-bit qty for actual stacks). For single-item
+    // inserts we mirror the observed `0,1` pattern.
+    pos++;                    // bit 121 = 0 (pad)
+    wb(pos, 1); pos++;        // bit 122 = 1 (single-item marker)
+  } else if (quality === 7 && item.uniqueId !== undefined) {
     const entry = UNIQUE_ITEM_MODS[item.uniqueId];
     if (entry) mods = entry.props;
   } else if (quality === 5 && (item.setId !== undefined || item.setItemId !== undefined)) {
@@ -5828,6 +5858,11 @@ function encodeExtendedItem(item) {
   // See doc/PROPERTY-ENCODING.md § trailing-bit pad.
   pos++;
   while (pos & 7) pos++;
+  // Reimagined AdvancedStashStackable items carry an extra zero byte after the
+  // standard byte-align padding (verified against game-dropped ua1/ua3 — both
+  // are 18 bytes, which only fits with this trailing byte). Same pattern as
+  // gems in encodeCompactItem.
+  if (isAdvStack) pos += 8;
   return buf.slice(0, pos >> 3);
 }
 
@@ -5960,7 +5995,14 @@ function flushVirtualItems() {
     const code = it.typeCode || '';
     // Runes are extended items in D2RR (not compact)
     const isRune = /^[rs]\d{2}$/.test(code);
-    const isSimple = !isRune && !ARMOR_SET.has(code) && !WEAPON_SET.has(code) &&
+    // Uber statues (ua1-ua5) are extended in the game format even though
+    // they're quality=2 with no uniqueId — the special bit-13 marker layout
+    // in encodeExtendedItem handles them. Without this routing override
+    // they'd fall to encodeCompactItem and the game would crash with
+    // "Failed To Join Game" on the first such item. Other AdvancedStashStackable
+    // items (gems, potions, etc.) are correctly compact and not affected.
+    const isAdvStack = /^ua\d$/.test(code);
+    const isSimple = !isRune && !isAdvStack && !ARMOR_SET.has(code) && !WEAPON_SET.has(code) &&
                      (it.quality || 2) <= 2 && !it.uniqueId && !it.setId && !it.setItemId;
     if (isSimple) {
       return encodeCompactItem(code, it.x||0, it.y||0, it.storage??1, it.parent??0, it.equipSlot||0);
@@ -12987,7 +13029,16 @@ window.confirmInsertItem = function() {
 
   const typeCode = entry.code;
   const {w,h}    = getItemSize(typeCode);
-  const qual     = entry.qual ?? 2;
+  // Reimagined uber statues (ua1-ua5) live in the unique list because
+  // uniqueitems.txt has named entries for them, but the game stores them as
+  // quality=2 normal-class extended items with no rolled stats. Override the
+  // entry's quality here so the in-memory item, tooltips, and the encoder
+  // all agree it's not a real unique. Without this the encoder walks the q=7
+  // path (12-bit unique_id, full stat list) and the game rejects the section
+  // on join. Scope matches the encoder/routing checks in flushVirtualItems
+  // and encodeExtendedItem — narrow regex, expand if other items need it.
+  const isAdvStackInsert = /^ua\d$/.test(typeCode);
+  const qual     = isAdvStackInsert ? 2 : (entry.qual ?? 2);
   const isRune = /^[rs]\d{2}$/.test(typeCode);
   const isMiscItem = entry.tier === 'misc' || entry.category === 'misc';
   // Clamp ilvl to [1, 99] — input has HTML min/max attributes but they're not
@@ -13064,14 +13115,16 @@ window.confirmInsertItem = function() {
   };
 
   // Attach quality-specific IDs for binary encoding
-  if (qual === 7 && entry.uniqueId !== undefined) {
+  // (Skipped for AdvancedStashStackable items — they're forced to q=2 above
+  // and don't carry a uniqueId in the binary format the game expects.)
+  if (!isAdvStackInsert && qual === 7 && entry.uniqueId !== undefined) {
     newItem.uniqueId = entry.uniqueId;
     const uMods = UNIQUE_ITEM_MODS[entry.uniqueId];
     if (uMods && uMods.props && uMods.props.some(p => p.code === 'ethereal')) {
       newItem.ethereal = 1;
     }
   }
-  if (qual === 5 && entry.setId !== undefined) {
+  if (!isAdvStackInsert && qual === 5 && entry.setId !== undefined) {
     newItem.setId = entry.setId;
     newItem.setItemId = entry.setId;
   }
