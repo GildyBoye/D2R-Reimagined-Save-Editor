@@ -4620,8 +4620,91 @@ function _spriteCandidatePaths(assetPath) {
   return out;
 }
 
+// ── IndexedDB persistent cache for sprite binaries ──
+// Sprite binaries are immutable per Reimagined release (the mod ships a
+// new file when art changes), so we can cache aggressively. The cache
+// key is the full URL we successfully fetched from — so an entry from
+// `media.githubusercontent.com/...` (Reimagined's LFS) is naturally distinct
+// from an entry served by the editor's repo or the local fallback. This
+// cuts ongoing LFS bandwidth on the Reimagined repo to "first encounter
+// per browser profile" instead of "every editor reload".
+//
+// TTL: 30 days. Long enough that ordinary users never re-fetch in practice;
+// short enough that a Reimagined art update naturally trickles in within a
+// month. Users who want the latest immediately can hit "Clear sprite cache"
+// in Advanced Options.
+const SPRITE_CACHE_DB    = 'd2rr_sprite_cache';
+const SPRITE_CACHE_STORE = 'sprites';
+const SPRITE_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+function _spriteIdbOpen() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) { reject(new Error('IDB unavailable')); return; }
+    const req = indexedDB.open(SPRITE_CACHE_DB, 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore(SPRITE_CACHE_STORE); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+async function _spriteIdbGet(url) {
+  try {
+    const db = await _spriteIdbOpen();
+    const entry = await new Promise((res, rej) => {
+      const tx = db.transaction(SPRITE_CACHE_STORE, 'readonly');
+      const r = tx.objectStore(SPRITE_CACHE_STORE).get(url);
+      r.onsuccess = () => res(r.result || null);
+      r.onerror   = () => rej(r.error);
+    });
+    db.close();
+    if (!entry || !entry.buf || typeof entry.ts !== 'number') return null;
+    if (Date.now() - entry.ts > SPRITE_CACHE_TTL_MS) return null;
+    return entry.buf;  // ArrayBuffer
+  } catch (e) { _logCaught('spriteIdbGet', e); return null; }
+}
+
+async function _spriteIdbPut(url, buf) {
+  try {
+    const db = await _spriteIdbOpen();
+    await new Promise((res, rej) => {
+      const tx = db.transaction(SPRITE_CACHE_STORE, 'readwrite');
+      tx.objectStore(SPRITE_CACHE_STORE).put({ buf, ts: Date.now() }, url);
+      tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+    });
+    db.close();
+  } catch (e) { _logCaught('spriteIdbPut', e); }
+}
+
+async function _spriteIdbClear() {
+  try {
+    const db = await _spriteIdbOpen();
+    await new Promise((res, rej) => {
+      const tx = db.transaction(SPRITE_CACHE_STORE, 'readwrite');
+      tx.objectStore(SPRITE_CACHE_STORE).clear();
+      tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+    });
+    db.close();
+  } catch (e) { _logCaught('spriteIdbClear', e); }
+}
+
+async function _spriteIdbCount() {
+  try {
+    const db = await _spriteIdbOpen();
+    const n = await new Promise((res, rej) => {
+      const tx = db.transaction(SPRITE_CACHE_STORE, 'readonly');
+      const r = tx.objectStore(SPRITE_CACHE_STORE).count();
+      r.onsuccess = () => res(r.result || 0);
+      r.onerror   = () => rej(r.error);
+    });
+    db.close();
+    return n;
+  } catch (e) { _logCaught('spriteIdbCount', e); return 0; }
+}
+
 // Load + parse a sprite by asset path (e.g. "charm/charm_large"). Caches
-// result and failures. Tries the remote editor path first, falls back to local.
+// in-session via _itemSpriteCache (parsed) and across sessions via IndexedDB
+// (raw ArrayBuffer). Tries the Reimagined repo first (so mod-overridden art
+// wins where present), falls through to the editor's mirror, then local.
 function loadItemSprite(assetPath) {
   if (!assetPath) return Promise.resolve(null);
   if (_itemSpriteCache.has(assetPath)) return _itemSpriteCache.get(assetPath);
@@ -4641,11 +4724,21 @@ function loadItemSprite(assetPath) {
   }
   const promise = (async () => {
     for (const url of urls) {
+      // Persistent cache hit — no network.
+      const cached = await _spriteIdbGet(url);
+      if (cached) {
+        try { return parseSpA1(cached); }
+        catch (e) { /* corrupt entry — fall through to network */ }
+      }
+      // Network path. On success, persist for next session.
       try {
         const res = await fetch(url);
         if (!res.ok) continue;
         const buf = await res.arrayBuffer();
-        return parseSpA1(buf);
+        const sprite = parseSpA1(buf);
+        // Fire-and-forget: don't block render on the IDB write.
+        _spriteIdbPut(url, buf).catch(() => {});
+        return sprite;
       } catch (e) { /* try next */ }
     }
     return null;
@@ -5244,6 +5337,195 @@ window.acceptWheelResult = function() {
   if (nameInput && !nameInput.value) nameInput.focus();
 };
 
+// ── Starting items resync from charstats.txt ─────────────────────────────
+//
+// `templates.json` ships a real frozen .d2s per class that already contains
+// the starting kit. But Reimagined occasionally retunes its charstats.txt —
+// changing a class's starting weapon, dropping items, etc. — and the templates
+// go stale until someone manually regenerates them.
+//
+// To keep new-character creation in sync with the mod's current data, after
+// the template loads we strip all character items and rebuild the section
+// from charstats.txt. The skill/quest/waypoint/header sections come from the
+// template (those don't live in charstats); only the items section is rebuilt.
+//
+// charstats columns we use:
+//   item1..item10        — type code (e.g. 'jav', 'hp1', 'box')
+//   item1loc..item10loc  — placement: 'rarm', 'larm', or empty
+//   item1count..         — repeat count (4× hp1 = 4 belt potions)
+//   item1quality..       — usually 2 (normal); we honor whatever's there
+//
+// Location convention:
+//   rarm   → equipped right hand (parent=1, equipSlot=4)
+//   larm   → equipped left  hand (parent=1, equipSlot=5)
+//   empty + count > 1 + stackable potion → belt slots 0..count-1 (parent=2)
+//   empty + count == 1 → inventory, auto-placed by item size
+//
+// Falls back gracefully: if charstats.txt isn't loaded, the class row is
+// missing, or no valid items result, the template's original items are kept.
+
+function _buildStartingItemsFromCharstats(cls) {
+  const cs = baseData['charstats'];
+  if (!cs?.rows) return null;
+  const className = (CLASS_KEYS[cls] || '').trim();
+  if (!className) return null;
+  const row = cs.rows.find(r => (r['class'] || r['Class'] || '').trim() === className);
+  if (!row) return null;
+
+  const dims = getInventoryDimensions(cls);
+  const occupied = new Set();
+  const placeInv = (w, h) => {
+    for (let y = 0; y <= dims.invH - h; y++) {
+      for (let x = 0; x <= dims.invW - w; x++) {
+        let fits = true;
+        for (let dy = 0; dy < h && fits; dy++) {
+          for (let dx = 0; dx < w && fits; dx++) {
+            if (occupied.has(`${x+dx},${y+dy}`)) { fits = false; break; }
+          }
+        }
+        if (fits) {
+          for (let dy = 0; dy < h; dy++)
+            for (let dx = 0; dx < w; dx++) occupied.add(`${x+dx},${y+dy}`);
+          return { x, y };
+        }
+      }
+    }
+    return null;
+  };
+
+  const items = [];
+  for (let i = 1; i <= 10; i++) {
+    const code = (row[`item${i}`] || '').trim();
+    if (!code || code === '0') continue;
+    if (!itemNameByCode[code]) {
+      console.warn(`charstats: class ${className} item${i}='${code}' — unknown code, skipping`);
+      continue;
+    }
+    const loc = (row[`item${i}loc`] || '').trim();
+    const count = Math.max(1, parseInt(row[`item${i}count`] || '1', 10) || 1);
+    const qual = parseInt(row[`item${i}quality`] || '2', 10) || 2;
+
+    const base = {
+      identified: 1, socketed: 0, simple: 0, ethereal: 0, personalized: 0, runeword: 0,
+      typeCode: code, numSockets: 0, itemLevel: 1, quality: qual, useMaxValues: false,
+    };
+
+    if (loc === 'rarm' || loc === 'larm') {
+      items.push({ ...base, parent: 1, equipSlot: loc === 'rarm' ? 4 : 5, location: 1, storage: 0, x: 0, y: 0 });
+    } else if (!loc && count > 1) {
+      // Belt — one item per slot, capped at 4 belt slots
+      const slots = Math.min(count, 4);
+      for (let s = 0; s < slots; s++) {
+        items.push({ ...base, parent: 2, equipSlot: 0, location: 2, storage: 0, x: s, y: 0 });
+      }
+    } else if (!loc) {
+      const sz = getItemSize(code);
+      const pos = placeInv(sz.w, sz.h);
+      if (!pos) {
+        console.warn(`charstats: class ${className} item${i}='${code}' — no inventory space, skipping`);
+        continue;
+      }
+      items.push({ ...base, parent: 0, equipSlot: 0, location: 0, storage: 1, x: pos.x, y: pos.y });
+    } else {
+      console.warn(`charstats: class ${className} item${i}='${code}' loc='${loc}' — unsupported location, skipping`);
+    }
+  }
+  return items;
+}
+
+// Sync the new character's base attributes + derived life/mana/stamina from
+// charstats.txt. Templates encode the values that were live at template-
+// capture time, so when Reimagined retunes a class's `str`/`dex`/`int`/`vit`
+// or per-vit/per-energy multipliers, the new character ends up with stale
+// numbers until templates are regenerated. This resync pulls the current
+// charstats values and feeds them through the same `_calcLife`/`_calcMana`/
+// `_calcStamina` formulas the Character tab already uses for live recalc,
+// then commits via the existing `commitStats` infra.
+//
+// `int` in charstats maps to `energy` in the stat block — name difference is
+// historical, we honor it via the explicit map below.
+//
+// What we DON'T sync:
+//   • StartSkill (left-click default) — V105's mouse-skill byte offsets
+//     aren't verified, and the editor doesn't currently parse/write those
+//     fields. Misplacing the bytes risks corrupting unrelated header data.
+//     If the mod ever changes a class's StartSkill, regenerate templates.
+//   • Pre-allocated skill-tree points — the skill block is all-zero on
+//     fresh saves and charstats has no "starting points" column anyway.
+function _resyncStartingStatsFromCharstats(cls) {
+  const cr = getCharStats(cls);
+  if (!cr) return;
+  if (!parsedChar?.stats) return;
+
+  const str  = parseInt(cr['str'] || '0', 10) || 0;
+  const dex  = parseInt(cr['dex'] || '0', 10) || 0;
+  const intg = parseInt(cr['int'] || '0', 10) || 0;
+  const vit  = parseInt(cr['vit'] || '0', 10) || 0;
+  if (!str && !dex && !intg && !vit) return;  // bogus row, leave template alone
+
+  // Use the existing formulas — they already read all the per-vit / per-energy
+  // / hpadd columns from charstats and produce the same numbers a real fresh
+  // save would have for level 1.
+  const maxhp     = _calcLife(cls, vit);
+  const maxmana   = _calcMana(cls, intg);
+  const maxstam   = _calcStamina(cls, vit, 1);
+
+  const newStats = {
+    strength:    str,
+    dexterity:   dex,
+    energy:      intg,   // charstats `int` → stat-block `energy`
+    vitality:    vit,
+    maxhp,    hitpoints:  maxhp,
+    maxmana,  mana:       maxmana,
+    maxstamina: maxstam,
+    stamina:    maxstam,
+  };
+  commitStats(newStats);
+  // commitStats writes through workBytes; mirror onto parsedChar.stats so
+  // downstream rendering doesn't see stale values.
+  Object.assign(parsedChar.stats, newStats);
+  console.log(`_resyncStartingStatsFromCharstats: ${CLASS_KEYS[cls]} → str=${str} dex=${dex} int=${intg} vit=${vit}, maxhp=${maxhp} maxmana=${maxmana} maxstam=${maxstam}`);
+}
+
+function _resyncStartingItemsFromCharstats(cls) {
+  const newItems = _buildStartingItemsFromCharstats(cls);
+  if (!newItems || !newItems.length) {
+    console.log('_resyncStartingItemsFromCharstats: no charstats data, keeping template items as-is');
+    return;
+  }
+  if (!parsedChar?.items) return;
+
+  // Defensive clear: `_deletedItemOffsets` is a session-scoped global that
+  // normally drains on each flush, but if the user landed on the new-character
+  // flow with pending deletions queued from a previously-loaded save, those
+  // stale byte offsets would point at random bytes in the fresh template.
+  // Reset the queue so we only operate on the offsets we add below.
+  _deletedItemOffsets.clear();
+
+  // Mark every existing character item (non-merc, real offset) for deletion
+  for (const item of parsedChar.items) {
+    if (item.isMerc) continue;
+    if (item.byteOffset < 0) continue;
+    _deletedItemOffsets.add(item.byteOffset);
+  }
+
+  // Drop the in-memory items array and re-add as virtuals
+  parsedChar.items = parsedChar.items.filter(it => it.isMerc);
+  for (const it of newItems) {
+    parsedChar.items.push({ ...it, isVirtual: true, byteOffset: nextFakeOffset() });
+  }
+
+  // Flush both queues so workBytes reflects the new items section
+  flushDeletedItems();
+  flushVirtualItems();
+
+  // Re-parse so byteOffsets / item references are fresh for downstream renders.
+  // File-size header + checksum get fixed up by the caller after both resyncs
+  // have run (stats resync can also resize the buffer).
+  parsedChar = parseD2S(workBytes);
+  console.log(`_resyncStartingItemsFromCharstats: ${cls} → ${newItems.length} items from charstats.txt`);
+}
+
 window.createNewCharacter = function() {
   const name = (document.getElementById('newCharName').value || '').trim().replace(/[^A-Za-z\-_]/g, '');
   if (!name) { showPopup(L('ui_err_invalid_char_name','Enter a character name (letters, hyphens, underscores only).')); return; }
@@ -5275,6 +5557,24 @@ window.createNewCharacter = function() {
   _fileHandles.char = null;
   closeNewCharModal();
   parsedChar = parseD2S(workBytes);
+
+  // Templates ship with the starting kit + base stats baked in, but
+  // charstats.txt is the current truth. When Reimagined retunes a class
+  // (starting items, base attributes, per-vit life multiplier, etc.) these
+  // resyncs pull the new values without needing to regenerate templates.
+  // Stats first, then items — items reuse position fields (parent/equipSlot)
+  // that don't depend on stats so order is mostly cosmetic, but stats first
+  // means the items resync's flushVirtualItems sees the final stat block.
+  _resyncStartingStatsFromCharstats(cls);
+  _resyncStartingItemsFromCharstats(cls);
+
+  // Both resyncs may have grown/shrunk workBytes (stats can expand the gf
+  // section, items always rewrite the JM section). Fix up the file-size
+  // header + checksum once, after everything settles. createNewCharacter
+  // did this on the original template buffer before the resyncs ran, so
+  // these values would otherwise be stale.
+  writeU32LE(workBytes, 8, workBytes.length);
+  recalcChecksum(workBytes);
 
   snapshotQuestState();
   snapshotSkillState();
@@ -6853,6 +7153,13 @@ window.openAdvancedOptions = function() {
         <div style="color:var(--d2-text-dim);font-size:11px">
           ${esc(L('ui_adv_sprites_desc','Render item cells using the game\'s .sprite files from base/sprites/ instead of abbreviated names. Missing files fall back to the name.'))}
         </div>
+        <div id="spriteCacheRow" style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11px">
+          <span id="spriteCacheCount" style="color:var(--d2-text-dim)">${esc(L('ui_adv_sprites_cache_loading','Cached sprites: …'))}</span>
+          <button type="button" onclick="clearSpriteCache(event)"
+                  style="background:var(--d2-surface);border:1px solid var(--d2-border-bright);color:var(--d2-text);font-family:'Crimson Text',serif;font-size:11px;padding:3px 10px;border-radius:2px;cursor:pointer">
+            ${esc(L('ui_adv_sprites_clear_cache','Clear sprite cache'))}
+          </button>
+        </div>
       </span>
     </label>`;
 
@@ -6939,6 +7246,10 @@ window.openAdvancedOptions = function() {
     </div>`,
     buttons: [{ label: L('ui_btn_close', 'Close'), tone: 'ghost' }],
   });
+
+  // Populate the cached-sprite count after the dialog mounts — IDB read is
+  // async, so we don't block the dialog render on it.
+  _refreshSpriteCacheCountLabel();
 };
 
 // Item-editing toggle. No re-render needed — only changes whether the
@@ -6956,6 +7267,30 @@ window.onItemSpriteToggleChange = function(checkbox) {
   _itemSpriteMode = !!checkbox.checked;
   _saveItemSpriteMode();
   if (activeTab) renderTab();
+};
+
+// Async-populate the "Cached sprites: N" line in the Advanced Options dialog
+// once the count comes back from IDB. The dialog renders synchronously so we
+// stub a placeholder and update in place. Safe to call when the dialog isn't
+// open — getElementById just returns null and the call no-ops.
+async function _refreshSpriteCacheCountLabel() {
+  const el = document.getElementById('spriteCacheCount');
+  if (!el) return;
+  const n = await _spriteIdbCount();
+  el.textContent = Lfmt('ui_adv_sprites_cache_count','Cached sprites: {n}', { n });
+}
+
+// Wipes the IDB sprite cache. Also clears the in-session parse cache so the
+// next render genuinely re-fetches (otherwise stale parsed sprites would
+// linger in `_itemSpriteCache` until reload). Triggers a re-render so any
+// visible cells reload.
+window.clearSpriteCache = async function(ev) {
+  if (ev) { ev.preventDefault(); ev.stopPropagation(); }  // don't toggle the parent label's checkbox
+  await _spriteIdbClear();
+  _itemSpriteCache.clear();
+  if (activeTab) renderTab();
+  _refreshSpriteCacheCountLabel();
+  setStatus(L('ui_status_sprite_cache_cleared','Sprite cache cleared.'), 'ready');
 };
 
 // Called when the checkbox flips. Turning OFF is free; turning ON shows the
