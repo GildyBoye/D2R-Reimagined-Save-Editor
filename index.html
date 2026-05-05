@@ -5463,12 +5463,13 @@ function _resyncStartingStatsFromCharstats(cls) {
   const vit  = parseInt(cr['vit'] || '0', 10) || 0;
   if (!str && !dex && !intg && !vit) return;  // bogus row, leave template alone
 
-  // Use the existing formulas — they already read all the per-vit / per-energy
-  // / hpadd columns from charstats and produce the same numbers a real fresh
-  // save would have for level 1.
-  const maxhp     = _calcLife(cls, vit);
-  const maxmana   = _calcMana(cls, intg);
-  const maxstam   = _calcStamina(cls, vit, 1);
+  // Use the existing formulas — they read all the per-vit / per-energy /
+  // per-level / hpadd columns from charstats and produce the numbers a real
+  // fresh save would have for a level-1 character. Pass level=1 explicitly
+  // so the per-level term contributes 0 (fresh chars start at level 1).
+  const maxhp     = _calcLife   (cls, vit,  1);
+  const maxmana   = _calcMana   (cls, intg, 1);
+  const maxstam   = _calcStamina(cls, vit,  1);
 
   const newStats = {
     strength:    str,
@@ -8116,7 +8117,40 @@ function commitLevel(lvl) {
   parsedChar.header.level = lvl;
   // Also update the level stat (id=12) in the gf section so the game reads it correctly
   parsedChar.stats.level = lvl;
-  commitStats({ level: lvl });
+
+  // Recompute level-dependent derived stats. Without this, changing level
+  // leaves maxhp / maxmana / maxstamina at the OLD level's values — the
+  // saved file would carry a level field that disagrees with the hp / mana
+  // the game reads, leaving the character with too much (de-leveled) or too
+  // little (leveled-up) life relative to what their level suggests.
+  //
+  // Formula uses CURRENT vit / energy (so leveling without changing stats
+  // recomputes from the level term only). The follow-up applyStats run that
+  // happens on the same Apply click reads parsedChar.stats.maxhp as its
+  // baseline before applying any vit / energy delta, so the two stages
+  // compose correctly: level term first, then vit / energy delta on top.
+  //
+  // Current values track max (full heal on level change). Editor users who
+  // want partial hp can edit the current values manually after.
+  const cls = parsedChar.header.cls;
+  const vit = parsedChar.stats.vitality || 0;
+  const enr = parsedChar.stats.energy   || 0;
+  const newMaxHp   = _calcLife   (cls, vit, lvl);
+  const newMaxMana = _calcMana   (cls, enr, lvl);
+  const newMaxStam = _calcStamina(cls, vit, lvl);
+  commitStats({
+    level:      lvl,
+    maxhp:      newMaxHp,   hitpoints: newMaxHp,
+    maxmana:    newMaxMana, mana:      newMaxMana,
+    maxstamina: newMaxStam, stamina:   newMaxStam,
+  });
+  Object.assign(parsedChar.stats, {
+    level:      lvl,
+    maxhp:      newMaxHp,   hitpoints: newMaxHp,
+    maxmana:    newMaxMana, mana:      newMaxMana,
+    maxstamina: newMaxStam, stamina:   newMaxStam,
+  });
+
   markDirty(); updateCharStrip();
 }
 
@@ -8956,23 +8990,28 @@ window.applyChar = function() {
 
 // renderStats merged into renderChar above
 
-function _calcLife(cls, vit) {
+function _calcLife(cls, vit, level) {
   const cr = getCharStats(cls);
   if (!cr) return vit + 30;
-  const hpadd = parseInt(cr.hpadd || '0', 10);
-  const baseVit = parseInt(cr.vit || '25', 10);
-  const lifePerVit = parseInt(cr.LifePerVitality || '12', 10) / 4;
-  // Life = hpadd + baseVit + (vit - baseVit) * LifePerVitality/4
-  return Math.round(hpadd + baseVit + (vit - baseVit) * lifePerVit);
+  const hpadd       = parseInt(cr.hpadd || '0', 10);
+  const baseVit     = parseInt(cr.vit || '25', 10);
+  const lifePerVit  = parseInt(cr.LifePerVitality || '12', 10) / 4;
+  const lifePerLvl  = parseInt(cr.LifePerLevel    || '0',  10) / 4;
+  const lvl = Math.max(1, level | 0 || 1);
+  // Life = (hpadd + baseVit) + (vit - baseVit)*LifePerVit/4 + (lvl-1)*LifePerLevel/4
+  // Verified at lvl=1, vit=baseVit against template stat blocks for all classes.
+  return Math.round(hpadd + baseVit + (vit - baseVit) * lifePerVit + (lvl - 1) * lifePerLvl);
 }
 
-function _calcMana(cls, enr) {
+function _calcMana(cls, enr, level) {
   const cr = getCharStats(cls);
   if (!cr) return enr;
-  const baseEnr = parseInt(cr['int'] || '20', 10);
-  const manaPerEnr = parseInt(cr.ManaPerMagic || '8', 10) / 4;
-  // Mana = baseEnr + (enr - baseEnr) * ManaPerMagic/4
-  return Math.round(baseEnr + (enr - baseEnr) * manaPerEnr);
+  const baseEnr     = parseInt(cr['int'] || '20', 10);
+  const manaPerEnr  = parseInt(cr.ManaPerMagic || '8', 10) / 4;
+  const manaPerLvl  = parseInt(cr.ManaPerLevel  || '0', 10) / 4;
+  const lvl = Math.max(1, level | 0 || 1);
+  // Mana = baseEnr + (enr - baseEnr)*ManaPerMagic/4 + (lvl-1)*ManaPerLevel/4
+  return Math.round(baseEnr + (enr - baseEnr) * manaPerEnr + (lvl - 1) * manaPerLvl);
 }
 
 function _calcStamina(cls, vit, level) {
@@ -8988,28 +9027,27 @@ function _calcStamina(cls, vit, level) {
 function _hookStatScaling(cls) {
   const vitEl  = document.getElementById('stVitality');
   const enrEl  = document.getElementById('stEnergy');
+  const lvlEl  = document.getElementById('inpLevel');
   const lifeEl = document.getElementById('stLifeDisplay');
   const manaEl = document.getElementById('stManaDisplay');
 
-  const cr = getCharStats(cls);
-  const lifePerVit = parseInt(cr?.LifePerVitality || '12', 10) / 4;
-  const manaPerEnr = parseInt(cr?.ManaPerMagic || '8', 10) / 4;
-  const origVit = parsedChar.stats.vitality || 0;
-  const origEnr = parsedChar.stats.energy || 0;
-  const baseMaxHp   = parsedChar.stats.maxhp || 0;
-  const baseMaxMana = parsedChar.stats.maxmana || 0;
-
+  // Recompute the displayed life / mana from the current input values via
+  // the same charstats-driven formulas commitStats / commitLevel use, so
+  // the displayed numbers always agree with what would actually be saved.
+  // Includes level scaling — without it, changing only the level field
+  // would silently leave displayed life / mana unchanged even though the
+  // saved values would be correct after Apply (confusing UX).
   function updateDisplays() {
     const vit = parseInt(vitEl?.value || '0', 10) || 0;
     const enr = parseInt(enrEl?.value || '0', 10) || 0;
-    const vitDelta = vit - origVit;
-    const enrDelta = enr - origEnr;
-    if (lifeEl) lifeEl.textContent = baseMaxHp + Math.round(vitDelta * lifePerVit);
-    if (manaEl) manaEl.textContent = baseMaxMana + Math.round(enrDelta * manaPerEnr);
+    const lvl = parseInt(lvlEl?.value || '1', 10) || 1;
+    if (lifeEl) lifeEl.textContent = _calcLife(cls, vit, lvl);
+    if (manaEl) manaEl.textContent = _calcMana(cls, enr, lvl);
   }
 
   if (vitEl) vitEl.addEventListener('input', updateDisplays);
   if (enrEl) enrEl.addEventListener('input', updateDisplays);
+  if (lvlEl) lvlEl.addEventListener('input', updateDisplays);
   updateDisplays();
 }
 
