@@ -8079,13 +8079,34 @@ window.downgradeToSoftcore = function() {
 
 function doDowngradeToSoftcore() {
   if (!parsedChar || !workBytes) return;
+  const wasDead = parsedChar.header.isDead;
   const off = parsedChar.header.statusOffset ?? 20;
   workBytes[off] &= ~0x04;  // clear bit 2 (HC flag)
   workBytes[off] &= ~0x08;  // clear bit 3 (died flag) — softcore chars don't permadeath
   parsedChar.header.isHC = false;
   parsedChar.header.isDead = false;
+  // Dead characters have hitpoints=0 in the save (the game writes that on
+  // death). Just clearing the death flag would leave them "alive" but with
+  // 0 hp — load them and they'd be a corpse-on-arrival. Refill current
+  // hp/mana/stamina from the saved max so they actually walk into town.
+  if (wasDead) _restoreCurrentVitals();
   markDirty();
   updateCharStrip();
+}
+
+// Pulls current hp/mana/stamina up to their saved max values. Used when
+// reviving a corpse (Resurrect, HC→SC downgrade of a dead char) — without
+// this, a "resurrected" save still carries 0 hp/mana/stam and the game
+// either rejects the load or auto-kills the character on entry.
+function _restoreCurrentVitals() {
+  const s = parsedChar.stats;
+  const fixed = {
+    hitpoints: Math.max(1, s.maxhp || 1),
+    mana:      Math.max(1, s.maxmana || 1),
+    stamina:   Math.max(1, s.maxstamina || 1),
+  };
+  commitStats(fixed);
+  Object.assign(parsedChar.stats, fixed);
 }
 
 window.resurrectCharacter = function() {
@@ -8107,6 +8128,10 @@ function doResurrect() {
   const off = parsedChar.header.statusOffset ?? 20;
   workBytes[off] &= ~0x08;  // clear bit 3 (died flag)
   parsedChar.header.isDead = false;
+  // Restore current hp/mana/stamina to max — the dying character's saved
+  // current values are 0, and just clearing the death flag would leave a
+  // walking corpse that the game may refuse to load.
+  _restoreCurrentVitals();
   markDirty();
   updateCharStrip();
 }
@@ -8992,7 +9017,7 @@ window.applyChar = function() {
 
 function _calcLife(cls, vit, level) {
   const cr = getCharStats(cls);
-  if (!cr) return vit + 30;
+  if (!cr) return Math.max(1, vit + 30);
   const hpadd       = parseInt(cr.hpadd || '0', 10);
   const baseVit     = parseInt(cr.vit || '25', 10);
   const lifePerVit  = parseInt(cr.LifePerVitality || '12', 10) / 4;
@@ -9000,18 +9025,22 @@ function _calcLife(cls, vit, level) {
   const lvl = Math.max(1, level | 0 || 1);
   // Life = (hpadd + baseVit) + (vit - baseVit)*LifePerVit/4 + (lvl-1)*LifePerLevel/4
   // Verified at lvl=1, vit=baseVit against template stat blocks for all classes.
-  return Math.round(hpadd + baseVit + (vit - baseVit) * lifePerVit + (lvl - 1) * lifePerLvl);
+  // Floor at 1 — vit < baseVit can drive the formula negative (a level-1
+  // Amazon with vit=0 would compute to -20), and a negative bit-pack writes
+  // two's-complement garbage that renders as huge positive values in-game.
+  return Math.max(1, Math.round(hpadd + baseVit + (vit - baseVit) * lifePerVit + (lvl - 1) * lifePerLvl));
 }
 
 function _calcMana(cls, enr, level) {
   const cr = getCharStats(cls);
-  if (!cr) return enr;
+  if (!cr) return Math.max(1, enr);
   const baseEnr     = parseInt(cr['int'] || '20', 10);
   const manaPerEnr  = parseInt(cr.ManaPerMagic || '8', 10) / 4;
   const manaPerLvl  = parseInt(cr.ManaPerLevel  || '0', 10) / 4;
   const lvl = Math.max(1, level | 0 || 1);
   // Mana = baseEnr + (enr - baseEnr)*ManaPerMagic/4 + (lvl-1)*ManaPerLevel/4
-  return Math.round(baseEnr + (enr - baseEnr) * manaPerEnr + (lvl - 1) * manaPerLvl);
+  // Floor at 1 — same two's-complement underflow risk as life.
+  return Math.max(1, Math.round(baseEnr + (enr - baseEnr) * manaPerEnr + (lvl - 1) * manaPerLvl));
 }
 
 function _calcStamina(cls, vit, level) {
@@ -9021,7 +9050,8 @@ function _calcStamina(cls, vit, level) {
   const baseVit  = parseInt(cr.vit || '25', 10);
   const stamPerLvl = parseInt(cr.StaminaPerLevel || '4', 10) / 4;
   const stamPerVit = parseInt(cr.StaminaPerVitality || '4', 10) / 4;
-  return Math.round(baseStam + (level - 1) * stamPerLvl + (vit - baseVit) * stamPerVit);
+  // Floor at 1 — same underflow guard as life/mana.
+  return Math.max(1, Math.round(baseStam + (level - 1) * stamPerLvl + (vit - baseVit) * stamPerVit));
 }
 
 function _hookStatScaling(cls) {
@@ -9070,6 +9100,11 @@ window.applyStats = function() {
   const vit = newStats.vitality ?? origVit;
   const enr = newStats.energy ?? origEnr;
   const lvl = parsedChar.header.level || 1;
+  // Vit / energy deltas can be negative (user lowered the stat), and the
+  // delta math against a level-1 baseline can drive maxhp / maxmana below
+  // zero. The bit-packing in commitStats writes value mod 2^bits, so a
+  // negative number lands as a huge two's-complement garbage value that
+  // looks like "999999 hp" in-game. Clamp to 1 minimum.
   if (vit !== origVit) {
     const delta = vit - origVit;
     const cr = getCharStats(cls);
@@ -9077,18 +9112,18 @@ window.applyStats = function() {
     const stamPerVit = parseInt(cr?.StaminaPerVitality||'4',10) / 4;
     const hpDelta = Math.round(delta * lifePerVit);
     const stamDelta = Math.round(delta * stamPerVit);
-    newStats.hitpoints = (parsedChar.stats.hitpoints||0) + hpDelta;
-    newStats.maxhp = (parsedChar.stats.maxhp||0) + hpDelta;
-    newStats.stamina = (parsedChar.stats.stamina||0) + stamDelta;
-    newStats.maxstamina = (parsedChar.stats.maxstamina||0) + stamDelta;
+    newStats.hitpoints  = Math.max(1, (parsedChar.stats.hitpoints  || 0) + hpDelta);
+    newStats.maxhp      = Math.max(1, (parsedChar.stats.maxhp      || 0) + hpDelta);
+    newStats.stamina    = Math.max(1, (parsedChar.stats.stamina    || 0) + stamDelta);
+    newStats.maxstamina = Math.max(1, (parsedChar.stats.maxstamina || 0) + stamDelta);
   }
   if (enr !== origEnr) {
     const delta = enr - origEnr;
     const cr = getCharStats(cls);
     const manaPerEnr = parseInt(cr?.ManaPerMagic||'8',10) / 4;
     const mpDelta = Math.round(delta * manaPerEnr);
-    newStats.mana = (parsedChar.stats.mana||0) + mpDelta;
-    newStats.maxmana = (parsedChar.stats.maxmana||0) + mpDelta;
+    newStats.mana    = Math.max(1, (parsedChar.stats.mana    || 0) + mpDelta);
+    newStats.maxmana = Math.max(1, (parsedChar.stats.maxmana || 0) + mpDelta);
   }
   commitStats(newStats);
 };
