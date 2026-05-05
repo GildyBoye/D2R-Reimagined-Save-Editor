@@ -4564,9 +4564,12 @@ let _uniqueNameById   = {};
 let _setNameByItemId  = {};
 // Source URL for the mod's HD item JSON files (sprite-path mappings).
 const REIMAGINED_HD_URL = 'https://raw.githubusercontent.com/D2R-Reimagined/d2r-reimagined-mod/next/data/hd/items/';
-// media.githubusercontent.com resolves Git LFS pointers server-side; the
-// raw.* endpoint returns the 131-byte pointer file instead. See doc/SPRITES.md.
-const REIMAGINED_SPRITE_URL = 'https://media.githubusercontent.com/media/D2R-Reimagined/d2r-reimagined-mod/next/data/hd/global/ui/items/';
+// Sprite binaries: Reimagined migrated these off Git LFS — they're committed
+// as regular Git blobs now, served directly by raw.githubusercontent.com.
+// (Earlier the editor used media.githubusercontent.com/media/* to resolve LFS
+// pointers; with LFS removed that endpoint returns 404 for everything,
+// breaking custom-art rendering for items like Gem Bag and El'Druin.)
+const REIMAGINED_SPRITE_URL = 'https://raw.githubusercontent.com/D2R-Reimagined/d2r-reimagined-mod/next/data/hd/global/ui/items/';
 
 // Parse a Blizzard SpA1 sprite. See doc/SPRITES.md for the file layout.
 function parseSpA1(buf) {
@@ -6018,8 +6021,18 @@ function encodeExtendedItem(item) {
   // bit-17 marker AND a 1-bit gap before the prop list — without those, the
   // game refuses to load freshly-created characters that include any of these
   // items in their starting kit. Verified bit-for-bit against BaseDruid.d2s.
-  const isExtendedMisc = !isAdvStack && (typeof EXTENDED_MISC_SET !== 'undefined') && EXTENDED_MISC_SET.has(code);
+  //
+  // CRITICAL scope restriction: this only applies to items with NO rolled
+  // mods (quality <= 2 = white/normal). Charms (cm1/cm2/cm3) are also
+  // compactsave=0 in misc.txt, but a magic charm (q=4) carries a stat list
+  // that the bit-17 / 1-bit-pad layout shifts by 1 bit, which the game's
+  // parser reads as garbage and rejects on load. User-reported symptom:
+  // "small charm with exp modifier crashes the game". Quality-gating the
+  // marker keeps cube / bag / tomes (always q=2) on the special path while
+  // letting charms with affixes use the standard q=4/6/7/8 layout.
+  const _extMiscRaw = !isAdvStack && (typeof EXTENDED_MISC_SET !== 'undefined') && EXTENDED_MISC_SET.has(code);
   const quality = isAdvStack ? 2 : (item.quality || 2);
+  const isExtendedMisc = _extMiscRaw && quality <= 2;
   const ilvl = item.itemLevel || 80;
 
   // Header flags
