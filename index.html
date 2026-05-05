@@ -3361,7 +3361,7 @@ function buildItemTypeSets() {
   const weaponData = baseData['weapons'];
   const miscData   = baseData['misc'];
   if (!armorData && !weaponData && !miscData) return;
-  const newArmor=new Set(), newWeapon=new Set(), newStack=new Set(), newMisc=new Set();
+  const newArmor=new Set(), newWeapon=new Set(), newStack=new Set(), newMisc=new Set(), newExtendedMisc=new Set();
   if (armorData) {
     for (const row of armorData.rows) {
       const code = (row['code'] || '').trim();
@@ -3397,14 +3397,26 @@ function buildItemTypeSets() {
       const advStack  = (row['AdvancedStashStackable'] || '').trim();
       const eventItem = (row['EventItem']              || '').trim();
       if (advStack === '1' || eventItem === '1') newAdvStack.add(code);
+      // misc.txt's `compactsave` column is the authoritative flag for
+      // simple-vs-extended encoding. Items with compactsave=1 use the
+      // 9/10-byte compact format (potions, scrolls). compactsave=0 items
+      // (Horadric Cube, Tomes, Gem Bag, Arrows, etc.) are stored as full
+      // extended items with item_id / ilvl / quality fields. The editor
+      // used to route all misc items to encodeCompactItem regardless,
+      // which broke new-character creation: the cube/tomes/etc. would
+      // serialize as 9-byte compact items the game couldn't parse. See
+      // doc/ITEM-ROUTING.md.
+      const compactSave = (row['compactsave'] || '').trim();
+      if (compactSave === '0') newExtendedMisc.add(code);
     }
   }
-  ARMOR_SET     = newArmor.size    ? newArmor    : ARMOR_SET;
-  WEAPON_SET    = newWeapon.size   ? newWeapon   : WEAPON_SET;
-  STACK_SET     = newStack.size    ? newStack    : STACK_SET;
-  MISC_SET      = newMisc.size     ? newMisc     : MISC_SET;
-  ADV_STACK_SET = newAdvStack.size ? newAdvStack : ADV_STACK_SET;
-  console.log(`buildItemTypeSets: armor=${ARMOR_SET.size} weapon=${WEAPON_SET.size} stack=${STACK_SET.size} misc=${MISC_SET.size} advStack=${ADV_STACK_SET.size} (from mod data)`);
+  ARMOR_SET          = newArmor.size        ? newArmor        : ARMOR_SET;
+  WEAPON_SET         = newWeapon.size       ? newWeapon       : WEAPON_SET;
+  STACK_SET          = newStack.size        ? newStack        : STACK_SET;
+  MISC_SET           = newMisc.size         ? newMisc         : MISC_SET;
+  ADV_STACK_SET      = newAdvStack.size     ? newAdvStack     : ADV_STACK_SET;
+  EXTENDED_MISC_SET  = newExtendedMisc.size ? newExtendedMisc : EXTENDED_MISC_SET;
+  console.log(`buildItemTypeSets: armor=${ARMOR_SET.size} weapon=${WEAPON_SET.size} stack=${STACK_SET.size} misc=${MISC_SET.size} advStack=${ADV_STACK_SET.size} extMisc=${EXTENDED_MISC_SET.size} (from mod data)`);
 }
 
 // ── Max sockets per item code (from gemsockets + hasinv columns) ──
@@ -5364,7 +5376,7 @@ window.acceptWheelResult = function() {
 // Falls back gracefully: if charstats.txt isn't loaded, the class row is
 // missing, or no valid items result, the template's original items are kept.
 
-function _buildStartingItemsFromCharstats(cls) {
+function _buildStartingItemsFromCharstats(cls, occupiedSeed = null) {
   const cs = baseData['charstats'];
   if (!cs?.rows) return null;
   const className = (CLASS_KEYS[cls] || '').trim();
@@ -5373,7 +5385,12 @@ function _buildStartingItemsFromCharstats(cls) {
   if (!row) return null;
 
   const dims = getInventoryDimensions(cls);
-  const occupied = new Set();
+  // Seed the placement grid with cells already occupied by template items
+  // we plan to keep — without this seed, placeInv treats inventory as fully
+  // empty and stacks newly-added items (tbk, ibk) on top of preserved
+  // template items (cube, gem bag) that share an x/y range. The diff resync
+  // passes a seed built from parsedChar.items's surviving inventory entries.
+  const occupied = new Set(occupiedSeed || []);
   const placeInv = (w, h) => {
     for (let y = 0; y <= dims.invH - h; y++) {
       for (let x = 0; x <= dims.invW - w; x++) {
@@ -5488,43 +5505,101 @@ function _resyncStartingStatsFromCharstats(cls) {
   console.log(`_resyncStartingStatsFromCharstats: ${CLASS_KEYS[cls]} → str=${str} dex=${dex} int=${intg} vit=${vit}, maxhp=${maxhp} maxmana=${maxmana} maxstam=${maxstam}`);
 }
 
+// Diff-based item resync. The previous version aggressively re-encoded every
+// item from charstats, which exposed a long tail of subtle V105 encoding
+// quirks (per-item bit-17, cs flag + cs_data field of varying width on
+// weapons / armor, etc.) that the encoder doesn't fully model. Re-encoding
+// `clb` and `buc` produced shorter-than-template bytes the game refused on
+// join — even after the cube / tome / potion fixes landed.
+//
+// Diff approach: keep template items that match charstats codes alone (their
+// bytes are already in the correct game format — they came from a real save).
+// Only delete codes the template has but charstats doesn't, and only encode
+// codes charstats has but the template doesn't. For the limited set of new
+// codes that need encoding, the encoder's compact / extended-misc paths are
+// well-tested (cube, tomes, potions verified bit-for-bit against templates).
+// Weapons / armor in charstats almost always exist in the matching template
+// already, so the encoder's weapon / armor path effectively isn't exercised
+// here — sidestepping the bit-17 / cs / etc. problems entirely until we have
+// a known-good reference for them.
 function _resyncStartingItemsFromCharstats(cls) {
-  const newItems = _buildStartingItemsFromCharstats(cls);
-  if (!newItems || !newItems.length) {
+  if (!parsedChar?.items) return;
+
+  // Build the inventory-cells-already-occupied set from the template's
+  // current inventory items. Auto-placement of newly-added items (tbk/ibk
+  // for Druid, etc.) needs to avoid these cells — otherwise charstats items
+  // that the template covers (cube, gem bag) get visually overlapped by
+  // newly-added items in the same x/y region. Filter to inventory grid
+  // items (parent=0, storage=1); equipped (parent=1) and belt (parent=2)
+  // items don't take inventory cells.
+  const occupiedSeed = new Set();
+  for (const item of parsedChar.items) {
+    if (item.isMerc || item.isVirtual) continue;
+    if ((item.parent ?? item.location ?? 0) !== 0) continue;
+    if ((item.storage ?? 0) !== 1) continue;
+    const sz = getItemSize(item.typeCode);
+    for (let dy = 0; dy < sz.h; dy++) {
+      for (let dx = 0; dx < sz.w; dx++) {
+        occupiedSeed.add(`${(item.x|0)+dx},${(item.y|0)+dy}`);
+      }
+    }
+  }
+
+  const desired = _buildStartingItemsFromCharstats(cls, occupiedSeed);
+  if (!desired || !desired.length) {
     console.log('_resyncStartingItemsFromCharstats: no charstats data, keeping template items as-is');
     return;
   }
-  if (!parsedChar?.items) return;
 
-  // Defensive clear: `_deletedItemOffsets` is a session-scoped global that
-  // normally drains on each flush, but if the user landed on the new-character
-  // flow with pending deletions queued from a previously-loaded save, those
-  // stale byte offsets would point at random bytes in the fresh template.
-  // Reset the queue so we only operate on the offsets we add below.
   _deletedItemOffsets.clear();
 
-  // Mark every existing character item (non-merc, real offset) for deletion
-  for (const item of parsedChar.items) {
-    if (item.isMerc) continue;
-    if (item.byteOffset < 0) continue;
-    _deletedItemOffsets.add(item.byteOffset);
+  // What charstats wants: a multiset (code → desired count). Belt potions
+  // expand to multiple entries with the same code, so use a counter map.
+  const wantedCount = new Map();
+  for (const it of desired) wantedCount.set(it.typeCode, (wantedCount.get(it.typeCode) || 0) + 1);
+
+  // What the template has: one entry per template item, in scan order.
+  const haveCount   = new Map();
+  const templateChar = parsedChar.items.filter(it => !it.isMerc && !it.isVirtual && it.byteOffset >= 0);
+  for (const it of templateChar) haveCount.set(it.typeCode, (haveCount.get(it.typeCode) || 0) + 1);
+
+  // Items to remove: template has more of a code than charstats wants.
+  // Remove in reverse byte-order so earlier offsets stay valid through deletes.
+  let removed = 0;
+  for (let i = templateChar.length - 1; i >= 0; i--) {
+    const it = templateChar[i];
+    const want = wantedCount.get(it.typeCode) || 0;
+    const have = haveCount.get(it.typeCode) || 0;
+    if (have > want) {
+      _deletedItemOffsets.add(it.byteOffset);
+      haveCount.set(it.typeCode, have - 1);
+      removed++;
+    }
   }
 
-  // Drop the in-memory items array and re-add as virtuals
-  parsedChar.items = parsedChar.items.filter(it => it.isMerc);
-  for (const it of newItems) {
+  // Items to add: charstats wants more of a code than the template has.
+  let added = 0;
+  for (const it of desired) {
+    const have = haveCount.get(it.typeCode) || 0;
+    if (have > 0) {
+      // Template covers this slot. Don't re-encode — the template's bytes
+      // are authoritative.
+      haveCount.set(it.typeCode, have - 1);
+      continue;
+    }
     parsedChar.items.push({ ...it, isVirtual: true, byteOffset: nextFakeOffset() });
+    added++;
   }
 
-  // Flush both queues so workBytes reflects the new items section
+  if (!removed && !added) {
+    console.log(`_resyncStartingItemsFromCharstats: ${CLASS_KEYS[cls]} → template matches charstats, no changes`);
+    return;
+  }
+
   flushDeletedItems();
   flushVirtualItems();
-
-  // Re-parse so byteOffsets / item references are fresh for downstream renders.
-  // File-size header + checksum get fixed up by the caller after both resyncs
-  // have run (stats resync can also resize the buffer).
   parsedChar = parseD2S(workBytes);
-  console.log(`_resyncStartingItemsFromCharstats: ${cls} → ${newItems.length} items from charstats.txt`);
+  console.log(`_resyncStartingItemsFromCharstats: ${CLASS_KEYS[cls]} → ${added} added, ${removed} removed`);
 }
 
 window.createNewCharacter = function() {
@@ -5559,15 +5634,28 @@ window.createNewCharacter = function() {
   closeNewCharModal();
   parsedChar = parseD2S(workBytes);
 
-  // Templates ship with the starting kit + base stats baked in, but
-  // charstats.txt is the current truth. When Reimagined retunes a class
-  // (starting items, base attributes, per-vit life multiplier, etc.) these
-  // resyncs pull the new values without needing to regenerate templates.
-  // Stats first, then items — items reuse position fields (parent/equipSlot)
-  // that don't depend on stats so order is mostly cosmetic, but stats first
-  // means the items resync's flushVirtualItems sees the final stat block.
+  // Stats resync: reads charstats.txt at character-creation time and writes
+  // base attributes / max life-mana-stamina via the existing commitStats path.
+  // Safe because it only touches the gf-section bit stream that commitStats
+  // already round-trips correctly.
   _resyncStartingStatsFromCharstats(cls);
-  _resyncStartingItemsFromCharstats(cls);
+
+  // Items resync: DISABLED. Repeatedly producing saves the game refused on
+  // join showed that we don't yet match Reimagined V105's full byte format
+  // for weapons / armor — the encoder is missing a ~32-bit field on weapons
+  // (clb's 23 bytes vs the encoder's 19) and ~8 bits on armor (buc's 21 vs
+  // 20) that I haven't reverse-engineered yet. The diff-based approach
+  // worked for hp1 / box / bag / clb / buc that exist in both charstats and
+  // the template (those keep the template's authoritative bytes), but a
+  // class whose template predates the user's installed mod version would
+  // still get items the game rejects.
+  //
+  // Until the encoder can produce game-loadable weapon / armor / magic /
+  // unique items bit-for-bit, we leave the template's items alone. This
+  // means the starting kit reflects whatever was current when templates.json
+  // was last regenerated — if the mod retunes starting items, regenerate the
+  // templates from a fresh in-game character.
+  // _resyncStartingItemsFromCharstats(cls);  // see above
 
   // Both resyncs may have grown/shrunk workBytes (stats can expand the gf
   // section, items always rewrite the JM section). Fix up the file-size
@@ -5885,9 +5973,18 @@ function encodeCompactItem(code, col, row, storage, parent, equipSlot) {
     // matches the game-written format; without it, the game's parser drifts and the
     // character fails to load ("failed to join game").
     wbN(pos, 2, 9); pos += 9;
-    while (pos & 7) pos++;      // align to byte
+    pos += 2;                   // +2 bit pad (Reimagined V105 rule, see below)
+    while (pos & 7) pos++;      // byte-align
   } else {
-    while (pos & 7) pos++;      // align to byte
+    // Reimagined V105 padding rule for compactsave=1 items (potions, scrolls):
+    // add 2 bits then byte-align. Verified bit-for-bit against BaseDruid.d2s
+    // template — hp1 (huff ends bit 72) → 10 bytes, isc (huff ends bit 71) →
+    // 10 bytes, tsc (huff ends bit 69) → 9 bytes. Old code did just the
+    // byte-align, producing 9-byte hp1 / isc that the game refused to load
+    // on a freshly-created character. Symptom: "Failed To Join Game" until
+    // the cube/tomes/potions were manually removed from a new editor save.
+    pos += 2;
+    while (pos & 7) pos++;
   }
   return buf.slice(0, pos >> 3);
 }
@@ -5917,6 +6014,11 @@ function encodeExtendedItem(item) {
   // and get routed/encoded through their own paths. If any of those turn out
   // to also need the bit-13 format, expand the regex here.
   const isAdvStack = /^ua\d$/.test(code);
+  // compactsave=0 misc items (Cube, Tomes, Gem Bag, Arrows). These need a
+  // bit-17 marker AND a 1-bit gap before the prop list — without those, the
+  // game refuses to load freshly-created characters that include any of these
+  // items in their starting kit. Verified bit-for-bit against BaseDruid.d2s.
+  const isExtendedMisc = !isAdvStack && (typeof EXTENDED_MISC_SET !== 'undefined') && EXTENDED_MISC_SET.has(code);
   const quality = isAdvStack ? 2 : (item.quality || 2);
   const ilvl = item.itemLevel || 80;
 
@@ -5924,11 +6026,13 @@ function encodeExtendedItem(item) {
   const isRuneCode = /^[rs]\d{2}$/.test(code);
   wb(4,  1);   // identified
   if (item.numSockets > 0) wb(11, 1);  // socketed flag
-  // bit 13 and 17: NOT set on extended items (game uniques have b13=0, b17=0)
-  // EXCEPT for Reimagined AdvancedStashStackable items, which set bit 13 = 1
-  // as a "this is a stackable extended item" marker. Without this, the game's
-  // parser falls into the wrong code path and rejects the item on join.
-  if (isAdvStack) wb(13, 1);
+  // bit 13 and 17: NOT set on extended items by default — the standard D2R
+  // unique/set/magic encoding leaves both at 0. EXCEPT:
+  //   • Reimagined AdvancedStashStackable items (ua* statues) set bit 13 = 1
+  //   • Reimagined compactsave=0 misc items (cube, tomes, etc.) set bit 17 = 1
+  // Both are verified against game-shipped templates / save snapshots.
+  if (isAdvStack)     wb(13, 1);
+  if (isExtendedMisc) wb(17, 1);
   // bit 21 = 0 (NOT simple — this is an extended item)
   if (item.ethereal) wb(22, 1);  // ethereal flag
   wb(23, 1);   // always-1 marker (b2 & 0x80)
@@ -6003,6 +6107,16 @@ function encodeExtendedItem(item) {
 
   // timestamp (1 bit) — 0
   wbN(pos, 0, 1); pos += 1;
+
+  // compactsave=0 misc items (cube, tomes, gem bag, arrows, etc.) carry a
+  // 1-bit "stackable marker" right after the timestamp — set to 1 if a
+  // 9-bit STACK_SET qty follows, 0 otherwise. Verified against BaseDruid.d2s
+  // (cube has bit 120 = 0, no qty, then 511 at bit 121) and BaseZon.d2s
+  // (aqv has bit 124 = 1, then qty=250 at bits 125-133, then 511 at 134).
+  if (isExtendedMisc) {
+    if (STACK_SET.has(code)) wb(pos, 1);
+    pos++;
+  }
 
   // Type-specific fields (isArmor / isWeapon already declared above for the extra-bit gate)
   if (isArmor) {
@@ -6300,10 +6414,16 @@ function flushVirtualItems() {
     // they're quality=2 with no uniqueId — the special bit-13 marker layout
     // in encodeExtendedItem handles them. Without this routing override
     // they'd fall to encodeCompactItem and the game would crash with
-    // "Failed To Join Game" on the first such item. Other AdvancedStashStackable
-    // items (gems, potions, etc.) are correctly compact and not affected.
+    // "Failed To Join Game" on the first such item.
     const isAdvStack = /^ua\d$/.test(code);
-    const isSimple = !isRune && !isAdvStack && !ARMOR_SET.has(code) && !WEAPON_SET.has(code) &&
+    // Misc items flagged compactsave=0 in misc.txt (Cube, Tomes, Gem Bag,
+    // Arrows, etc.) — these are stored as full extended items even though
+    // they look like simple compact candidates. Mirroring those through
+    // encodeCompactItem produced 9-byte items the game would refuse to
+    // parse on join.
+    const isExtMisc = EXTENDED_MISC_SET.has(code);
+    const isSimple = !isRune && !isAdvStack && !isExtMisc &&
+                     !ARMOR_SET.has(code) && !WEAPON_SET.has(code) &&
                      (it.quality || 2) <= 2 && !it.uniqueId && !it.setId && !it.setItemId;
     if (isSimple) {
       return encodeCompactItem(code, it.x||0, it.y||0, it.storage??1, it.parent??0, it.equipSlot||0);
@@ -10628,6 +10748,16 @@ let MISC_SET=new Set('box rin amu jew cm1 cm2 cm3 cm4 gld ear toa tch bks bkd qe
 // these items as having no decoded properties and let the per-instance qty
 // (read separately via parseSharedStash's advancedQty path) carry the count.
 let ADV_STACK_SET = new Set();
+
+// Misc items with `compactsave=0` in misc.txt — these are stored as full
+// extended items (with item_id / ilvl / quality / mp / cs / timestamp), NOT
+// as compact items, even though the `simple` flag would otherwise suggest
+// compact. Covers: Horadric Cube (`box`), Tomes (`tbk`/`ibk`), Gem Bag
+// (`bag`), Arrows / Bolts (`aqv`/`cqv`), and similar. Without routing these
+// through encodeExtendedItem, new-character creation produces saves the
+// game can't load — the user reported "fail to join" until cube + tomes +
+// potions were removed from a fresh editor-made character.
+let EXTENDED_MISC_SET = new Set();
 
 // Low-level prop-list reader — decodes stats starting at exactly `startBit`. Returns
 // `{mods, endBit, terminated}` where `terminated` is true only if we reached the 511 sentinel
