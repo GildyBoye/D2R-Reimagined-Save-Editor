@@ -6022,17 +6022,35 @@ function encodeExtendedItem(item) {
   // game refuses to load freshly-created characters that include any of these
   // items in their starting kit. Verified bit-for-bit against BaseDruid.d2s.
   //
-  // CRITICAL scope restriction: this only applies to items with NO rolled
-  // mods (quality <= 2 = white/normal). Charms (cm1/cm2/cm3) are also
-  // compactsave=0 in misc.txt, but a magic charm (q=4) carries a stat list
-  // that the bit-17 / 1-bit-pad layout shifts by 1 bit, which the game's
-  // parser reads as garbage and rejects on load. User-reported symptom:
-  // "small charm with exp modifier crashes the game". Quality-gating the
-  // marker keeps cube / bag / tomes (always q=2) on the special path while
-  // letting charms with affixes use the standard q=4/6/7/8 layout.
-  const _extMiscRaw = !isAdvStack && (typeof EXTENDED_MISC_SET !== 'undefined') && EXTENDED_MISC_SET.has(code);
+  // CRITICAL exclusion: charms (cm1/cm2/cm3/cm4) are ALSO compactsave=0 in
+  // misc.txt but carry rolled prefix/suffix mods that the bit-17 / 1-bit-pad
+  // layout doesn't apply to. The decoder doesn't know about the pad either
+  // (charms aren't in ADV_STACK_SET), so an editor-encoded charm with the
+  // pad reads back 1 bit shifted → every stat ID is garbage. User-reported
+  // symptom: "tooltip shows +1022% Crushing Blow, -12% Lightning Skill Damage,
+  // etc." for a charm with a real % exp gained affix. Excluding charms from
+  // the special layout keeps cube / bag / tomes / arrows on the verified
+  // path while letting charms use the standard extended layout.
+  //
+  // misc.txt has many compactsave=0 entries — not just storage items, but
+  // also Amulets (amu), Rings (rin), Jewels (jew/cjw), and Charms (cm*).
+  // The latter four can roll magic / rare / unique affixes and use the
+  // standard extended layout the rest of the editor's encode/decode path
+  // expects. Excluding them keeps the bit-17 / 1-bit-pad path scoped to
+  // verified cases (cube, gem bag, tomes, quivers, quest items / organs).
+  //
+  // Belt-and-suspenders gating:
+  //  • exclude obviously-rolled-mods type codes by regex
+  //  • require quality <= 2, since rolled-mod items always roll q≥3
+  // The combination catches edge cases like a unique amulet (q=7, vip) that
+  // would slip through a regex-only check.
+  const isRolledMiscType = /^cm\d$/.test(code) ||
+                           code === 'amu' || code === 'rin' ||
+                           code === 'jew' || code === 'cjw';
   const quality = isAdvStack ? 2 : (item.quality || 2);
-  const isExtendedMisc = _extMiscRaw && quality <= 2;
+  const isExtendedMisc = !isAdvStack && !isRolledMiscType && quality <= 2 &&
+                         (typeof EXTENDED_MISC_SET !== 'undefined') &&
+                         EXTENDED_MISC_SET.has(code);
   const ilvl = item.itemLevel || 80;
 
   // Header flags
@@ -6494,6 +6512,42 @@ function applyCurrentTab() {
   } catch (e) { _logCaught('applyCurrentTab.' + activeTab, e); }
 }
 
+// Repair items whose stream bit 13 is set but shouldn't be. A transient
+// editor bug populated bit 13 across every item in some saves (storage,
+// weapons, armor, even potions) — characters with those saves get rejected
+// at game-join. The bit should ONLY be 1 for:
+//   • Compact gems (encodeCompactItem's `isGem` branch)
+//   • ua* statues (encodeExtendedItem's `isAdvStack` branch)
+// On any other item it's wrong. Run during save so freshly-edited bytes
+// get the same repair pass and the user just needs to save once to fix.
+function _repairCorruptedItemBits() {
+  if (!workBytes || !parsedChar?.items) return;
+  let fixed = 0;
+  const isGemCode = code => /^gm[a-z]$/.test(code) || /^gf[a-z]$/.test(code) ||
+                            /^gs[a-z]$/.test(code) || /^gl[a-z]$/.test(code) ||
+                            /^gp[a-z]$/.test(code) || /^gc[a-z]$/.test(code) ||
+                            /^gz[a-z]$/.test(code) || /^sk[a-z]$/.test(code);
+  for (const item of parsedChar.items) {
+    if (item.byteOffset < 0 || item.isVirtual) continue;
+    const code = item.typeCode || '';
+    const isStatue = /^ua\d$/.test(code);
+    const isGem    = isGemCode(code);
+    if (isStatue || isGem) continue;
+    // Bit 13 of the stream lives in byte 1 (offset 1 from item start), bit 5.
+    const byteIdx = item.byteOffset + 1;
+    if (byteIdx >= workBytes.length) continue;
+    const before = workBytes[byteIdx];
+    const after  = before & ~0x20;  // clear bit 5 of byte 1 = stream bit 13
+    if (before !== after) {
+      workBytes[byteIdx] = after;
+      fixed++;
+    }
+  }
+  if (fixed > 0) {
+    console.log(`_repairCorruptedItemBits: cleared bit 13 on ${fixed} item(s) (legacy editor bug)`);
+  }
+}
+
 function saveFile() {
   if (!workBytes) return;
   // Apply edits from the currently visible tab + always apply merc.
@@ -6513,6 +6567,12 @@ function saveFile() {
   flushDeletedItems();
   // Flush any editor-inserted virtual items into the binary
   flushVirtualItems();
+  // Repair any items with corrupted header bits from earlier editor versions
+  // (specifically: bit 13 set on items that aren't ua* statues or compact
+  // gems — a transient bug had it being set on everything including hp1 /
+  // tbk / box / weapons / armor, and the game refuses to load saves with
+  // those bits dirty). Run last so it sees the post-flush layout.
+  _repairCorruptedItemBits();
   // Recalculate checksum before saving
   recalcChecksum(workBytes);
   const blob=new Blob([workBytes],{type:'application/octet-stream'});
