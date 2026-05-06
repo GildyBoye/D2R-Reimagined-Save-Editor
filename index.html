@@ -6308,12 +6308,26 @@ function encodeExtendedItem(item) {
 
   // Reimagined: charms (cm1-cm5) MUST carry a charm_weight stat (id 384). The
   // game's inventory system reads this on join to compute the charm-inventory
-  // weight cap; missing it triggers "Failed To Join Game". Weight values match
-  // each charm's grid-cell footprint — cm1 small=1, cm2 large=2, cm3 grand=3.
-  // cm4/cm5 use 1 and 9 to match their t1/t9 splash-charm naming in misc.txt
-  // (untested but follows the visible naming convention). Verified against the
-  // game-rolled cm3 in lazytiredgamer.d2s which carries charm_weight=3.
-  const CHARM_WEIGHT_BY_CODE = { cm1: 1, cm2: 2, cm3: 3, cm4: 1, cm5: 9 };
+  // weight cap; missing it triggers "Failed To Join Game".
+  //
+  // Unique / set / runeword charms get the value naturally — uniqueitems.txt
+  // entries carry `charm-property N N` which buildStatListFromMods expands
+  // into a charm_weight stat via PROP_ENGINE. The `!statList.some(s => s.id
+  // === 384)` guard below skips injection in that case so we don't double-add
+  // (and so a unique-rolled value sticks — Annihilus's `charm-property 1 1`
+  // overrides any base-type default).
+  //
+  // White / magic / rare charms don't roll charm-property naturally, so they
+  // fall through to this fallback table. Values are derived from the consensus
+  // of every cm*-coded entry in uniqueitems.txt:
+  //   cm1: 1 (Annihilus, Autumn's Avatar, Black Soulstone, Argo's Anchor, ...)
+  //   cm2: 2 (Hellfire Torch, Ogre King's Bowl, Valknut, Throne of Power, ...)
+  //   cm3: 3 (Gheed's Fortune, Nightshade, Obsidian Beacon, Triskelion, ...)
+  //   cm4: 1 (all t1-t8 Splash Charm variants)
+  //   cm5: 1 (Collin's Destruction)
+  // Also verified against the game-rolled cm3 in lazytiredgamer.d2s
+  // (charm_weight=3 in the binary).
+  const CHARM_WEIGHT_BY_CODE = { cm1: 1, cm2: 2, cm3: 3, cm4: 1, cm5: 1 };
   if (CHARM_WEIGHT_BY_CODE.hasOwnProperty(code)) {
     const cwMeta = STAT_BY_NAME['charm_weight'];
     if (cwMeta && cwMeta.saveBits > 0 && !statList.some(s => s.id === 384)) {
@@ -13049,15 +13063,19 @@ function _applyItemEditsInner(state) {
   }
 
   // Reimagined: charms (cm1-cm5) MUST carry charm_weight stat (id 384) or the
-  // game refuses to load the save ("Failed To Join Game"). Editor-built charms
-  // don't go through the natural-roll path that would auto-grant it, and the
-  // existing in-place edits start from whatever stats the previous version
-  // wrote — so freshly-inserted-then-edited charms can lose it. Inject here
-  // unconditionally for charm codes; the splicer downstream will sort it into
-  // the right ascending-ID position next to the existing stats. Same weight
-  // table as encodeExtendedItem — see the comment there.
+  // game refuses to load the save ("Failed To Join Game"). Existing decoded
+  // stats already carry charm_weight (round-tripped from the binary), so the
+  // `!state.mods.some(m => m.id === 384)` guard below skips injection in the
+  // common case — including unique/set charms whose charm_weight came from the
+  // uniqueitems.txt `charm-property` entry (Annihilus's value=1 sticks at 1
+  // even though it's a cm1; the unique's specific roll is preserved).
+  //
+  // Injection only triggers when the existing item somehow lacks the stat
+  // (corrupt save, freshly-inserted-then-edited magic charm, etc.). Same
+  // fallback table as encodeExtendedItem — see the comment there for how the
+  // values were derived.
   const _charmCode = (item.typeCode || '').trim();
-  const CHARM_WEIGHT_BY_CODE = { cm1: 1, cm2: 2, cm3: 3, cm4: 1, cm5: 9 };
+  const CHARM_WEIGHT_BY_CODE = { cm1: 1, cm2: 2, cm3: 3, cm4: 1, cm5: 1 };
   if (CHARM_WEIGHT_BY_CODE.hasOwnProperty(_charmCode) && !state.mods.some(m => m.id === 384)) {
     const cwMeta = STAT_BY_NAME['charm_weight'];
     if (cwMeta && cwMeta.saveBits > 0) {
