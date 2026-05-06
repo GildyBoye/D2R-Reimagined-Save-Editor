@@ -6101,11 +6101,29 @@ function encodeExtendedItem(item) {
   // quality (4 bits)
   wbN(pos, quality & 0xF, 4); pos += 4;
 
-  // mp (1 bit) — 0 (no picture idx)
-  wbN(pos, 0, 1); pos += 1;
-
-  // cs (1 bit) — 0 (no class specific)
-  wbN(pos, 0, 1); pos += 1;
+  // mp / cs flags. In vanilla D2 these are "multiple pictures" + "class specific"
+  // and only set on items that actually have alternate gfx or class-restriction.
+  // Reimagined repurposes them on rolled-mod misc items (charms, amulets, rings,
+  // jewels): the game-written cm3 in lazytiredgamer.d2s carries mp=1 picId=2 +
+  // cs=1 csData=47; an editor-built charm with mp=cs=0 fails to join with
+  // "Failed To Join Game". Setting both to 1 with picId=csData=0 was sufficient
+  // to make the join succeed (verified via direct save patch).
+  //
+  // The picId/csData values aren't fixed — they vary per game-rolled charm
+  // (cm3 had picId=2/csData=47, an earlier sample had picId=5/csData=23) so
+  // they're probably tier / roll seed indices the game derives at gen time.
+  // Writing zeros works because the game treats whatever we write as the
+  // "stored" pic/cs values rather than re-deriving them from base data.
+  const isCharmMisc = isRolledMiscType;
+  if (isCharmMisc) {
+    wb(pos, 1); pos += 1;        // mp = 1
+    wbN(pos, 0, 3); pos += 3;    // picId = 0
+    wb(pos, 1); pos += 1;        // cs = 1
+    wbN(pos, 0, 11); pos += 11;  // csData = 0
+  } else {
+    wbN(pos, 0, 1); pos += 1;    // mp = 0 (no picture idx)
+    wbN(pos, 0, 1); pos += 1;    // cs = 0 (no class specific)
+  }
 
   // D2RR extra-bit rule — see doc/PROPERTY-ENCODING.md § extra-bit rule.
   const isArmor = ARMOR_SET.has(code);
@@ -6287,6 +6305,27 @@ function encodeExtendedItem(item) {
   // Main stat list from the item's primary mods.
   let statList = [];
   try { statList = buildStatListFromMods(mods, item.useMaxValues || false); } catch(e) { console.error('buildStatListFromMods failed:', e); }
+
+  // Reimagined: charms (cm1-cm5) MUST carry a charm_weight stat (id 384). The
+  // game's inventory system reads this on join to compute the charm-inventory
+  // weight cap; missing it triggers "Failed To Join Game". Weight values match
+  // each charm's grid-cell footprint — cm1 small=1, cm2 large=2, cm3 grand=3.
+  // cm4/cm5 use 1 and 9 to match their t1/t9 splash-charm naming in misc.txt
+  // (untested but follows the visible naming convention). Verified against the
+  // game-rolled cm3 in lazytiredgamer.d2s which carries charm_weight=3.
+  const CHARM_WEIGHT_BY_CODE = { cm1: 1, cm2: 2, cm3: 3, cm4: 1, cm5: 9 };
+  if (CHARM_WEIGHT_BY_CODE.hasOwnProperty(code)) {
+    const cwMeta = STAT_BY_NAME['charm_weight'];
+    if (cwMeta && cwMeta.saveBits > 0 && !statList.some(s => s.id === 384)) {
+      statList.push({
+        id: 384,
+        param: 0,
+        encodedValue: CHARM_WEIGHT_BY_CODE[code] + (cwMeta.saveAdd || 0),
+        saveBits: cwMeta.saveBits,
+        saveParamBits: cwMeta.saveParamBits || 0,
+      });
+    }
+  }
   writeStatList(statList);
 
   // Partial bonus stat lists for all set items (written per active sbf bit in ascending order).
@@ -11868,10 +11907,21 @@ function _itemEditWriteBits(buf, byteOff, bitOff, value, width) {
 // Encode a list of mods into a flat bit array, terminated by the 511 sentinel.
 // Each mod contributes [9-bit id][paramBits param][valueBits stored] plus any
 // follow-stat bytes (elemental damage min/max pairs, poison length).
+//
+// Stats MUST be written in ascending stat ID order — the game's parser walks
+// the prop list assuming each stat ID is greater than the previous (with
+// follow stats appearing inline after their parent). User-add order doesn't
+// match: a user adding `item_addexperience` (85) then `tohit` (19) gives
+// [85, 19] which the game parser interprets as 85 followed by 19+follower-of-19,
+// fails consistency check, and rejects the join. Sort here so the encoded
+// list always matches what the game wrote when it rolled the item naturally.
 function _itemEditEncodePropList(mods) {
   const bits = [];
   const pushBits = (val, n) => { for (let i = 0; i < n; i++) bits.push(((val >> i) & 1) ? 1 : 0); };
-  for (const m of mods) {
+  // Stable-sort by stat ID; follow stats already sit at id+1/id+2 so they
+  // naturally land after their parent without special handling here.
+  const sorted = [...mods].sort((a, b) => (a.id|0) - (b.id|0));
+  for (const m of sorted) {
     pushBits(m.id, 9);
     if (m.paramBits > 0) pushBits(m.param || 0, m.paramBits);
     pushBits(m.stored, m.valueBits);
@@ -11982,6 +12032,11 @@ function _itemEditIsBlockedStat(name) {
   if (!name) return true;
   if (/dye/i.test(name)) return true;
   if (/^state$/i.test(name)) return true;
+  // Reimagined system stats that the editor manages automatically. charm_weight
+  // is auto-injected on charms (see _applyItemEdits / encodeExtendedItem); a
+  // user manually adding it would either duplicate it or break the inventory
+  // weight cap. Hide from the picker.
+  if (name === 'charm_weight') return true;
   return false;
 }
 
@@ -12278,14 +12333,80 @@ function _itemEditValidAffixIds(item) {
   };
 }
 
+// Reverse lookup — stat ID → set of property codes that grant that stat.
+// Walks PROP_ENGINE (propCode → stat1..7 columns) once and caches the result.
+// The map key is the stat ID, the value is the set of `mod*code` values whose
+// PROP_ENGINE row produces that stat. Used to filter affix candidates so a
+// user-added stat lands on a prefix/suffix whose mods would *actually* grant
+// it in real gameplay.
+let _STAT_ID_TO_PROP_CODES = null;
+function _itemEditStatIdToPropCodes() {
+  if (_STAT_ID_TO_PROP_CODES) return _STAT_ID_TO_PROP_CODES;
+  const map = new Map();
+  for (const code of Object.keys(PROP_ENGINE)) {
+    const eng = PROP_ENGINE[code];
+    for (let f = 1; f <= 7; f++) {
+      const sn = eng[`stat${f}`];
+      if (!sn) continue;
+      const meta = STAT_BY_NAME[sn];
+      if (!meta) continue;
+      let set = map.get(meta.id);
+      if (!set) { set = new Set(); map.set(meta.id, set); }
+      set.add(code);
+    }
+  }
+  _STAT_ID_TO_PROP_CODES = map;
+  return map;
+}
+
+// Filter affix IDs down to those whose mod codes actually grant any of the
+// user-added stat IDs. Without this filter, a small charm with `addxp` (+%XP)
+// could end up with prefix=786 ("Heartened" / +2% Life) — Reimagined treats
+// the prefix-implied stat vs prop-list mismatch as a corrupt item and fails
+// the join. Picking from {Retain/Memorize/Master} (the addxp-granting prefixes
+// for `scha`) lets the item parse cleanly. Falls back to the unfiltered list
+// when no candidate survives the filter (no addxp prefix exists for this
+// item type, etc.) so the picker never returns prefix=0.
+function _itemEditFilterAffixesByStats(allIds, table, statIds) {
+  if (!statIds || !statIds.length) return allIds;
+  const wantedCodes = new Set();
+  const map = _itemEditStatIdToPropCodes();
+  for (const sid of statIds) {
+    const codes = map.get(sid);
+    if (codes) for (const c of codes) wantedCodes.add(c);
+  }
+  if (!wantedCodes.size) return allIds;
+  const matched = allIds.filter(id => {
+    const entry = table[id];
+    if (!entry) return false;
+    return entry.mods.some(m => m.code && wantedCodes.has(m.code));
+  });
+  return matched.length ? matched : allIds;
+}
+
 // Magic quality block = 11-bit prefixId + 11-bit suffixId + 1-bit trailing gap.
 // hasPrefix / hasSuffix gate which sides actually get a non-zero ID, mirroring
-// the user's role choices in the Add row.
-function _itemEditBuildMagicQualityBlock(item, hasPrefix, hasSuffix) {
+// the user's role choices in the Add row. prefixStatIds / suffixStatIds carry
+// the stat IDs the user just added; the picker prefers affixes whose mod codes
+// would naturally grant those stats so the prefix name and the prop list agree
+// (Reimagined crashes on mismatch — see _itemEditFilterAffixesByStats).
+//
+// existingPrefixId / existingSuffixId, when non-zero, are preserved as-is
+// instead of being re-rolled. This matters when the user adds a stat to an
+// already-magic item and we're rebuilding the quality block to fill a
+// previously-empty role slot — the side that already had an affix should keep
+// its name, only the newly-occupied slot needs a fresh pick.
+function _itemEditBuildMagicQualityBlock(item, hasPrefix, hasSuffix, prefixStatIds, suffixStatIds, existingPrefixId, existingSuffixId) {
   const { prefixIds, suffixIds } = _itemEditValidAffixIds(item);
+  const filteredPrefix = _itemEditFilterAffixesByStats(prefixIds, MAGIC_PREFIX_MODS, prefixStatIds);
+  const filteredSuffix = _itemEditFilterAffixesByStats(suffixIds, MAGIC_SUFFIX_MODS, suffixStatIds);
   const seed = _itemEditSeed(item);
-  const prefixId = hasPrefix ? _itemEditPickFromSeed(prefixIds, seed, 0) : 0;
-  const suffixId = hasSuffix ? _itemEditPickFromSeed(suffixIds, seed, 1) : 0;
+  const prefixId = hasPrefix
+    ? (existingPrefixId || _itemEditPickFromSeed(filteredPrefix, seed, 0))
+    : 0;
+  const suffixId = hasSuffix
+    ? (existingSuffixId || _itemEditPickFromSeed(filteredSuffix, seed, 1))
+    : 0;
   const bits = new Array(23).fill(0);
   for (let i = 0; i < 11; i++) bits[i]      = (prefixId >> i) & 1;
   for (let i = 0; i < 11; i++) bits[11 + i] = (suffixId >> i) & 1;
@@ -12307,8 +12428,10 @@ function _itemEditBuildMagicQualityBlock(item, hasPrefix, hasSuffix) {
 // load — D2 always serializes the rolled mods into the property list at gen
 // time, so re-adding them on load would double-stack on every save/load
 // cycle, which clearly isn't how it works.
-function _itemEditBuildRareQualityBlock(item, prefixCount, suffixCount) {
+function _itemEditBuildRareQualityBlock(item, prefixCount, suffixCount, prefixStatIds, suffixStatIds) {
   const { prefixIds, suffixIds } = _itemEditValidAffixIds(item);
+  const filteredPrefix = _itemEditFilterAffixesByStats(prefixIds, MAGIC_PREFIX_MODS, prefixStatIds);
+  const filteredSuffix = _itemEditFilterAffixesByStats(suffixIds, MAGIC_SUFFIX_MODS, suffixStatIds);
   const seed = _itemEditSeed(item);
 
   const name1 = ((seed >>> 0) % ITEM_EDIT_RARE_NAME_RANGE) + 1;
@@ -12321,9 +12444,18 @@ function _itemEditBuildRareQualityBlock(item, prefixCount, suffixCount) {
   const pCap = Math.min(3, Math.max(0, prefixCount | 0));
   const sCap = Math.min(3, Math.max(0, suffixCount | 0));
   // Pick distinct affix IDs per slot using different seed offsets so two
-  // adjacent slots don't collide on the same affix.
-  const pickPrefix = (k) => prefixIds.length ? _itemEditPickFromSeed(prefixIds, seed, 10 + k) : 0;
-  const pickSuffix = (k) => suffixIds.length ? _itemEditPickFromSeed(suffixIds, seed, 20 + k) : 0;
+  // adjacent slots don't collide on the same affix. Slot 0 uses the
+  // stat-filtered list (so the headline picked affix grants the user-added
+  // stat); remaining slots fall back to the unfiltered list to keep visual
+  // variety on multi-prefix rares.
+  const pickPrefix = (k) => {
+    const pool = (k === 0 && filteredPrefix.length) ? filteredPrefix : prefixIds;
+    return pool.length ? _itemEditPickFromSeed(pool, seed, 10 + k) : 0;
+  };
+  const pickSuffix = (k) => {
+    const pool = (k === 0 && filteredSuffix.length) ? filteredSuffix : suffixIds;
+    return pool.length ? _itemEditPickFromSeed(pool, seed, 20 + k) : 0;
+  };
 
   let slotIds = [
     pCap > 0 ? pickPrefix(0) : 0,
@@ -12460,6 +12592,18 @@ function _renderItemEditDialog() {
   const { mods, addable } = state;
 
   const rows = mods.map((m, i) => {
+    // charm_weight (id 384) is a Reimagined system stat — required on every
+    // charm for the inventory weight cap to work; removing it or changing the
+    // value breaks the join. Render as a locked read-only row: shows the
+    // user it's there (so the property count makes sense) but no inputs and
+    // no remove button.
+    if (m.id === 384) {
+      const value = (m.stored ?? 0) - (m.saveAdd ?? 6);
+      return `<div class="item-edit-row" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--d2-border);font-size:12px;opacity:0.7">
+        <span style="flex:1;min-width:0;color:var(--d2-text);word-break:break-word">${esc(L('ui_edit_charm_weight','Charm Weight'))}: ${value}<span style="color:var(--d2-gold);font-size:9px;font-family:'Cinzel',serif;letter-spacing:1px;margin-left:6px;white-space:nowrap">🔒 ${esc(L('ui_edit_system_stat','SYSTEM'))}</span></span>
+        <span style="color:var(--d2-text-dim);font-size:10px;font-style:italic;white-space:nowrap;flex-shrink:0">${esc(L('ui_edit_charm_weight_help','required by inventory cap'))}</span>
+      </div>`;
+    }
     const slots = _itemEditModSlots(m);
     const label = _itemEditStatLabel(m);
     // Range help line summarises the main value's bounds. Multi-slot rows
@@ -12654,6 +12798,12 @@ window._itemEditCancelAdd = function() {
 window._itemEditRemoveMod = function(idx) {
   const state = _itemEditState;
   if (!state) return;
+  // charm_weight (id 384) is a system stat the editor manages automatically —
+  // removing it would break the in-game charm-inventory weight cap. The render
+  // layer hides the remove button on these rows, but guard the handler too in
+  // case the call comes from the console / a bookmarklet / a stale DOM event.
+  const target = state.mods[idx];
+  if (target && target.id === 384) return;
   // Snapshot current input values into the working list so re-render preserves edits
   _itemEditCaptureInputs();
   state.mods.splice(idx, 1);
@@ -12846,9 +12996,20 @@ function _applyItemEditsInner(state) {
   const newMods    = state.mods.filter(m => m._isNew);
   const newPrefix  = newMods.filter(m => m._role !== 'suffix').length;
   const newSuffix  = newMods.filter(m => m._role === 'suffix').length;
+  // Stat IDs the user is adding, partitioned by role. The affix-block builder
+  // uses these to prefer prefix/suffix names whose mod codes actually grant
+  // those stats — without this, we'd write e.g. prefix=786 ("Heartened" = +%
+  // Life) on a charm whose prop list says +% Experience, which Reimagined
+  // rejects as a corrupt item at game-join.
+  const newPrefixStatIds = newMods.filter(m => m._role !== 'suffix').map(m => m.id);
+  const newSuffixStatIds = newMods.filter(m => m._role === 'suffix').map(m => m.id);
 
-  if ((ext.quality === 4 || ext.quality === 6) && state.mods.length === 0) {
-    // Demote — magic/rare → white when every mod is gone.
+  // Count user-editable mods only — system stats like charm_weight (id 384)
+  // are auto-injected and uneditable, so they shouldn't keep a charm "magic"
+  // when the user has actually removed every roll-able stat.
+  const userMods = state.mods.filter(m => m.id !== 384);
+  if ((ext.quality === 4 || ext.quality === 6) && userMods.length === 0) {
+    // Demote — magic/rare → white when every user-editable mod is gone.
     qualityChange = { newQuality: 2, newQualityBlockBits: [] };
   } else if (!isRuneItem && (ext.quality === 2 || ext.quality === 4)) {
     const existingPrefix = ext.quality === 4 && ext._prefixId ? 1 : 0;
@@ -12858,13 +13019,55 @@ function _applyItemEditsInner(state) {
     if (totalPrefix >= 2 || totalSuffix >= 2) {
       qualityChange = {
         newQuality: 6,
-        newQualityBlockBits: _itemEditBuildRareQualityBlock(item, totalPrefix, totalSuffix),
+        newQualityBlockBits: _itemEditBuildRareQualityBlock(item, totalPrefix, totalSuffix, newPrefixStatIds, newSuffixStatIds),
       };
     } else if (ext.quality === 2 && (newPrefix + newSuffix) >= 1) {
       qualityChange = {
         newQuality: 4,
-        newQualityBlockBits: _itemEditBuildMagicQualityBlock(item, totalPrefix >= 1, totalSuffix >= 1),
+        newQualityBlockBits: _itemEditBuildMagicQualityBlock(item, totalPrefix >= 1, totalSuffix >= 1, newPrefixStatIds, newSuffixStatIds),
       };
+    } else if (ext.quality === 4 && (
+      (existingPrefix === 0 && newPrefix > 0) ||
+      (existingSuffix === 0 && newSuffix > 0)
+    )) {
+      // Magic→magic: user is filling a previously-empty affix slot on an item
+      // that's already magic. Without this branch the splicer preserves the old
+      // quality block (suffix=0 etc.) but the new prop-list stat has no affix
+      // source — Reimagined treats that as a corrupt item and fails the join.
+      // Rebuild the magic block; existing prefix/suffix IDs are kept where
+      // non-zero, only the newly-filled slot picks a fresh ID matching the
+      // user-added stat.
+      qualityChange = {
+        newQuality: 4,
+        newQualityBlockBits: _itemEditBuildMagicQualityBlock(
+          item, totalPrefix >= 1, totalSuffix >= 1,
+          newPrefixStatIds, newSuffixStatIds,
+          ext._prefixId || 0, ext._suffixId || 0
+        ),
+      };
+    }
+  }
+
+  // Reimagined: charms (cm1-cm5) MUST carry charm_weight stat (id 384) or the
+  // game refuses to load the save ("Failed To Join Game"). Editor-built charms
+  // don't go through the natural-roll path that would auto-grant it, and the
+  // existing in-place edits start from whatever stats the previous version
+  // wrote — so freshly-inserted-then-edited charms can lose it. Inject here
+  // unconditionally for charm codes; the splicer downstream will sort it into
+  // the right ascending-ID position next to the existing stats. Same weight
+  // table as encodeExtendedItem — see the comment there.
+  const _charmCode = (item.typeCode || '').trim();
+  const CHARM_WEIGHT_BY_CODE = { cm1: 1, cm2: 2, cm3: 3, cm4: 1, cm5: 9 };
+  if (CHARM_WEIGHT_BY_CODE.hasOwnProperty(_charmCode) && !state.mods.some(m => m.id === 384)) {
+    const cwMeta = STAT_BY_NAME['charm_weight'];
+    if (cwMeta && cwMeta.saveBits > 0) {
+      state.mods.push({
+        id: 384,
+        param: 0,
+        stored: CHARM_WEIGHT_BY_CODE[_charmCode] + (cwMeta.saveAdd || 0),
+        valueBits: cwMeta.saveBits,
+        paramBits: 0,
+      });
     }
   }
 
