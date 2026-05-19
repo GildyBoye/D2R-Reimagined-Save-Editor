@@ -11962,7 +11962,7 @@ function _itemEditEncodePropList(mods) {
 // bit offset. `qualityChange` is null for value-only edits or for items
 // that already carry a quality block; for promotions it carries the new
 // quality nibble (4) or (6) and the bits to insert at qualityBlockStartBit.
-function _itemEditSpliceItemBytes(oldItemBytes, ext, newPropBits, qualityChange) {
+function _itemEditSpliceItemBytes(oldItemBytes, ext, newPropBits, qualityChange, item) {
   const oldTotalBits = oldItemBytes.length * 8;
   const allBits = [];
   const pushRange = (from, to) => {
@@ -11993,8 +11993,33 @@ function _itemEditSpliceItemBytes(oldItemBytes, ext, newPropBits, qualityChange)
   }
   // New main property list.
   for (const b of newPropBits) allBits.push(b ? 1 : 0);
-  // Trailing bits — set bonus mod lists, runeword mods, byte-alignment padding.
-  pushRange(ext.mainPropListEndBit, oldTotalBits);
+
+  // Trailing bits handling. The old item's bits between mainPropListEndBit
+  // and oldTotalBits include either:
+  //   • Just the byte-alignment pad (phase-10 rule) — for q=1/2/3/4/6/7/8 non-
+  //     runeword items, which is almost everything the Item Editor touches.
+  //   • Additional stat lists (set-bonus prop lists for q=5, runeword mod list
+  //     for runewords) followed by the byte-alignment pad.
+  //
+  // Blindly copying the old trailing bits drags the OLD pad bits into the new
+  // item even when the new prop list is a different length — the resulting
+  // item ends up byte-misaligned at the section boundary. For magic charms
+  // that's a fatal "failed to load" because the next item's JM marker no
+  // longer sits where the parser expects (mfcharmies.d2s regression).
+  //
+  // Fix: for items WITHOUT additional stat lists, drop the old trailing data
+  // and re-apply the phase-10 pad to the new prop list end. For items WITH
+  // additional stat lists (set / runeword), preserve the old trailing bits
+  // as before since rebuilding those lists isn't in the Item Editor's scope.
+  const hasSetBonuses = ext.quality === 5;
+  const hasRuneword   = !!(ext.runeword || (item && item.runeword));
+  if (hasSetBonuses || hasRuneword) {
+    pushRange(ext.mainPropListEndBit, oldTotalBits);
+  } else {
+    // Phase-10 trailing pad: +1 bit, then byte align. Mirrors encodeExtendedItem.
+    allBits.push(0);
+    while (allBits.length & 7) allBits.push(0);
+  }
 
   const out = new Uint8Array(Math.ceil(allBits.length / 8));
   for (let i = 0; i < allBits.length; i++) {
@@ -13093,7 +13118,7 @@ function _applyItemEditsInner(state) {
   let newItemBytes;
   try {
     const newPropBits = _itemEditEncodePropList(state.mods);
-    newItemBytes = _itemEditSpliceItemBytes(oldItemBytes, ext, newPropBits, qualityChange);
+    newItemBytes = _itemEditSpliceItemBytes(oldItemBytes, ext, newPropBits, qualityChange, item);
   } catch (err) {
     showPopup(Lfmt('ui_edit_encode_failed','Failed to re-encode item: {msg}', { msg: err.message || err }));
     return;
