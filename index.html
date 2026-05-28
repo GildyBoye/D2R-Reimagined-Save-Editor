@@ -17745,11 +17745,33 @@ function _resolveSourceForMove(byteOffset) {
     }
   }
   if (sharedStashParsed) {
-    for (const tab of sharedStashParsed.tabs) {
+    for (let ti = 0; ti < sharedStashParsed.tabs.length; ti++) {
+      const tab = sharedStashParsed.tabs[ti];
       const it = tab.items.find(x => x.byteOffset === byteOffset);
       if (it) {
-        const allItems = sharedStashParsed.tabs.flatMap(t => t.items);
-        return { kind: 'shared', item: it, buf: sharedStashData, items: allItems, lengthItems: allItems, sectionEnd: 0, owningTab: tab };
+        // Length-bounding must stay within the OWNING tab's section. Each
+        // shared-stash tab has its own JM block, so passing all tabs' items
+        // flat as lengthItems makes getItemBinaryLength walk past the owning
+        // tab's last item into the next tab's JM marker bytes — the slice
+        // swallows 4-byte JM headers and any inter-tab padding, the patched
+        // blob writes to vault fine but its embedded JM bytes corrupt the
+        // re-parse on next decode, and the affected items render as white
+        // base quality. Same failure mode as the player/merc mix the char
+        // branch above already guards against.
+        //
+        // Fix: pass only the owning tab's items + a sectionEnd equal to the
+        // next tab's JM offset (or sharedStashData.length for the last tab).
+        const nextTab = sharedStashParsed.tabs[ti + 1];
+        const sectionEnd = nextTab ? nextTab.jmOff : (sharedStashData ? sharedStashData.length : 0);
+        return {
+          kind: 'shared',
+          item: it,
+          buf: sharedStashData,
+          items: tab.items,
+          lengthItems: tab.items,
+          sectionEnd,
+          owningTab: tab,
+        };
       }
     }
   }
