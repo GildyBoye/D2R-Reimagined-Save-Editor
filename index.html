@@ -12063,6 +12063,21 @@ function _itemEditReplaceItemBytes(item, newItemBytes) {
   writeU32LE(workBytes, 8, workBytes.length);
 }
 
+// Reimagined "hidden charm passive" weight stats. The inventory weight-cap
+// system (skill 449 "Hidden Charm Passive") reads these to limit how many
+// charms/torches/soulstones a character can carry. They're granted by the
+// charm-property / ubertorch-property / uberstone-property property codes and
+// live on the items as ordinary stats, but they're system-managed: the editor
+// must never let a user add, edit, or remove them, and must preserve whatever
+// value the item shipped with (a unique's uniqueitems.txt roll, or the
+// per-charm fallback injected by encodeExtendedItem).
+//   384 = charm_weight     (charm-property      — small/large/grand/splash charms)
+//   397 = torch_weight     (ubertorch-property  — Hellfire Torch etc.)
+//   398 = soulstone_weight (uberstone-property  — Black Soulstone etc.)
+const HIDDEN_WEIGHT_STAT_IDS   = new Set([384, 397, 398]);
+const HIDDEN_WEIGHT_STAT_NAMES = new Set(['charm_weight', 'torch_weight', 'soulstone_weight']);
+const _isHiddenWeightStat = (id) => HIDDEN_WEIGHT_STAT_IDS.has(id | 0);
+
 // Stat IDs that should never appear in the Add dropdown regardless of what
 // the affix tables say. "dye" / "state" stats are cosmetic / engine-internal —
 // editing them produces visual or behavioural surprises rather than the
@@ -12071,11 +12086,10 @@ function _itemEditIsBlockedStat(name) {
   if (!name) return true;
   if (/dye/i.test(name)) return true;
   if (/^state$/i.test(name)) return true;
-  // Reimagined system stats that the editor manages automatically. charm_weight
-  // is auto-injected on charms (see _applyItemEdits / encodeExtendedItem); a
-  // user manually adding it would either duplicate it or break the inventory
-  // weight cap. Hide from the picker.
-  if (name === 'charm_weight') return true;
+  // Reimagined hidden-charm-passive weight stats (charm_weight / torch_weight /
+  // soulstone_weight). System-managed by the inventory weight cap — a user
+  // adding one would duplicate it or break the cap. Hide from the picker.
+  if (HIDDEN_WEIGHT_STAT_NAMES.has(name)) return true;
   return false;
 }
 
@@ -12631,16 +12645,21 @@ function _renderItemEditDialog() {
   const { mods, addable } = state;
 
   const rows = mods.map((m, i) => {
-    // charm_weight (id 384) is a Reimagined system stat — required on every
-    // charm for the inventory weight cap to work; removing it or changing the
-    // value breaks the join. Render as a locked read-only row: shows the
-    // user it's there (so the property count makes sense) but no inputs and
-    // no remove button.
-    if (m.id === 384) {
-      const value = (m.stored ?? 0) - (m.saveAdd ?? 6);
+    // Hidden-charm-passive weight stats (charm_weight 384 / torch_weight 397 /
+    // soulstone_weight 398) are system-managed by the inventory weight cap.
+    // Removing one or changing its value breaks the cap (and can fail the
+    // join). Render as a locked read-only row: shows the user it's there (so
+    // the property count makes sense) but no inputs and no remove button.
+    if (_isHiddenWeightStat(m.id)) {
+      const saveAdd = (m.saveAdd != null) ? m.saveAdd : _itemEditSaveAddById(m.id);
+      const value   = (m.value != null) ? m.value : (m.stored ?? 0) - saveAdd;
+      const labelByStat = { 384: L('ui_edit_charm_weight','Charm Weight'),
+                            397: L('ui_edit_torch_weight','Torch Weight'),
+                            398: L('ui_edit_soulstone_weight','Soulstone Weight') };
+      const wLabel = labelByStat[m.id] || L('ui_edit_weight_generic','Weight');
       return `<div class="item-edit-row" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--d2-border);font-size:12px;opacity:0.7">
-        <span style="flex:1;min-width:0;color:var(--d2-text);word-break:break-word">${esc(L('ui_edit_charm_weight','Charm Weight'))}: ${value}<span style="color:var(--d2-gold);font-size:9px;font-family:'Cinzel',serif;letter-spacing:1px;margin-left:6px;white-space:nowrap">🔒 ${esc(L('ui_edit_system_stat','SYSTEM'))}</span></span>
-        <span style="color:var(--d2-text-dim);font-size:10px;font-style:italic;white-space:nowrap;flex-shrink:0">${esc(L('ui_edit_charm_weight_help','required by inventory cap'))}</span>
+        <span style="flex:1;min-width:0;color:var(--d2-text);word-break:break-word">${esc(wLabel)}: ${value}<span style="color:var(--d2-gold);font-size:9px;font-family:'Cinzel',serif;letter-spacing:1px;margin-left:6px;white-space:nowrap">🔒 ${esc(L('ui_edit_system_stat','SYSTEM'))}</span></span>
+        <span style="color:var(--d2-text-dim);font-size:10px;font-style:italic;white-space:nowrap;flex-shrink:0">${esc(L('ui_edit_weight_help','required by inventory cap'))}</span>
       </div>`;
     }
     const slots = _itemEditModSlots(m);
@@ -12837,12 +12856,13 @@ window._itemEditCancelAdd = function() {
 window._itemEditRemoveMod = function(idx) {
   const state = _itemEditState;
   if (!state) return;
-  // charm_weight (id 384) is a system stat the editor manages automatically —
-  // removing it would break the in-game charm-inventory weight cap. The render
-  // layer hides the remove button on these rows, but guard the handler too in
-  // case the call comes from the console / a bookmarklet / a stale DOM event.
+  // Hidden weight stats (charm_weight/torch_weight/soulstone_weight) are
+  // system-managed by the inventory weight cap — removing one would break the
+  // cap. The render layer hides the remove button on these rows, but guard the
+  // handler too in case the call comes from the console / a bookmarklet / a
+  // stale DOM event.
   const target = state.mods[idx];
-  if (target && target.id === 384) return;
+  if (target && _isHiddenWeightStat(target.id)) return;
   // Snapshot current input values into the working list so re-render preserves edits
   _itemEditCaptureInputs();
   state.mods.splice(idx, 1);
@@ -13043,10 +13063,10 @@ function _applyItemEditsInner(state) {
   const newPrefixStatIds = newMods.filter(m => m._role !== 'suffix').map(m => m.id);
   const newSuffixStatIds = newMods.filter(m => m._role === 'suffix').map(m => m.id);
 
-  // Count user-editable mods only — system stats like charm_weight (id 384)
-  // are auto-injected and uneditable, so they shouldn't keep a charm "magic"
+  // Count user-editable mods only — hidden weight stats (charm/torch/soulstone)
+  // are system-managed and uneditable, so they shouldn't keep an item "magic"
   // when the user has actually removed every roll-able stat.
-  const userMods = state.mods.filter(m => m.id !== 384);
+  const userMods = state.mods.filter(m => !_isHiddenWeightStat(m.id));
   if ((ext.quality === 4 || ext.quality === 6) && userMods.length === 0) {
     // Demote — magic/rare → white when every user-editable mod is gone.
     qualityChange = { newQuality: 2, newQualityBlockBits: [] };
