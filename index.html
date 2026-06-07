@@ -453,6 +453,28 @@
     width: 100%;
   }
   .modal-input:focus, .modal-select:focus { outline: none; border-color: var(--d2-gold-dim); }
+  /* Sort-mode toggle buttons inside the Insert Item modal. Subtle by default,
+     highlight the active mode in gold so the user can see at a glance what
+     ordering they're looking at. */
+  .modal-sort-btn {
+    background: var(--d2-bg);
+    border: 1px solid var(--d2-border);
+    color: var(--d2-text-dim);
+    font-family: 'Cinzel', serif;
+    font-size: 10px;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    padding: 3px 10px;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: color 0.1s, border-color 0.1s, background 0.1s;
+  }
+  .modal-sort-btn:hover { color: var(--d2-text); border-color: var(--d2-border-bright); }
+  .modal-sort-btn.active {
+    color: var(--d2-gold-bright);
+    border-color: var(--d2-gold-dim);
+    background: rgba(200,168,75,0.10);
+  }
   .modal-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
   .modal-size-preview {
     display: inline-flex;
@@ -1901,6 +1923,10 @@ function _updateStaticUIStrings() {
   _setText('modalSelectedLabel', L('ui_modal_selected','Selected:'));
   _setText('modalIlvlLabel',     L('ui_modal_item_level','Item Level'));
   _setText('modalSocketLabel',   L('ui_label_sockets','Sockets:').replace(/:$/,''));
+  _setText('modalSortLabel',     L('ui_modal_sort','Sort'));
+  _setText('modalSortDefault',   L('ui_modal_sort_default','Default'));
+  _setText('modalSortAlpha',     L('ui_modal_sort_alpha','A → Z'));
+  _setText('modalSortLevel',     L('ui_modal_sort_level','By Level'));
   _setText('modalMaxValuesLabel',L('ui_modal_max_values','Max Values'));
   _setText('modalInsertBtn',     L('ui_modal_insert_title','Insert Item'));
   _setText('modalCancelBtn',     L('ui_cancel','Cancel'));
@@ -3782,8 +3808,12 @@ function buildEquipRestrictions() {
     for (const code of Object.keys(typeEquiv)) resolve(code, new Set());
   }
 
-  // Build item code → requirements from weapons/armor/uniqueitems
-  for (const src of ['weapons','armor']) {
+  // Build item code → requirements from weapons/armor/misc. misc.txt's
+  // levelreq is what gives runes a usable level (r01=11 ... r33=69), which
+  // feeds the Insert-Item modal's runeword preview — it shows the highest
+  // rune's level as the runeword's minimum craft level. reqstr/reqdex don't
+  // apply to misc items so they stay 0.
+  for (const src of ['weapons','armor','misc']) {
     const data = baseData[src];
     if (!data) continue;
     for (const row of data.rows) {
@@ -10747,6 +10777,78 @@ function pinTooltip() {
 }
 
 // Preview a catalog entry on hover in the insert modal
+// Compute the effective equip requirements for an Insert-Item catalog entry.
+// Combines the base item's reqstr/reqdex/levelreq with any quality-specific
+// level override (uniques and set items list their own 'lvl req' which can
+// exceed the base item's). Returns null for entries that have no requirements
+// to display (misc items, runewords without a chosen base, etc.).
+function _catalogEntryEquipReqs(entry) {
+  if (!entry) return null;
+
+  // Runewords: no base bound yet, so show the max rune level as a Level req
+  // proxy — that's the minimum level the runeword can come together at.
+  if (entry.tier === 'runeword' || entry.isRuneword) {
+    let lvl = 0;
+    for (const rc of (entry.runes || [])) {
+      const r = ITEM_REQS_BY_CODE[rc];
+      if (r && r.levelreq > lvl) lvl = r.levelreq;
+    }
+    return lvl > 0 ? { levelreq: lvl, reqstr: 0, reqdex: 0, runewordHint: true } : null;
+  }
+
+  const code = entry.code;
+  const baseReqs = ITEM_REQS_BY_CODE[code];
+  if (!baseReqs) return null;
+
+  let { reqstr = 0, reqdex = 0, levelreq = 0 } = baseReqs;
+
+  // Unique override: row['lvl req'] on uniqueitems.txt entry
+  if (entry.tier === 'unique' && entry.uniqueId !== undefined) {
+    const uData = baseData['uniqueitems'];
+    const row = uData && uData.rows[entry.uniqueId];
+    const uLvl = parseInt((row && row['lvl req']) || '0', 10);
+    if (uLvl > levelreq) levelreq = uLvl;
+  }
+  // Set override: row['lvl req'] on setitems.txt entry
+  if (entry.tier === 'set' && entry.setId !== undefined) {
+    const sData = baseData['setitems'];
+    const row = sData && sData.rows[entry.setId];
+    const sLvl = parseInt((row && row['lvl req']) || '0', 10);
+    if (sLvl > levelreq) levelreq = sLvl;
+  }
+
+  if (!reqstr && !reqdex && !levelreq) return null;
+  return { reqstr, reqdex, levelreq };
+}
+
+// Render the requirements section for the Insert-Item preview tooltip.
+// Highlights individual lines red when the loaded character doesn't meet them,
+// so the user can tell at a glance whether their character can actually equip
+// the item they're about to insert. No character loaded → reqs render in the
+// neutral gold colour without any "you have X" annotation.
+function _catalogReqsHtml(reqs) {
+  if (!reqs) return '';
+  const charLvl = parsedChar ? (parsedChar.header?.level || 1) : null;
+  const charStr = parsedChar ? (parsedChar.stats?.strength  || 0) : null;
+  const charDex = parsedChar ? (parsedChar.stats?.dexterity || 0) : null;
+  const dim = 'color:var(--d2-text-dim)';
+  const red = 'color:#c84a4a';
+  const lines = [];
+  if (reqs.levelreq > 0) {
+    const fail = charLvl !== null && charLvl < reqs.levelreq;
+    lines.push(`<div class="tt-row" style="${fail?red:''}"><span style="${dim}">${esc(L('ui_req_level','Required Level'))}:</span><b>${reqs.levelreq}${reqs.runewordHint?` <span style="${dim};font-size:10px">(${esc(L('ui_req_rune_level','from runes'))})</span>`:''}</b></div>`);
+  }
+  if (reqs.reqstr > 0) {
+    const fail = charStr !== null && charStr < reqs.reqstr;
+    lines.push(`<div class="tt-row" style="${fail?red:''}"><span style="${dim}">${esc(L('ui_req_str','Required Strength'))}:</span><b>${reqs.reqstr}</b></div>`);
+  }
+  if (reqs.reqdex > 0) {
+    const fail = charDex !== null && charDex < reqs.reqdex;
+    lines.push(`<div class="tt-row" style="${fail?red:''}"><span style="${dim}">${esc(L('ui_req_dex','Required Dexterity'))}:</span><b>${reqs.reqdex}</b></div>`);
+  }
+  return lines.join('');
+}
+
 window.previewCatalogEntry = function(idx, el) {
   const list = document.getElementById('modalItemList');
   const entry = list?._entries?.[idx];
@@ -10763,6 +10865,7 @@ window.previewCatalogEntry = function(idx, el) {
   const isSet = entry.tier === 'set';
   const cls = isUnique ? 'iq-unique' : isSet ? 'iq-set' : 'iq-norm';
   const displayName = entry.name || entry.uniqueName || entry.setName || baseName;
+  const reqsHtml = _catalogReqsHtml(_catalogEntryEquipReqs(entry));
 
   // Resolve properties for unique/set items
   let propHtml = '';
@@ -10791,6 +10894,7 @@ window.previewCatalogEntry = function(idx, el) {
     <div class="tt-row"><span style="color:var(--d2-text-dim)">Base:</span><b>${esc(baseName)}</b><span style="opacity:0.4;font-size:10px;margin-left:2px">[${code}]</span></div>
     <div class="tt-row"><span style="color:var(--d2-text-dim)">Size:</span><b>${w}×${h}</b></div>
     ${maxSock ? `<div class="tt-row"><span style="color:var(--d2-text-dim)">Max Sockets:</span><b>${maxSock}</b></div>` : ''}
+    ${reqsHtml}
     ${propHtml}`;
 
   positionTooltip(tt, el);
@@ -13365,6 +13469,14 @@ let UNIQUE_CATALOG = []; // { code, uniqueName, baseName, qual:7 }
 let SET_CATALOG    = []; // { code, setName, baseName, qual:5 }
 let RUNEWORD_CATALOG = []; // { name, runes:[codes], displayName }
 
+// Sort mode for the Insert Item modal's items list. Persists across modal opens
+// within a session — the user usually wants a consistent ordering while they
+// browse, and 'default' (category insertion order) is the natural baseline.
+//   'default' — keep the order from the source txt rows (matches Blizzard layout)
+//   'alpha'   — sort entries within each subcategory by displayed name
+//   'level'   — sort entries by sortLevel asc, ties broken by name
+let _modalSortMode = 'default';
+
 // ═══════════════════════════════════════════════════════════
 //  ITEM CATALOG BUILDERS
 //  Each sub-builder populates one of the four top-level catalogs from baseData.
@@ -13466,6 +13578,10 @@ function _buildBaseItemCatalog(hideCodes) {
         const normName = (tier === 'N') ? name : (itemNameByCode[norm] || norm || name);
         ITEM_CATALOG.push({
           code, name, tier, normCode: norm || code, normName, qual: 2, category, typeName, typeCode,
+          // sortLevel feeds the "By Level" sort in the Insert Item modal.
+          // Use levelreq from the base item's own row — for weapons/armor that's the
+          // minimum character level needed to equip it (e.g. Long Sword = 12).
+          sortLevel: parseInt(row['levelreq'] || '0', 10) || 0,
           // Include rawName (the English misc/weapons/armor.txt 'name') so searches on
           // the canonical term still hit items that D2RR renamed in the string table
           // (e.g. 'Rejuv' finding rvs/rvl even though they display as '35%' / 'Full').
@@ -13494,9 +13610,16 @@ function _buildBaseItemCatalog(hideCodes) {
         else if (typeCode === 'scro') miscCat = 'Scrolls';
         else if (isSpecial) miscCat = 'Special Items';
 
+        // Runes are tiered (r01 → r33) — use the number as sortLevel so the
+        // "By Level" sort renders them in tier order. Same for sigils (s01+).
+        // Other misc items (potions, scrolls, charms) have no meaningful level,
+        // so default to 0 and let alphabetical handle the secondary sort.
+        const runeMatch = code.match(/^[rs](\d{2})$/);
+        const sortLevel = runeMatch ? parseInt(runeMatch[1], 10) : 0;
         ITEM_CATALOG.push({
           code, name, tier: 'misc', normCode: code, normName: name, qual: 2,
           category: 'misc', typeName: miscCat, typeCode: '',
+          sortLevel,
           // rawName is the English misc.txt 'name' (e.g. 'Rejuvenation Potion'). The
           // displayed `name` comes from the localized string table which D2RR often
           // shortens or renames (rvs→'35%', rvl→'Full') — including rawName keeps the
@@ -13550,6 +13673,10 @@ function _buildUniqueItemCatalog(hideCodes) {
 
     UNIQUE_CATALOG.push({
       code, uniqueName, baseName, qual: 7, uniqueId: idx, category, subCategory,
+      // Prefer 'lvl req' (character level required to wear it) over 'lvl' (item
+      // level the unique can drop at). 'lvl req' matches what users actually
+      // care about when sorting "show me what I can use right now".
+      sortLevel: parseInt(row['lvl req'] || row['lvl'] || '0', 10) || 0,
       // Search matches against the localized name, the raw stringTable key,
       // the base item name, the type code, and the subcategory — covers any
       // form a user is likely to type. Without `rawName` in here, searching
@@ -13578,6 +13705,7 @@ function _buildSetItemCatalog() {
     const baseName = itemNameByCode[code] || code;
     SET_CATALOG.push({
       code, setName, baseName, qual: 5, setId: idx, setGroup,
+      sortLevel: parseInt(row['lvl req'] || row['lvl'] || '0', 10) || 0,
       // Include the raw stringTable keys so searches for either the
       // localized or unlocalized form hit.
       searchKey: (setName + ' ' + rawSetName + ' ' + setGroup + ' ' + rawSetGroup + ' ' + baseName + ' ' + code).toLowerCase(),
@@ -13605,8 +13733,16 @@ function _buildRunewordCatalog() {
 
     const displayName = stringTable[rawName] || rawName;
     const runeNames = runes.map(rc => itemNameByCode[rc] || rc).join(' + ');
+    // Runeword sortLevel = highest rune number used (r01=1 ... r33=33).
+    // Lets "By Level" sort runewords roughly by power tier.
+    let maxRune = 0;
+    for (const r of runes) {
+      const m = r.match(/^r(\d{2})$/);
+      if (m) maxRune = Math.max(maxRune, parseInt(m[1], 10));
+    }
     RUNEWORD_CATALOG.push({
       name: displayName, rawName, runes, runeNames,
+      sortLevel: maxRune,
       searchKey: (displayName + ' ' + rawName + ' ' + runes.join(' ') + ' ' + runeNames).toLowerCase(),
     });
   }
@@ -13635,9 +13771,55 @@ function buildItemCatalog() {
 // _modalSelectedEntry: { code, name, qual, tier, uniqueName?, setName?, isMisc }
 let _modalSelectedEntry = null;
 
+// Update the Insert Item modal's sort mode. Re-runs the filter so the visible
+// list re-renders with the new ordering, and toggles the .active class on the
+// matching button so the user sees which mode is current. Called from the
+// inline onclick on each sort button.
+window.setModalSortMode = function(mode) {
+  if (mode !== 'default' && mode !== 'alpha' && mode !== 'level') return;
+  _modalSortMode = mode;
+  document.querySelectorAll('.modal-sort-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.sort === mode);
+  });
+  filterModalItems();
+};
+
+// Comparator used by filterModalItems for the active sort mode. Returns a
+// function suitable for Array.sort, comparing { html, entry } pairs.
+// 'default' returns null so the caller can skip sorting entirely and keep the
+// catalog's source order.
+function _modalEntrySortCmp() {
+  if (_modalSortMode === 'alpha') {
+    return (a, b) => {
+      const an = (a.entry.name || a.entry.uniqueName || a.entry.setName || '').toLowerCase();
+      const bn = (b.entry.name || b.entry.uniqueName || b.entry.setName || '').toLowerCase();
+      return an.localeCompare(bn);
+    };
+  }
+  if (_modalSortMode === 'level') {
+    return (a, b) => {
+      const al = a.entry.sortLevel | 0;
+      const bl = b.entry.sortLevel | 0;
+      if (al !== bl) return al - bl;
+      // Secondary sort by name for stable ordering within a level tier.
+      const an = (a.entry.name || a.entry.uniqueName || a.entry.setName || '').toLowerCase();
+      const bn = (b.entry.name || b.entry.uniqueName || b.entry.setName || '').toLowerCase();
+      return an.localeCompare(bn);
+    };
+  }
+  return null;
+}
+
 window.filterModalItems = function() {
   const q    = (document.getElementById('modalSearch').value || '').toLowerCase().trim();
   const list = document.getElementById('modalItemList');
+  // Reflect the active sort mode in the button row. The modal markup is static
+  // (sort buttons live in the dialog HTML), so this runs on every filter pass
+  // to keep the highlight in sync even after the user changes mode or the
+  // modal re-renders for a different insert context.
+  document.querySelectorAll('.modal-sort-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.sort === _modalSortMode);
+  });
 
   // When equipping to a specific slot, only show items that fit that slot
   const equipSlot = (_modalContext && _modalContext.mode === 'equip') ? _modalContext.slotId : 0;
@@ -13711,6 +13893,22 @@ window.filterModalItems = function() {
       if (q && !rw.searchKey.includes(q)) continue;
       runewordList.push(fmtRuneword(rw));
     }
+  }
+
+  // Apply the active sort mode to every group / flat list now that they're
+  // fully populated. 'default' returns null so we skip sorting entirely and
+  // keep each catalog's source order (matches Blizzard's natural layout).
+  const cmp = _modalEntrySortCmp();
+  if (cmp) {
+    const sortGroupsMap = (groups) => { for (const k of Object.keys(groups)) groups[k].sort(cmp); };
+    sortGroupsMap(weaponGroups);
+    sortGroupsMap(armorGroups);
+    sortGroupsMap(miscGroups);
+    sortGroupsMap(uniqueWeaponGroups);
+    sortGroupsMap(uniqueArmorGroups);
+    sortGroupsMap(setGroups);
+    uniqueJewelry.sort(cmp);
+    runewordList.sort(cmp);
   }
 
   // Build tree HTML
@@ -17091,7 +17289,7 @@ function buildVaultPageGrid(pageId, cellPx) {
           ondragstart="vaultDragStart(event, ${entry.item.byteOffset}, 'vault', ${entry.w}, ${entry.h})"
           ondragend="vaultDragEnd()"
           style="grid-column:${col + 1}/span ${entry.w};grid-row:${row + 1}/span ${entry.h};position:relative;cursor:grab"
-          onclick="showVaultItemDetail([${entry.item.byteOffset}],this);pinTooltip()"
+          onclick="if(handleItemQuickClick(event,${entry.item.byteOffset},'vault'))return;showVaultItemDetail([${entry.item.byteOffset}],this);pinTooltip()"
           onmouseenter="showVaultItemDetail([${entry.item.byteOffset}],this,true)"
           onmouseleave="closeTooltip(false)"
           title="${esc(name)}">
@@ -17179,7 +17377,7 @@ function buildVaultQuadGrid(quad, cellPx) {
           ondragstart="vaultDragStart(event, ${entry.item.byteOffset}, 'vault', ${entry.w}, ${entry.h})"
           ondragend="vaultDragEnd()"
           style="grid-column:${col + 1}/span ${entry.w};grid-row:${row + 1}/span ${entry.h};position:relative;cursor:grab;${extraStyle}"
-          onclick="showVaultItemDetail([${entry.item.byteOffset}],this);pinTooltip()"
+          onclick="if(handleItemQuickClick(event,${entry.item.byteOffset},'vault'))return;showVaultItemDetail([${entry.item.byteOffset}],this);pinTooltip()"
           onmouseenter="showVaultItemDetail([${entry.item.byteOffset}],this,true)"
           onmouseleave="closeTooltip(false)"
           title="${esc(name)}">
@@ -17354,12 +17552,17 @@ function buildVaultSourceGrid(items, gridW, gridH, cellPx, sourceKind) {
           ? `<div style="position:absolute;top:1px;right:2px;font-size:8px;color:var(--d2-gold);font-family:'Cinzel',serif">x${stack.length}</div>`
           : '';
         const visual = _itemCellVisualHtml(topItem, displayName, cls);
+        // Ctrl+Click sends the source item to the vault — only enabled on this
+        // panel (the Vault tab's source-side grid), NOT on the Inventory/Stash
+        // or Shared Stash tabs. Same kind passed to handleItemQuickClick as
+        // moveSourceItemToVault expects: 'char' for inventory/stash (MOVE),
+        // 'shared' for shared stash (COPY — source remains).
         html += `<div class="inv-item ${borderCls}"
           draggable="true"
           ondragstart="vaultDragStart(event, ${topItem.byteOffset}, '${dragOrigin}', ${w}, ${h})"
           ondragend="vaultDragEnd()"
           style="grid-column:${col + 1}/span ${w};grid-row:${row + 1}/span ${h};position:relative;cursor:grab"
-          onclick="showVaultSourceItemDetail(${topItem.byteOffset},this);pinTooltip()"
+          onclick="if(handleItemQuickClick(event,${topItem.byteOffset},'${dragOrigin}'))return;showVaultSourceItemDetail(${topItem.byteOffset},this);pinTooltip()"
           onmouseenter="showVaultSourceItemDetail(${topItem.byteOffset},this,true)"
           onmouseleave="closeTooltip(false)"
           title="${esc(name)}">
@@ -17685,6 +17888,37 @@ function _rearrangeVaultItem(byteOffset, arg2, arg3, arg4) {
 //                                     stays in shared stash, vault gets a clone)
 // Vault → Inventory / Stash: MOVE  (item removed from vault, gained by char)
 // Vault → Shared Stash     : ✗ forbidden (never offered in UI)
+
+// Ctrl+click (or ⌘+click on macOS) quick-move handler. Returns `true` if it
+// dispatched a move, in which case the caller should bail before opening the
+// normal tooltip; returns `false` for a plain click so the existing behaviour
+// runs unchanged. Wired in via inline onclick on every .inv-item div across the
+// character inventory, personal/shared stash grids, and the vault grids.
+//
+//   kind='char'   — character inventory/stash/cube → vault (MOVE)
+//   kind='shared' — shared stash → vault (COPY, source remains)
+//   kind='vault'  — vault → character inventory (MOVE, auto-packed)
+//
+// Mirrors the destination semantics the tooltip "Move to Vault" / "Move to
+// Inventory" buttons already use; this is just a shortcut for users who want
+// to bulk-transfer items without opening each tooltip.
+window.handleItemQuickClick = function(ev, byteOffset, kind) {
+  if (!ev || !(ev.ctrlKey || ev.metaKey)) return false;
+  ev.preventDefault();
+  ev.stopPropagation();
+  if (kind === 'vault') {
+    if (!parsedChar || !parsedChar.items) {
+      showPopup(L('ui_quick_move_no_char','Load a character save first to receive vault items.'));
+      return true;
+    }
+    moveVaultItemToSource(byteOffset, 'inventory');
+  } else {
+    // kind === 'char' or 'shared'. moveSourceItemToVault uses _resolveSourceForMove
+    // internally which handles both kinds; we don't need to specialise here.
+    moveSourceItemToVault(byteOffset);
+  }
+  return true;
+};
 
 // Write bit `v` at bit offset `p` in a mutable buffer.
 function _vaultWriteBit(buf, p, v) {
@@ -18765,6 +18999,12 @@ window.addEventListener('DOMContentLoaded', startBaseFileLoad);
     <div class="modal-row">
       <div class="modal-label" id="modalSearchLabel">Search</div>
       <input class="modal-input" id="modalSearch" placeholder="Search items by name, type, or code…" oninput="filterModalItems()" autocomplete="off">
+    </div>
+    <div class="modal-row" style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <div class="modal-label" id="modalSortLabel" style="margin-right:2px">Sort</div>
+      <button type="button" class="modal-sort-btn" data-sort="default" id="modalSortDefault" onclick="setModalSortMode('default')">Default</button>
+      <button type="button" class="modal-sort-btn" data-sort="alpha"   id="modalSortAlpha"   onclick="setModalSortMode('alpha')">A → Z</button>
+      <button type="button" class="modal-sort-btn" data-sort="level"   id="modalSortLevel"   onclick="setModalSortMode('level')">By Level</button>
     </div>
     <div id="modalItemList" style="max-height:420px;overflow-y:auto;border:1px solid var(--d2-border);border-radius:2px;margin-bottom:10px"></div>
     <div id="modalSelected" style="display:none">
