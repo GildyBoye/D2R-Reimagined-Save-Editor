@@ -15580,12 +15580,26 @@ window.saveGrailFile = function() {
 window.moveItemsToGrail = function() {
   const eligible = [];
 
-  // Helper to scan a list of items from a given source
-  function scanItems(items, source) {
+  // Helper to scan a list of items from a given source. Each call passes the
+  // source-label generator so we can split a single items list (char items)
+  // into multiple display buckets (worn vs. carried) based on each item's
+  // parent/storage fields.
+  //   parent=0 storage=1/4/5  → carried (inventory, cube, stash)
+  //   parent=1 storage=0      → equipped on the character or mercenary
+  //   parent=2                → belt slot (potions, scrolls — never grail-worthy)
+  //   parent=6                → socketed gem/rune/jewel (skipped — children
+  //                             of their parent item, never copied solo)
+  function scanItems(items, sourceFn) {
     for (const item of items) {
-      if (item.isMerc) continue;
-      if (item.parent !== 0) continue;  // skip equipped/socketed items
-      if (item.storage !== 1 && item.storage !== 5) continue;  // inventory or stash only
+      // Drop socketed children unconditionally — they don't qualify on their
+      // own and the grail-copy encoder doesn't know how to re-emit a parent's
+      // socket cascade from a child in isolation.
+      if (item.parent === 6) continue;
+      // Belt-slotted items (potions / scrolls) are never grail uniques/sets.
+      if (item.parent === 2) continue;
+      // Accept stored (inventory/cube/stash, parent=0) and worn (equipped,
+      // parent=1). Everything else is a non-collectable state.
+      if (item.parent !== 0 && item.parent !== 1) continue;
       if (item.isVirtual && !item._grailCopyBytes) continue;  // skip virtual items without binary data
       ensureItemProps(item);
       if (item.quality !== 7 && item.quality !== 5) continue;
@@ -15595,13 +15609,22 @@ window.moveItemsToGrail = function() {
       if (eligible.some(e => e.key === key)) continue; // avoid dupes across sources
 
       const { name } = itemDisplayName(item);
+      // Resolve the display bucket per-item so a single parsedChar.items list
+      // can split into "carried" vs "worn" vs "merc worn" without re-scanning.
+      const source = (typeof sourceFn === 'function') ? sourceFn(item) : sourceFn;
       eligible.push({ item, name, key, source });
     }
   }
 
-  // Scan character save
+  // Scan character save. Items include the player's inventory/cube/stash AND
+  // their equipped (worn) gear AND the mercenary's worn gear — the source-fn
+  // routes each into the right display bucket so the modal can group them.
   if (parsedChar && parsedChar.items) {
-    scanItems(parsedChar.items, 'char');
+    scanItems(parsedChar.items, (item) => {
+      if (item.isMerc)      return 'merc';   // mercenary worn (parent=1)
+      if (item.parent === 1) return 'worn';  // player worn (helm/armor/weapon/etc.)
+      return 'char';                          // player inventory/cube/stash
+    });
   }
 
   // Scan loaded shared stash
@@ -15611,24 +15634,28 @@ window.moveItemsToGrail = function() {
     }
   }
 
-  if (!eligible.length) { showPopup(L('ui_grail_nothing_eligible','No new unique or set items found in inventory, stash, or shared stash.')); return; }
+  if (!eligible.length) { showPopup(L('ui_grail_nothing_eligible','No new unique or set items found in inventory, stash, worn gear, mercenary, or shared stash.')); return; }
 
-  // Group by source for display
-  const charItems = eligible.filter(e => e.source === 'char');
-  const sharedItems = eligible.filter(e => e.source === 'shared');
-
+  // Group by source for display. Order: equipped → carried → merc → shared
+  // so the user sees the most "active" gear first (worn slots are what they're
+  // currently using; shared stash is the long-term archive).
+  const buckets = [
+    { key: 'worn',   label: L('ui_grail_src_worn',   'From character (worn)') },
+    { key: 'char',   label: L('ui_grail_src_char',   'From character (inventory / stash)') },
+    { key: 'merc',   label: L('ui_grail_src_merc',   'From mercenary (worn)') },
+    { key: 'shared', label: L('ui_grail_src_shared', 'From shared stash') },
+  ];
   let listHtml = '';
-  if (charItems.length) {
-    listHtml += `<div style="color:var(--d2-text-dim);font-size:11px;margin-bottom:4px">From character:</div>`;
-    listHtml += charItems.map(e =>
+  let prevHadItems = false;
+  for (const bucket of buckets) {
+    const items = eligible.filter(e => e.source === bucket.key);
+    if (!items.length) continue;
+    const topMargin = prevHadItems ? '8px' : '0';
+    listHtml += `<div style="color:var(--d2-text-dim);font-size:11px;margin:${topMargin} 0 4px">${esc(bucket.label)}:</div>`;
+    listHtml += items.map(e =>
       `<div style="padding:2px 0;color:${e.item.quality === 7 ? 'var(--d2-gold)' : '#00c800'}">${esc(e.name)}</div>`
     ).join('');
-  }
-  if (sharedItems.length) {
-    listHtml += `<div style="color:var(--d2-text-dim);font-size:11px;margin:${charItems.length ? '8px' : '0'} 0 4px">From shared stash:</div>`;
-    listHtml += sharedItems.map(e =>
-      `<div style="padding:2px 0;color:${e.item.quality === 7 ? 'var(--d2-gold)' : '#00c800'}">${esc(e.name)}</div>`
-    ).join('');
+    prevHadItems = true;
   }
 
   const modal = document.createElement('div');
