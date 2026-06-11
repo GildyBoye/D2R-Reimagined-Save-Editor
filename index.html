@@ -2154,30 +2154,59 @@ function buildMagicAffixModTables() {
   }
 }
 
+// Sparse arrays mapping the binary uniqueId / setItemId (= the *ID column) to
+// the raw uniqueitems / setitems row. Lets callers that need ad-hoc column
+// access (lvl req, prop1..N for stat-value extraction, etc.) look up by the
+// id the binary actually carries instead of by parseTSV row position. See
+// buildUniqueItemModTable for the section-header-shift story.
+let UNIQUE_ROW_BY_ID = [];
+let SET_ROW_BY_ID    = [];
+
 function buildUniqueItemModTable() {
-  // Indexed by row position (matching parseTSV's filtered row list). This matches the
-  // GAME's internal uniqueitems.txt table ordering — the game reads the file with the
-  // same Expansion-skip rule and looks up binary uniqueId by row position, not by *ID.
+  // Indexed by the *ID column value, NOT by parseTSV row position. Reimagined's
+  // uniqueitems.txt contains 4 section-header rows ("Armor" / "Elite Uniques" /
+  // "Rings" / "Class Specific") that occupy *ID slots in the game's table but
+  // have no code — the game's binary uniqueId for items past them skips those
+  // slots, so position-based indexing pairs the wrong unique to each binary id.
+  // Cold Comfort (*ID=922, row position 924) used to come back as the prop set
+  // of whatever was at position 922; now an item dropped with uniqueId=922
+  // correctly resolves to Cold Comfort. Sparse array — O(1) lookups and
+  // .filter(Boolean) for counting populated entries.
   UNIQUE_ITEM_MODS = [];
+  UNIQUE_ROW_BY_ID = [];
   const data = baseData['uniqueitems'];
   if (!data) return;
   for (const row of data.rows) {
     const name = (row['index'] || '').trim();
     const code = (row['code'] || '').trim();
+    const idStr = (row['*ID'] || '').trim();
+    if (!idStr) continue;
+    const id = parseInt(idStr, 10);
+    if (Number.isNaN(id) || id < 0) continue;
     const props = _parseItemProps(row, 12);
-    UNIQUE_ITEM_MODS.push({ name, code, props });
+    UNIQUE_ITEM_MODS[id] = { name, code, props };
+    UNIQUE_ROW_BY_ID[id] = row;
   }
-  console.log(`buildUniqueItemModTable: ${UNIQUE_ITEM_MODS.length} unique items`);
+  console.log(`buildUniqueItemModTable: ${UNIQUE_ITEM_MODS.filter(Boolean).length} unique items`);
 }
 
 function buildSetItemModTable() {
-  // Indexed by row position (see buildUniqueItemModTable above).
+  // Indexed by the *ID column (binary setItemId). Reimagined's current
+  // setitems.txt has no gaps so this is equivalent to row position today, but
+  // keying by *ID matches the uniqueitems pattern and stays correct if a
+  // future mod update adds section-header / placeholder rows like
+  // uniqueitems.txt has.
   SET_ITEM_MODS = [];
+  SET_ROW_BY_ID = [];
   const data = baseData['setitems'];
   if (!data) return;
   for (const row of data.rows) {
     const name = (row['index'] || '').trim();
     const set  = (row['set'] || '').trim();
+    const idStr = (row['*ID'] || '').trim();
+    if (!idStr) continue;
+    const id = parseInt(idStr, 10);
+    if (Number.isNaN(id) || id < 0) continue;
     const props = _parseItemProps(row, 9);
     const partialBonuses = [];
     for (let p = 1; p <= 5; p++) {
@@ -2190,9 +2219,10 @@ function buildSetItemModTable() {
         partialBonuses.push({ pieces: p + 1, code, par: par || '', min: isNaN(min)?0:min, max: isNaN(max)?0:max });
       }
     }
-    SET_ITEM_MODS.push({ name, set, props, partialBonuses });
+    SET_ITEM_MODS[id] = { name, set, props, partialBonuses };
+    SET_ROW_BY_ID[id] = row;
   }
-  console.log(`buildSetItemModTable: ${SET_ITEM_MODS.length} set items`);
+  console.log(`buildSetItemModTable: ${SET_ITEM_MODS.filter(Boolean).length} set items`);
 }
 
 function buildSetBonusTable() {
@@ -3566,26 +3596,35 @@ let SET_EXPECTED_STATS = {};    // setId → expected stat count
 function buildExpectedStatCounts() {
   UNIQUE_EXPECTED_STATS = {};
   SET_EXPECTED_STATS = {};
-  // Unique items: count non-empty prop1-12 entries
+  // Unique items: count non-empty prop1-12 entries. Indexed by *ID (matches the
+  // binary uniqueId — see buildUniqueItemModTable for the section-header story).
   const uData = baseData['uniqueitems'];
   if (uData) {
-    uData.rows.forEach((row, idx) => {
+    uData.rows.forEach((row) => {
+      const idStr = (row['*ID'] || '').trim();
+      if (!idStr) return;
+      const id = parseInt(idStr, 10);
+      if (Number.isNaN(id) || id < 0) return;
       let count = 0;
       for (let i = 1; i <= 12; i++) {
         if ((row['prop' + i] || '').trim()) count++;
       }
-      UNIQUE_EXPECTED_STATS[idx] = count;
+      UNIQUE_EXPECTED_STATS[id] = count;
     });
   }
-  // Set items: count non-empty prop1-9 entries
+  // Set items: count non-empty prop1-9 entries (indexed by *ID for parity)
   const sData = baseData['setitems'];
   if (sData) {
-    sData.rows.forEach((row, idx) => {
+    sData.rows.forEach((row) => {
+      const idStr = (row['*ID'] || '').trim();
+      if (!idStr) return;
+      const id = parseInt(idStr, 10);
+      if (Number.isNaN(id) || id < 0) return;
       let count = 0;
       for (let i = 1; i <= 9; i++) {
         if ((row['prop' + i] || '').trim()) count++;
       }
-      SET_EXPECTED_STATS[idx] = count;
+      SET_EXPECTED_STATS[id] = count;
     });
   }
   console.log(`buildExpectedStatCounts: ${Object.keys(UNIQUE_EXPECTED_STATS).length} uniques, ${Object.keys(SET_EXPECTED_STATS).length} sets`);
@@ -3659,11 +3698,11 @@ function _getExpectedStatIds(item) {
         if (row) addFromPropCodes(row, 'T1Code', 'T1Min', 'T1Max', 'T1Param', 7);
       }
     } else if (item.quality === 7 && item.uniqueId !== undefined && item.uniqueId < 4095) {
-      const uData = baseData['uniqueitems'];
-      if (uData && uData.rows[item.uniqueId]) addFromPropCodes(uData.rows[item.uniqueId], 'prop', 'min', 'max', 'par', 12);
+      const row = UNIQUE_ROW_BY_ID[item.uniqueId];
+      if (row) addFromPropCodes(row, 'prop', 'min', 'max', 'par', 12);
     } else if (item.quality === 5 && item.setItemId !== undefined) {
-      const sData = baseData['setitems'];
-      if (sData && sData.rows[item.setItemId]) addFromPropCodes(sData.rows[item.setItemId], 'prop', 'min', 'max', 'par', 9);
+      const row = SET_ROW_BY_ID[item.setItemId];
+      if (row) addFromPropCodes(row, 'prop', 'min', 'max', 'par', 9);
     } else if (item.quality === 4) {
       if (item._prefixId && MAGIC_PREFIX_MODS && MAGIC_PREFIX_MODS[item._prefixId]) {
         for (const m of MAGIC_PREFIX_MODS[item._prefixId].mods) {
@@ -3724,11 +3763,11 @@ function _getExpectedStatValues(item) {
         if (row) addValues(row, 'T1Code', 'T1Min', 'T1Max', 'T1Param', 7);
       }
     } else if (item.quality === 7 && item.uniqueId !== undefined && item.uniqueId < 4095) {
-      const uData = baseData['uniqueitems'];
-      if (uData && uData.rows[item.uniqueId]) addValues(uData.rows[item.uniqueId], 'prop', 'min', 'max', 'par', 12);
+      const row = UNIQUE_ROW_BY_ID[item.uniqueId];
+      if (row) addValues(row, 'prop', 'min', 'max', 'par', 12);
     } else if (item.quality === 5 && item.setItemId !== undefined) {
-      const sData = baseData['setitems'];
-      if (sData && sData.rows[item.setItemId]) addValues(sData.rows[item.setItemId], 'prop', 'min', 'max', 'par', 9);
+      const row = SET_ROW_BY_ID[item.setItemId];
+      if (row) addValues(row, 'prop', 'min', 'max', 'par', 9);
     }
   } catch(e) { _logCaught('stat-values.outer', e); }
   return vals;
@@ -3862,9 +3901,9 @@ function checkItemRequirements(itemCode, qual, uniqueId) {
 
   // Unique items may have their own level req
   if (qual === 7 && uniqueId !== undefined) {
-    const uData = baseData['uniqueitems'];
-    if (uData && uData.rows[uniqueId]) {
-      const uLvlReq = parseInt(uData.rows[uniqueId]['lvl req']||'0',10);
+    const row = UNIQUE_ROW_BY_ID[uniqueId];
+    if (row) {
+      const uLvlReq = parseInt(row['lvl req']||'0',10);
       if (uLvlReq > levelreq) levelreq = uLvlReq;
     }
   }
@@ -3951,26 +3990,43 @@ function buildItemNameMap() {
   }
 
   // ── Load unique item names from uniqueitems.txt ──
-  // Row index matches the unique_id embedded in the item binary.
-  // 'index' column is the display name.
+  // *ID column = the binary uniqueId. We previously keyed by row position
+  // (`uData.rows.forEach((row, idx) =>` style), which matches vanilla D2 where
+  // every row has both a code and a sequential *ID. Reimagined's uniqueitems.txt
+  // contains 4 section-header rows ("Armor", "Elite Uniques", "Rings", "Class
+  // Specific") that have no code but DO consume *ID slots — the game skips
+  // those *ID values, so a unique declared past position 200 (e.g. Cold Comfort
+  // at *ID=922, array position 924) ends up reading the WRONG name when the
+  // editor looks it up by array index. Keying by *ID directly aligns with what
+  // the game writes to the binary. Sparse array is fine — index lookups are O(1).
   uniqueItemNames = [];
   const uData = baseData['uniqueitems'];
   if (uData) {
     for (const row of uData.rows) {
       const key = (row['index'] || '').trim();
-      uniqueItemNames.push(key ? (stringTable[key] || key) : null);
+      const idStr = (row['*ID'] || '').trim();
+      if (!idStr) continue; // section header / ghost entry — no *ID, no binary slot
+      const id = parseInt(idStr, 10);
+      if (Number.isNaN(id) || id < 0) continue;
+      uniqueItemNames[id] = key ? (stringTable[key] || key) : null;
     }
     console.log(`buildItemNameMap: loaded ${uniqueItemNames.filter(Boolean).length} unique item names`);
   }
 
   // ── Load set item names from setitems.txt ──
-  // Row index matches the set_item_id. 'index' column is the display name.
+  // Indexed by *ID (binary setItemId) — same pattern as uniqueItemNames. Set
+  // items have no gaps today but staying *ID-keyed protects against future
+  // mod updates that introduce them.
   setItemNames = [];
   const sData = baseData['setitems'];
   if (sData) {
     for (const row of sData.rows) {
       const key = (row['index'] || '').trim();
-      setItemNames.push(key ? (stringTable[key] || key) : null);
+      const idStr = (row['*ID'] || '').trim();
+      if (!idStr) continue;
+      const id = parseInt(idStr, 10);
+      if (Number.isNaN(id) || id < 0) continue;
+      setItemNames[id] = key ? (stringTable[key] || key) : null;
     }
     console.log(`buildItemNameMap: loaded ${setItemNames.filter(Boolean).length} set item names`);
   }
@@ -10802,17 +10858,15 @@ function _catalogEntryEquipReqs(entry) {
 
   let { reqstr = 0, reqdex = 0, levelreq = 0 } = baseReqs;
 
-  // Unique override: row['lvl req'] on uniqueitems.txt entry
+  // Unique override: row['lvl req'] on uniqueitems.txt entry (looked up by *ID)
   if (entry.tier === 'unique' && entry.uniqueId !== undefined) {
-    const uData = baseData['uniqueitems'];
-    const row = uData && uData.rows[entry.uniqueId];
+    const row = UNIQUE_ROW_BY_ID[entry.uniqueId];
     const uLvl = parseInt((row && row['lvl req']) || '0', 10);
     if (uLvl > levelreq) levelreq = uLvl;
   }
-  // Set override: row['lvl req'] on setitems.txt entry
+  // Set override: row['lvl req'] on setitems.txt entry (looked up by *ID)
   if (entry.tier === 'set' && entry.setId !== undefined) {
-    const sData = baseData['setitems'];
-    const row = sData && sData.rows[entry.setId];
+    const row = SET_ROW_BY_ID[entry.setId];
     const sLvl = parseInt((row && row['lvl req']) || '0', 10);
     if (sLvl > levelreq) levelreq = sLvl;
   }
@@ -13631,14 +13685,17 @@ function _buildBaseItemCatalog(hideCodes) {
   }
 }
 
-// Populate UNIQUE_CATALOG with entries from uniqueitems.txt. Row position (idx) is the
-// uniqueId written to the binary — this matches how the game reads its own table after
-// applying the same Expansion-skip rule. Using *ID column instead would mismatch the
-// game's internal lookup and make the editor insert the wrong unique.
+// Populate UNIQUE_CATALOG with entries from uniqueitems.txt. The binary
+// uniqueId is the value in the *ID column, NOT the parseTSV row position —
+// see buildUniqueItemModTable / buildItemNameMap's uniqueItemNames build for
+// the full explanation. Reimagined has 4 section-header rows that occupy *ID
+// slots without having a code; position-based indexing made every unique past
+// position 200 (Cold Comfort etc.) insert as a different unique than the user
+// picked, because the editor wrote position-924 while the game reads *ID=922.
 function _buildUniqueItemCatalog(hideCodes) {
   const uData = baseData['uniqueitems'];
   if (!uData) return;
-  uData.rows.forEach((row, idx) => {
+  uData.rows.forEach((row) => {
     // The 'index' column is the localization KEY (e.g. "Unique Warlock Helm"),
     // not the displayed name. The string table maps it to the actual in-game
     // name like "Hellwarden's Will". Without this lookup, users searching
@@ -13647,7 +13704,11 @@ function _buildUniqueItemCatalog(hideCodes) {
     const rawName    = (row['index'] || '').trim();
     const uniqueName = (stringTable[rawName] || rawName).trim();
     const code       = (row['code']  || '').trim();
+    const idStr      = (row['*ID']   || '').trim();
     if (!uniqueName || !code) return;
+    if (!idStr) return; // section header / ghost row — has no binary slot
+    const uniqueId = parseInt(idStr, 10);
+    if (Number.isNaN(uniqueId) || uniqueId < 0) return;
     if (hideCodes.has(code)) return;
     if (QUEST_ITEM_CODES.has(code)) return; // quest uniques excluded from catalog
 
@@ -13672,7 +13733,7 @@ function _buildUniqueItemCatalog(hideCodes) {
     const subCategory = subEntry ? L(subEntry[0], subEntry[1]) : baseName;
 
     UNIQUE_CATALOG.push({
-      code, uniqueName, baseName, qual: 7, uniqueId: idx, category, subCategory,
+      code, uniqueName, baseName, qual: 7, uniqueId, category, subCategory,
       // Prefer 'lvl req' (character level required to wear it) over 'lvl' (item
       // level the unique can drop at). 'lvl req' matches what users actually
       // care about when sorting "show me what I can use right now".
@@ -13683,16 +13744,18 @@ function _buildUniqueItemCatalog(hideCodes) {
       // for "Unique Warlock Helm" wouldn't surface "Hellwarden's Will".
       searchKey: (uniqueName + ' ' + rawName + ' ' + baseName + ' ' + code + ' ' + subCategory).toLowerCase(),
     });
-    _uniqueNameById[idx] = uniqueName;
+    _uniqueNameById[uniqueId] = uniqueName;
   });
 }
 
-// Populate SET_CATALOG from setitems.txt. Row position (idx) is the setId for binary
-// encoding, matching how the game reads its own table.
+// Populate SET_CATALOG from setitems.txt. The binary setItemId is the *ID
+// column value (same pattern as _buildUniqueItemCatalog — see comment there
+// for the section-header story). Current setitems.txt has no gaps so this is
+// equivalent to row position today, but keying by *ID is forward-safe.
 function _buildSetItemCatalog() {
   const sData = baseData['setitems'];
   if (!sData) return;
-  sData.rows.forEach((row, idx) => {
+  sData.rows.forEach((row) => {
     // Same stringTable-key resolution pattern as uniqueitems: the 'index'
     // column is the localization key, the displayed name is whatever
     // stringTable maps it to.
@@ -13701,16 +13764,20 @@ function _buildSetItemCatalog() {
     const rawSetGroup   = (row['set']   || '').trim();
     const setGroup      = (stringTable[rawSetGroup] || rawSetGroup).trim();
     const code          = (row['item']  || row['code'] || '').trim();
+    const idStr         = (row['*ID']   || '').trim();
     if (!setName || !code) return;
+    if (!idStr) return;
+    const setId = parseInt(idStr, 10);
+    if (Number.isNaN(setId) || setId < 0) return;
     const baseName = itemNameByCode[code] || code;
     SET_CATALOG.push({
-      code, setName, baseName, qual: 5, setId: idx, setGroup,
+      code, setName, baseName, qual: 5, setId, setGroup,
       sortLevel: parseInt(row['lvl req'] || row['lvl'] || '0', 10) || 0,
       // Include the raw stringTable keys so searches for either the
       // localized or unlocalized form hit.
       searchKey: (setName + ' ' + rawSetName + ' ' + setGroup + ' ' + rawSetGroup + ' ' + baseName + ' ' + code).toLowerCase(),
     });
-    _setNameByItemId[idx] = setName;
+    _setNameByItemId[setId] = setName;
   });
 }
 
