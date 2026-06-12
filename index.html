@@ -12309,6 +12309,52 @@ function _itemEditAddableStatsForItem(item) {
       roles,
     });
   }
+
+  // Composite entries — convenience options that expand to multiple stats
+  // sharing one role + value, the way "of Resistance" (Sapphire) prefixes
+  // work in-game. Without this, users have to add fire/cold/ltng/pois
+  // individually, the role counter ticks past 2, and a non-charm gets pushed
+  // to rare unnecessarily (and a charm crashed the game before the rare-cap
+  // fix). Composites carry a stable compositeKey so the role counter, the
+  // remove handler, and the row renderer can all treat the expanded mods as
+  // a single user-facing entity.
+  //
+  // Each composite is only listed when EVERY underlying stat is itself
+  // addable on this item — otherwise the entry would silently produce a
+  // partial expansion (e.g. fire+cold but not lightning).
+  const _COMPOSITE_DEFS = [
+    {
+      key: 'allres',
+      id: -101,
+      labelKey: 'ui_edit_composite_allres', labelFallback: 'All Resistances',
+      statNames: ['fireresist', 'lightresist', 'coldresist', 'poisonresist'],
+    },
+  ];
+  const addedByName = new Map(out.map(o => [o.name, o]));
+  for (const def of _COMPOSITE_DEFS) {
+    const members = def.statNames.map(n => addedByName.get(n)).filter(Boolean);
+    if (members.length !== def.statNames.length) continue; // partial — skip
+    // All members share the same saveBits/saveAdd in vanilla and Reimagined
+    // (the 4 res stats are symmetric). If a future txt update ever splits
+    // them, falling back to the first member's encoding still produces a
+    // valid single-value input; per-stat clamping happens at commit time.
+    const head = members[0];
+    // Roles = intersection of all members' roles — only offer 'prefix' if
+    // every member can roll as a prefix, etc. Keeps the role dropdown honest.
+    const rolesIntersect = ['prefix', 'suffix'].filter(r =>
+      members.every(m => m.roles.includes(r)));
+    if (!rolesIntersect.length) continue;
+    out.push({
+      id: def.id, name: def.key,
+      label: L(def.labelKey, def.labelFallback),
+      saveBits: head.saveBits,
+      saveAdd:  head.saveAdd,
+      roles: rolesIntersect,
+      composite: members.map(m => m.id),
+      compositeKey: def.key,
+    });
+  }
+
   // Sort by the localized label, not the raw stat name — alphabetical order
   // should reflect what the user actually sees in the dropdown.
   out.sort((a, b) => a.label.localeCompare(b.label));
@@ -12768,6 +12814,20 @@ function _renderItemEditDialog() {
   if (!state) return;
   const { mods, addable } = state;
 
+  // Composite-group collapse: each `_compositeGroup` value (e.g. an All-Res
+  // expansion) renders as ONE row. The first member is the "head" — it owns
+  // the input field and the remove button — and downstream member indices
+  // are recorded so the input writes to all members at once and Remove drops
+  // them all together. seenGroups skips rendering for non-head members.
+  const seenGroups = new Set();
+  const compositeMemberIdxs = new Map(); // groupId → array of mod indices
+  for (let i = 0; i < mods.length; i++) {
+    const g = mods[i]._compositeGroup;
+    if (!g) continue;
+    if (!compositeMemberIdxs.has(g)) compositeMemberIdxs.set(g, []);
+    compositeMemberIdxs.get(g).push(i);
+  }
+
   const rows = mods.map((m, i) => {
     // Hidden-charm-passive weight stats (charm_weight 384 / torch_weight 397 /
     // soulstone_weight 398) are system-managed by the inventory weight cap.
@@ -12786,6 +12846,46 @@ function _renderItemEditDialog() {
         <span style="color:var(--d2-text-dim);font-size:10px;font-style:italic;white-space:nowrap;flex-shrink:0">${esc(L('ui_edit_weight_help','required by inventory cap'))}</span>
       </div>`;
     }
+
+    // Composite-group member: only render the FIRST member of each group as
+    // a row, since they share label+value+role. Skip the rest entirely so
+    // we don't produce 4 visually-identical rows. The first member's input
+    // carries data-mod-idx + data-composite-group so _itemEditCaptureInputs
+    // can fan the value out to all members on change.
+    if (m._compositeGroup) {
+      if (seenGroups.has(m._compositeGroup)) return '';
+      seenGroups.add(m._compositeGroup);
+      const memberIdxs = compositeMemberIdxs.get(m._compositeGroup) || [i];
+      const range = STAT_RANGES[m.id] || {};
+      const saveAdd = (m.saveAdd != null) ? m.saveAdd : _itemEditSaveAddById(m.id);
+      const valueBits = m.valueBits || (m.id < SAVE_BITS.length ? SAVE_BITS[m.id] : 0) || 8;
+      const fbMin = -saveAdd;
+      const fbMax = ((1 << valueBits) - 1) - saveAdd;
+      const minV  = (range.min != null) ? range.min : fbMin;
+      const maxV  = (range.max != null) ? range.max : fbMax;
+      const value = (m.value != null) ? m.value : (m.stored ?? 0) - saveAdd;
+      const label = m._compositeLabel || L('ui_edit_composite_allres','All Resistances');
+      const help  = `range ${minV}…${maxV}`;
+      const newTag = m._isNew
+        ? `<span style="color:var(--d2-green);font-size:9px;font-family:'Cinzel',serif;letter-spacing:1px;margin-left:4px;white-space:nowrap">NEW · ${esc(((m._role || 'prefix').toUpperCase()))}</span>`
+        : '';
+      // data-composite-group lets the capture step propagate value changes
+      // to every member in the group. Single input for the shared value.
+      return `<div class="item-edit-row" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--d2-border);font-size:12px">
+        <span style="flex:1;min-width:0;color:var(--d2-text);word-break:break-word">${esc(label)}${newTag}</span>
+        <span style="color:var(--d2-text-dim);font-size:10px;font-style:italic;white-space:nowrap;flex-shrink:0">${esc(help)}</span>
+        <label style="display:inline-flex;flex-direction:column;align-items:center;flex-shrink:0;gap:1px">
+          <span style="color:var(--d2-text-dim);font-size:9px;font-family:'Cinzel',serif;letter-spacing:1px;text-transform:uppercase">${esc(L('ui_edit_slot_value','value'))}</span>
+          <input type="number" data-mod-idx="${i}" data-mod-field="value" data-composite-group="${esc(m._compositeGroup)}" value="${value}" min="${minV}" max="${maxV}"
+                 onchange="_itemEditClampInput(this)"
+                 style="width:72px;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-gold-bright);font-family:'Crimson Text',serif;font-size:13px;padding:3px 6px;text-align:center">
+        </label>
+        <button type="button" title="${esc(L('ui_edit_remove','Remove'))}"
+                style="flex-shrink:0;background:#3a0e0e;border:1px solid var(--d2-red);color:#d46060;font-family:'Cinzel',serif;font-size:11px;padding:2px 8px;border-radius:2px;cursor:pointer"
+                onclick="_itemEditRemoveMod(${i})">✕</button>
+      </div>`;
+    }
+
     const slots = _itemEditModSlots(m);
     const label = _itemEditStatLabel(m);
     // Range help line summarises the main value's bounds. Multi-slot rows
@@ -12840,7 +12940,10 @@ function _renderItemEditDialog() {
     ).join('');
     const initialRoleDisabled = firstRoles.length <= 1 ? 'disabled' : '';
     // Compute initial min/max bounds for the value input from the first stat.
-    const firstRange = STAT_RANGES[firstStat.id] || {};
+    // Composites (synthetic negative id) look up STAT_RANGES via their first
+    // underlying stat — same fallback chain _itemEditUpdateAddBounds uses.
+    const firstRangeId = (firstStat.composite && firstStat.composite.length) ? firstStat.composite[0] : firstStat.id;
+    const firstRange = STAT_RANGES[firstRangeId] || {};
     const firstFallbackMin = -firstStat.saveAdd;
     const firstFallbackMax = ((1 << firstStat.saveBits) - 1) - firstStat.saveAdd;
     const initialMin = (firstRange.min != null) ? firstRange.min : firstFallbackMin;
@@ -12959,7 +13062,12 @@ window._itemEditUpdateAddBounds = function() {
   const id = parseInt(statSel.value, 10);
   const meta = state.addable.find(s => s.id === id);
   if (!meta) return;
-  const range = STAT_RANGES[id] || {};
+  // Composite (synthetic negative id) has no STAT_RANGES entry of its own.
+  // Use the underlying head stat's range — all composite members are
+  // symmetric (same saveBits, same effective gameplay range), so the head's
+  // range applies cleanly to the single value input that drives all of them.
+  const rangeLookupId = (meta.composite && meta.composite.length) ? meta.composite[0] : id;
+  const range = STAT_RANGES[rangeLookupId] || {};
   const fallbackMin = -meta.saveAdd;
   const fallbackMax = ((1 << meta.saveBits) - 1) - meta.saveAdd;
   const min = (range.min != null) ? range.min : fallbackMin;
@@ -12989,7 +13097,17 @@ window._itemEditRemoveMod = function(idx) {
   if (target && _isHiddenWeightStat(target.id)) return;
   // Snapshot current input values into the working list so re-render preserves edits
   _itemEditCaptureInputs();
-  state.mods.splice(idx, 1);
+  // Composite-group removal: dropping any member must drop ALL members in
+  // the group, since they're rendered + counted + role-tagged as a single
+  // user-facing entity. Without this, a single ✕ click would leave 3 of the
+  // 4 res stats orphaned in the prop list with no way to address them via
+  // the UI (they'd render as a normal row on next re-render but lose their
+  // composite identity).
+  if (target && target._compositeGroup) {
+    state.mods = state.mods.filter(m => m._compositeGroup !== target._compositeGroup);
+  } else {
+    state.mods.splice(idx, 1);
+  }
   _renderItemEditDialog();
 };
 
@@ -13010,12 +13128,56 @@ function _itemEditCommitPendingAdd(state) {
   const meta = state.addable.find(s => s.id === id);
   if (!meta) return false;
   const role  = (roleEl && roleEl.value === 'suffix') ? 'suffix' : 'prefix';
+  const raw   = parseInt(valEl.value || '0', 10);
+
+  // Composite (e.g. "All Resistances") expands to multiple underlying stats
+  // that share one value, one role, and one user-facing identity. The
+  // _compositeGroup marker lets downstream code (role counter, row renderer,
+  // remove handler) collapse the expansion back into a single entity. Cap
+  // check needs the post-expansion count so we don't blow past ITEM_EDIT_MOD_CAP.
+  if (meta.composite && meta.composite.length) {
+    if (state.mods.length + meta.composite.length > ITEM_EDIT_MOD_CAP) {
+      showPopup(Lfmt('ui_edit_at_cap','At the {n}-property cap — remove an existing property before adding a new one.', { n: ITEM_EDIT_MOD_CAP }));
+      state.addOpen = false;
+      return true; // closes the add row even though we didn't expand
+    }
+    // Pick a stable group id from the static composite key plus the current
+    // mods length — using a counter would break if mods get rearranged later,
+    // and using the key alone would collide if the user adds two "All Res"
+    // groups (rare but possible if they re-add after editing a value).
+    const groupId = meta.compositeKey + ':' + state.mods.length;
+    for (const memberStatId of meta.composite) {
+      const memberMeta = state.addable.find(s => s.id === memberStatId);
+      if (!memberMeta) continue;
+      const range = STAT_RANGES[memberStatId] || {};
+      const fbMin = -memberMeta.saveAdd;
+      const fbMax = ((1 << memberMeta.saveBits) - 1) - memberMeta.saveAdd;
+      const min   = (range.min != null) ? range.min : fbMin;
+      const max   = (range.max != null) ? range.max : fbMax;
+      const value = Math.max(min, Math.min(max, isNaN(raw) ? 0 : raw));
+      state.mods.push({
+        id: memberStatId, param: 0, value, value2: undefined, value3: undefined,
+        stored: value + memberMeta.saveAdd,
+        valueBits: memberMeta.saveBits, paramBits: 0,
+        paramBitOff: -1, valueBitOff: -1,
+        saveAdd: memberMeta.saveAdd,
+        _isNew: true,
+        _role:   role,
+        _compositeGroup: groupId,
+        _compositeKey:   meta.compositeKey,
+        _compositeLabel: meta.label,
+      });
+    }
+    state.addOpen = false;
+    return true;
+  }
+
+  // Non-composite (single stat) — unchanged path.
   const range = STAT_RANGES[id] || {};
   const fbMin = -meta.saveAdd;
   const fbMax = ((1 << meta.saveBits) - 1) - meta.saveAdd;
   const min   = (range.min != null) ? range.min : fbMin;
   const max   = (range.max != null) ? range.max : fbMax;
-  const raw   = parseInt(valEl.value || '0', 10);
   const value = Math.max(min, Math.min(max, isNaN(raw) ? 0 : raw));
   state.mods.push({
     id, param: 0, value, value2: undefined, value3: undefined,
@@ -13096,6 +13258,21 @@ function _itemEditCaptureInputs() {
     if (!m) return;
     const raw = parseInt(inp.value || '0', 10);
     _itemEditWriteSlot(m, field, raw);
+    // Composite group: fan the value out to every other mod sharing this
+    // group id so the underlying stats (e.g. fire/cold/ltng/pois resist for
+    // an "All Resistances" composite) stay in lockstep. The clamp inside
+    // _itemEditWriteSlot uses each stat's own range, so siblings with
+    // identical ranges (the symmetric res stats) all land on the same value.
+    const groupId = inp.dataset.compositeGroup;
+    if (groupId) {
+      for (let j = 0; j < state.mods.length; j++) {
+        if (j === idx) continue;
+        const sibling = state.mods[j];
+        if (sibling && sibling._compositeGroup === groupId) {
+          _itemEditWriteSlot(sibling, field, raw);
+        }
+      }
+    }
   });
 }
 
@@ -13174,11 +13351,31 @@ function _applyItemEditsInner(state) {
   //      has reached 2 yet.
   // Unique/set/crafted/inferior/superior items keep their quality. Runes
   // (q=2 with a rune code) skip promotion since their bit layout differs.
+  // Charms (cm1-cm5) are CAPPED AT MAGIC — D2 never spawns rare charms and
+  // Reimagined rejects them at game-join. Without this gate, adding "all
+  // resistances" (which expands to 4 separate stats: fire/cold/lightning/
+  // poison) would force a rare promotion that crashes the game on load.
   let qualityChange = null;
   const isRuneItem = /^[rs]\d{2}$/.test((item.typeCode || ''));
+  const isCharmItem = /^cm[1-5]$/.test((item.typeCode || ''));
   const newMods    = state.mods.filter(m => m._isNew);
-  const newPrefix  = newMods.filter(m => m._role !== 'suffix').length;
-  const newSuffix  = newMods.filter(m => m._role === 'suffix').length;
+  // Affix slot counting: composite-group mods (e.g. an "All Resistances"
+  // expansion into fireresist/coldresist/ltngresist/poisonresist) count as
+  // ONE prefix or suffix, not four — that mirrors how a "Sapphire" prefix
+  // grants the same 4 stats from a single affix slot in-game. Without this,
+  // adding all-res to a ring would force a rare promotion even though
+  // the user picked a magic-tier composite.
+  const _countAffixSlots = (mods) => {
+    const groups = new Set();
+    let ungrouped = 0;
+    for (const m of mods) {
+      if (m._compositeGroup) groups.add(m._compositeGroup);
+      else ungrouped++;
+    }
+    return groups.size + ungrouped;
+  };
+  const newPrefix = _countAffixSlots(newMods.filter(m => m._role !== 'suffix'));
+  const newSuffix = _countAffixSlots(newMods.filter(m => m._role === 'suffix'));
   // Stat IDs the user is adding, partitioned by role. The affix-block builder
   // uses these to prefer prefix/suffix names whose mod codes actually grant
   // those stats — without this, we'd write e.g. prefix=786 ("Heartened" = +%
@@ -13199,7 +13396,7 @@ function _applyItemEditsInner(state) {
     const existingSuffix = ext.quality === 4 && ext._suffixId ? 1 : 0;
     const totalPrefix = existingPrefix + newPrefix;
     const totalSuffix = existingSuffix + newSuffix;
-    if (totalPrefix >= 2 || totalSuffix >= 2) {
+    if ((totalPrefix >= 2 || totalSuffix >= 2) && !isCharmItem) {
       qualityChange = {
         newQuality: 6,
         newQualityBlockBits: _itemEditBuildRareQualityBlock(item, totalPrefix, totalSuffix, newPrefixStatIds, newSuffixStatIds),
