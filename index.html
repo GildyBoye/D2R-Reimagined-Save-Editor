@@ -2154,59 +2154,47 @@ function buildMagicAffixModTables() {
   }
 }
 
-// Sparse arrays mapping the binary uniqueId / setItemId (= the *ID column) to
-// the raw uniqueitems / setitems row. Lets callers that need ad-hoc column
-// access (lvl req, prop1..N for stat-value extraction, etc.) look up by the
-// id the binary actually carries instead of by parseTSV row position. See
-// buildUniqueItemModTable for the section-header-shift story.
+// Arrays mapping the binary uniqueId / setItemId to the raw uniqueitems /
+// setitems row. Lets callers that need ad-hoc column access (lvl req, prop1..N
+// for stat-value extraction, etc.) avoid repeating the baseData lookup.
 let UNIQUE_ROW_BY_ID = [];
 let SET_ROW_BY_ID    = [];
 
 function buildUniqueItemModTable() {
-  // Indexed by the *ID column value, NOT by parseTSV row position. Reimagined's
-  // uniqueitems.txt contains 4 section-header rows ("Armor" / "Elite Uniques" /
-  // "Rings" / "Class Specific") that occupy *ID slots in the game's table but
-  // have no code — the game's binary uniqueId for items past them skips those
-  // slots, so position-based indexing pairs the wrong unique to each binary id.
-  // Cold Comfort (*ID=922, row position 924) used to come back as the prop set
-  // of whatever was at position 922; now an item dropped with uniqueId=922
-  // correctly resolves to Cold Comfort. Sparse array — O(1) lookups and
-  // .filter(Boolean) for counting populated entries.
+  // Indexed by parseTSV row position (after Expansion filter). The GAME's
+  // internal uniqueitems table uses this same row position as the binary
+  // uniqueId — verified by an in-game test where the editor wrote *ID=747 for
+  // Vengeance of the Wronged (row 749) and the game showed Chorus of the
+  // Cursed (row 747), proving the game indexes by row position, NOT *ID. The
+  // *ID column drifts from row position past the section-header rows in
+  // Reimagined's data ("Armor", "Elite Uniques", etc. — see ITEM-ROUTING.md),
+  // but those rows still consume binary uniqueId slots from the game's
+  // perspective; *ID is a human-readable label that desyncs from the actual
+  // game-internal table when section headers are present.
   UNIQUE_ITEM_MODS = [];
   UNIQUE_ROW_BY_ID = [];
   const data = baseData['uniqueitems'];
   if (!data) return;
-  for (const row of data.rows) {
+  data.rows.forEach((row, idx) => {
     const name = (row['index'] || '').trim();
     const code = (row['code'] || '').trim();
-    const idStr = (row['*ID'] || '').trim();
-    if (!idStr) continue;
-    const id = parseInt(idStr, 10);
-    if (Number.isNaN(id) || id < 0) continue;
     const props = _parseItemProps(row, 12);
-    UNIQUE_ITEM_MODS[id] = { name, code, props };
-    UNIQUE_ROW_BY_ID[id] = row;
-  }
-  console.log(`buildUniqueItemModTable: ${UNIQUE_ITEM_MODS.filter(Boolean).length} unique items`);
+    UNIQUE_ITEM_MODS[idx] = { name, code, props };
+    UNIQUE_ROW_BY_ID[idx] = row;
+  });
+  console.log(`buildUniqueItemModTable: ${UNIQUE_ITEM_MODS.length} unique items`);
 }
 
 function buildSetItemModTable() {
-  // Indexed by the *ID column (binary setItemId). Reimagined's current
-  // setitems.txt has no gaps so this is equivalent to row position today, but
-  // keying by *ID matches the uniqueitems pattern and stays correct if a
-  // future mod update adds section-header / placeholder rows like
-  // uniqueitems.txt has.
+  // Indexed by parseTSV row position — same convention as buildUniqueItemModTable.
+  // See its comment for why the game uses row position rather than the *ID column.
   SET_ITEM_MODS = [];
   SET_ROW_BY_ID = [];
   const data = baseData['setitems'];
   if (!data) return;
-  for (const row of data.rows) {
+  data.rows.forEach((row, idx) => {
     const name = (row['index'] || '').trim();
     const set  = (row['set'] || '').trim();
-    const idStr = (row['*ID'] || '').trim();
-    if (!idStr) continue;
-    const id = parseInt(idStr, 10);
-    if (Number.isNaN(id) || id < 0) continue;
     const props = _parseItemProps(row, 9);
     const partialBonuses = [];
     for (let p = 1; p <= 5; p++) {
@@ -2219,10 +2207,10 @@ function buildSetItemModTable() {
         partialBonuses.push({ pieces: p + 1, code, par: par || '', min: isNaN(min)?0:min, max: isNaN(max)?0:max });
       }
     }
-    SET_ITEM_MODS[id] = { name, set, props, partialBonuses };
-    SET_ROW_BY_ID[id] = row;
-  }
-  console.log(`buildSetItemModTable: ${SET_ITEM_MODS.filter(Boolean).length} set items`);
+    SET_ITEM_MODS[idx] = { name, set, props, partialBonuses };
+    SET_ROW_BY_ID[idx] = row;
+  });
+  console.log(`buildSetItemModTable: ${SET_ITEM_MODS.length} set items`);
 }
 
 function buildSetBonusTable() {
@@ -3596,35 +3584,28 @@ let SET_EXPECTED_STATS = {};    // setId → expected stat count
 function buildExpectedStatCounts() {
   UNIQUE_EXPECTED_STATS = {};
   SET_EXPECTED_STATS = {};
-  // Unique items: count non-empty prop1-12 entries. Indexed by *ID (matches the
-  // binary uniqueId — see buildUniqueItemModTable for the section-header story).
+  // Unique items: count non-empty prop1-12 entries. Indexed by parseTSV row
+  // position — see buildUniqueItemModTable for why the game uses row position
+  // rather than *ID.
   const uData = baseData['uniqueitems'];
   if (uData) {
-    uData.rows.forEach((row) => {
-      const idStr = (row['*ID'] || '').trim();
-      if (!idStr) return;
-      const id = parseInt(idStr, 10);
-      if (Number.isNaN(id) || id < 0) return;
+    uData.rows.forEach((row, idx) => {
       let count = 0;
       for (let i = 1; i <= 12; i++) {
         if ((row['prop' + i] || '').trim()) count++;
       }
-      UNIQUE_EXPECTED_STATS[id] = count;
+      UNIQUE_EXPECTED_STATS[idx] = count;
     });
   }
-  // Set items: count non-empty prop1-9 entries (indexed by *ID for parity)
+  // Set items: count non-empty prop1-9 entries (indexed by row position)
   const sData = baseData['setitems'];
   if (sData) {
-    sData.rows.forEach((row) => {
-      const idStr = (row['*ID'] || '').trim();
-      if (!idStr) return;
-      const id = parseInt(idStr, 10);
-      if (Number.isNaN(id) || id < 0) return;
+    sData.rows.forEach((row, idx) => {
       let count = 0;
       for (let i = 1; i <= 9; i++) {
         if ((row['prop' + i] || '').trim()) count++;
       }
-      SET_EXPECTED_STATS[id] = count;
+      SET_EXPECTED_STATS[idx] = count;
     });
   }
   console.log(`buildExpectedStatCounts: ${Object.keys(UNIQUE_EXPECTED_STATS).length} uniques, ${Object.keys(SET_EXPECTED_STATS).length} sets`);
@@ -3990,43 +3971,28 @@ function buildItemNameMap() {
   }
 
   // ── Load unique item names from uniqueitems.txt ──
-  // *ID column = the binary uniqueId. We previously keyed by row position
-  // (`uData.rows.forEach((row, idx) =>` style), which matches vanilla D2 where
-  // every row has both a code and a sequential *ID. Reimagined's uniqueitems.txt
-  // contains 4 section-header rows ("Armor", "Elite Uniques", "Rings", "Class
-  // Specific") that have no code but DO consume *ID slots — the game skips
-  // those *ID values, so a unique declared past position 200 (e.g. Cold Comfort
-  // at *ID=922, array position 924) ends up reading the WRONG name when the
-  // editor looks it up by array index. Keying by *ID directly aligns with what
-  // the game writes to the binary. Sparse array is fine — index lookups are O(1).
+  // Row position matches the binary uniqueId. See buildUniqueItemModTable for
+  // the in-game test that proved the game uses row position rather than the
+  // *ID column even when Reimagined's data has section-header rows that desync
+  // the two.
   uniqueItemNames = [];
   const uData = baseData['uniqueitems'];
   if (uData) {
     for (const row of uData.rows) {
       const key = (row['index'] || '').trim();
-      const idStr = (row['*ID'] || '').trim();
-      if (!idStr) continue; // section header / ghost entry — no *ID, no binary slot
-      const id = parseInt(idStr, 10);
-      if (Number.isNaN(id) || id < 0) continue;
-      uniqueItemNames[id] = key ? (stringTable[key] || key) : null;
+      uniqueItemNames.push(key ? (stringTable[key] || key) : null);
     }
     console.log(`buildItemNameMap: loaded ${uniqueItemNames.filter(Boolean).length} unique item names`);
   }
 
   // ── Load set item names from setitems.txt ──
-  // Indexed by *ID (binary setItemId) — same pattern as uniqueItemNames. Set
-  // items have no gaps today but staying *ID-keyed protects against future
-  // mod updates that introduce them.
+  // Row position matches the binary setItemId (same pattern as uniqueItemNames).
   setItemNames = [];
   const sData = baseData['setitems'];
   if (sData) {
     for (const row of sData.rows) {
       const key = (row['index'] || '').trim();
-      const idStr = (row['*ID'] || '').trim();
-      if (!idStr) continue;
-      const id = parseInt(idStr, 10);
-      if (Number.isNaN(id) || id < 0) continue;
-      setItemNames[id] = key ? (stringTable[key] || key) : null;
+      setItemNames.push(key ? (stringTable[key] || key) : null);
     }
     console.log(`buildItemNameMap: loaded ${setItemNames.filter(Boolean).length} set item names`);
   }
@@ -13686,16 +13652,13 @@ function _buildBaseItemCatalog(hideCodes) {
 }
 
 // Populate UNIQUE_CATALOG with entries from uniqueitems.txt. The binary
-// uniqueId is the value in the *ID column, NOT the parseTSV row position —
-// see buildUniqueItemModTable / buildItemNameMap's uniqueItemNames build for
-// the full explanation. Reimagined has 4 section-header rows that occupy *ID
-// slots without having a code; position-based indexing made every unique past
-// position 200 (Cold Comfort etc.) insert as a different unique than the user
-// picked, because the editor wrote position-924 while the game reads *ID=922.
+// uniqueId is the parseTSV row position. See buildUniqueItemModTable for the
+// in-game test that confirms the game uses row position even when Reimagined's
+// data has section-header rows that desync the *ID column from row position.
 function _buildUniqueItemCatalog(hideCodes) {
   const uData = baseData['uniqueitems'];
   if (!uData) return;
-  uData.rows.forEach((row) => {
+  uData.rows.forEach((row, idx) => {
     // The 'index' column is the localization KEY (e.g. "Unique Warlock Helm"),
     // not the displayed name. The string table maps it to the actual in-game
     // name like "Hellwarden's Will". Without this lookup, users searching
@@ -13704,11 +13667,7 @@ function _buildUniqueItemCatalog(hideCodes) {
     const rawName    = (row['index'] || '').trim();
     const uniqueName = (stringTable[rawName] || rawName).trim();
     const code       = (row['code']  || '').trim();
-    const idStr      = (row['*ID']   || '').trim();
     if (!uniqueName || !code) return;
-    if (!idStr) return; // section header / ghost row — has no binary slot
-    const uniqueId = parseInt(idStr, 10);
-    if (Number.isNaN(uniqueId) || uniqueId < 0) return;
     if (hideCodes.has(code)) return;
     if (QUEST_ITEM_CODES.has(code)) return; // quest uniques excluded from catalog
 
@@ -13733,7 +13692,7 @@ function _buildUniqueItemCatalog(hideCodes) {
     const subCategory = subEntry ? L(subEntry[0], subEntry[1]) : baseName;
 
     UNIQUE_CATALOG.push({
-      code, uniqueName, baseName, qual: 7, uniqueId, category, subCategory,
+      code, uniqueName, baseName, qual: 7, uniqueId: idx, category, subCategory,
       // Prefer 'lvl req' (character level required to wear it) over 'lvl' (item
       // level the unique can drop at). 'lvl req' matches what users actually
       // care about when sorting "show me what I can use right now".
@@ -13744,18 +13703,17 @@ function _buildUniqueItemCatalog(hideCodes) {
       // for "Unique Warlock Helm" wouldn't surface "Hellwarden's Will".
       searchKey: (uniqueName + ' ' + rawName + ' ' + baseName + ' ' + code + ' ' + subCategory).toLowerCase(),
     });
-    _uniqueNameById[uniqueId] = uniqueName;
+    _uniqueNameById[idx] = uniqueName;
   });
 }
 
-// Populate SET_CATALOG from setitems.txt. The binary setItemId is the *ID
-// column value (same pattern as _buildUniqueItemCatalog — see comment there
-// for the section-header story). Current setitems.txt has no gaps so this is
-// equivalent to row position today, but keying by *ID is forward-safe.
+// Populate SET_CATALOG from setitems.txt. Row position (idx) is the setId for
+// binary encoding — see _buildUniqueItemCatalog for the in-game test that
+// confirms the game uses row position, not the *ID column.
 function _buildSetItemCatalog() {
   const sData = baseData['setitems'];
   if (!sData) return;
-  sData.rows.forEach((row) => {
+  sData.rows.forEach((row, idx) => {
     // Same stringTable-key resolution pattern as uniqueitems: the 'index'
     // column is the localization key, the displayed name is whatever
     // stringTable maps it to.
@@ -13764,20 +13722,16 @@ function _buildSetItemCatalog() {
     const rawSetGroup   = (row['set']   || '').trim();
     const setGroup      = (stringTable[rawSetGroup] || rawSetGroup).trim();
     const code          = (row['item']  || row['code'] || '').trim();
-    const idStr         = (row['*ID']   || '').trim();
     if (!setName || !code) return;
-    if (!idStr) return;
-    const setId = parseInt(idStr, 10);
-    if (Number.isNaN(setId) || setId < 0) return;
     const baseName = itemNameByCode[code] || code;
     SET_CATALOG.push({
-      code, setName, baseName, qual: 5, setId, setGroup,
+      code, setName, baseName, qual: 5, setId: idx, setGroup,
       sortLevel: parseInt(row['lvl req'] || row['lvl'] || '0', 10) || 0,
       // Include the raw stringTable keys so searches for either the
       // localized or unlocalized form hit.
       searchKey: (setName + ' ' + rawSetName + ' ' + setGroup + ' ' + rawSetGroup + ' ' + baseName + ' ' + code).toLowerCase(),
     });
-    _setNameByItemId[setId] = setName;
+    _setNameByItemId[idx] = setName;
   });
 }
 
