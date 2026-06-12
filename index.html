@@ -10298,6 +10298,584 @@ document.addEventListener('drop', function(e) {
   renderTab();
 }, true);
 
+// Inventory tab — equipped-items stat summary
+// ────────────────────────────────────────────────────────────────
+// Toggle state for the "Summarize Stats" panel on the Inventory tab.
+// Collapsed by default; flipping it just toggles visibility — the actual
+// aggregation runs every render so adding/removing/editing equipped items
+// from elsewhere keeps the numbers fresh when the user reopens the panel.
+let _invStatsExpanded = false;
+
+// Sort mode for the summary panel. 'category' groups stats under
+// section headers (Skills / Attributes / Resistances / etc.) which is the
+// best for legibility on a typical character; 'alpha' sorts the merged
+// line list alphabetically; 'priority' uses the natural _formatMods order
+// (which is descpriority-driven, matching in-game tooltips).
+let _invStatsSortMode = 'category';
+
+// Whether inventory charms (cm1-cm5) contribute to the summary. D2 charms
+// grant their stats while sitting in inventory, so by default we include
+// them — players want to see total charm_weight against the inventory cap,
+// total resistances from charms, etc. Toggling this off limits the summary
+// to actually-equipped gear (helm/body/weapon/etc.), useful for comparing
+// raw gear vs gear+charms loadouts.
+let _invStatsIncludeCharms = true;
+
+// Stat-ID → category-key mapping. Categories are ordered for display by
+// _INV_STAT_CATEGORIES below; stats not explicitly listed fall through to
+// 'misc'. Keeping the set per-category makes adding new mappings easy as
+// Reimagined adds stats — a future stat just needs one Set entry.
+const _INV_STAT_CATEGORIES = [
+  { key: 'skills',     label: 'Skills',
+    ids: new Set([83, 97, 107, 127, 151, 188, 195, 196, 197, 198, 199, 201, 204, 250, 251, 252, 253]) },
+  { key: 'attributes', label: 'Attributes',
+    ids: new Set([0, 1, 2, 3, 35, 219, 220, 221, 222]) },
+  { key: 'lifemana',   label: 'Life & Mana',
+    ids: new Set([6, 7, 8, 9, 10, 11, 26, 27, 28, 74, 86, 138, 139, 140, 211, 212, 213]) },
+  { key: 'resist',     label: 'Resistances & Absorbs',
+    ids: new Set([34, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 109, 110, 137,
+                  142, 143, 144, 145, 146, 147, 148, 149, 150, 153]) },
+  { key: 'defense',    label: 'Defense',
+    ids: new Set([16, 31, 32, 33, 76, 92, 95, 105, 114, 115, 169]) },
+  { key: 'damage',     label: 'Damage',
+    ids: new Set([17, 18, 21, 22, 23, 24, 25, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 159, 160, 161, 329, 330, 331, 332, 333]) },
+  { key: 'attack',     label: 'Attack & On-Hit',
+    ids: new Set([19, 20, 60, 61, 62, 63, 81, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126,
+                  135, 136, 141, 156, 157, 158, 273, 274, 275]) },
+  { key: 'speed',      label: 'Speed',
+    ids: new Set([93, 96, 99, 102, 103, 104, 105]) },
+  { key: 'find',       label: 'Find & Experience',
+    ids: new Set([79, 80, 85, 87]) },
+  // Inventory-cap weight stats. Reimagined uses these to enforce per-character
+  // limits on charms, torches, and soulstones — players track them against the
+  // Hidden Charm Passive cap to know how many more they can carry. Sitting in
+  // their own section keeps "Charm Weight: 13" out of the Other bucket where
+  // it'd be lost among truly-miscellaneous stats.
+  { key: 'inventory',  label: 'Inventory Weight',
+    ids: new Set([384, 397, 398]) },
+];
+const _INV_STAT_CATEGORY_BY_ID = (() => {
+  const map = new Map();
+  for (const cat of _INV_STAT_CATEGORIES) for (const id of cat.ids) map.set(id, cat.key);
+  return map;
+})();
+const _invCategoryKeyFor = (id) => _INV_STAT_CATEGORY_BY_ID.get(id | 0) || 'misc';
+
+// Sum the property lists from every gear slot that contributes stats to the
+// character, keyed by (statId, param) so skill-bonus stats sum per-skill
+// rather than collapsing across unrelated skills. Sources:
+//   • Every equipped slot (parent=1) — helm/body/weapon/shield/glove/boot/
+//     belt/ring/amulet, exactly what the game's stat panel reflects.
+//   • Inventory charms — D2 charms grant their stats while sitting in the
+//     character's inventory (no equip required), so a Small Charm of Vita
+//     adding +1 res to a charm inventory should show up in the summary too.
+//
+// Hidden system stats — charm_weight / torch_weight / soulstone_weight (the
+// inventory weight-cap stats Reimagined hides from tooltips) — are excluded
+// from the aggregation entirely. They render correctly in-game as silent
+// inventory bookkeeping but summing them across charms produces a meaningless
+// total (e.g. carrying 30 small charms reports "Charm Weight 30") that just
+// clutters the summary without telling the user anything useful.
+//
+// Negative values stay negative — the descfunc layer renders signed values
+// so "-10 to Strength" comes through cleanly when an item has a penalty.
+function _summarizeEquippedMods() {
+  if (!parsedChar || !parsedChar.items) return [];
+  const loc = getItemsByLocation();
+  const equipped = loc.equipped || {};
+  const inventory = loc.inventory || [];
+  const sources = [];
+  for (const item of Object.values(equipped)) if (item) sources.push(item);
+  // Inventory charms grant stats passively in D2 — include them when the
+  // include-charms toggle is on (default). When off, the summary is limited
+  // to actually-equipped gear, useful for comparing pure-gear loadouts.
+  // Covered codes (verified by walking uniqueitems.txt for items carrying
+  // charm-property / ubertorch-property / uberstone-property — those are the
+  // three weight-stat-granting properties):
+  //   cm1-cm5 = small/large/grand/splash charms (incl. Annihilus, Hellfire
+  //             Torch, Gheed's Fortune, all charm uniques)
+  //   cs1/cs2 = Reimagined soulstone bases (Cold Rupture, Flame Rift,
+  //             Crack of the Heavens, Rotting Fissure, Bone Break, Black
+  //             Cleft and their crafted/precrafted variants)
+  // Anything outside these patterns either doesn't grant from inventory
+  // (potions, scrolls, base weapons sitting unused) or doesn't carry weight
+  // stats at all.
+  if (_invStatsIncludeCharms) {
+    for (const item of inventory) {
+      if (item && /^(cm[1-5]|cs[12])$/.test(item.typeCode || '')) sources.push(item);
+    }
+  }
+  const byKey = new Map();
+  for (const item of sources) {
+    try { ensureItemProps(item); } catch (_) {}
+    const mods = item._mods;
+    if (!mods || !mods.length) continue;
+    for (const m of mods) {
+      if (!m || m.id === undefined) continue;
+      const key = m.id + ':' + (m.param || 0);
+      const existing = byKey.get(key);
+      if (existing) {
+        existing.value  = (existing.value  || 0) + (m.value  || 0);
+        if (m.value2 !== undefined) existing.value2 = (existing.value2 || 0) + (m.value2 || 0);
+        if (m.value3 !== undefined) existing.value3 = (existing.value3 || 0) + (m.value3 || 0);
+      } else {
+        // Spread so we don't mutate the source item's decoded mod entry.
+        byKey.set(key, { ...m });
+      }
+    }
+  }
+  return [...byKey.values()];
+}
+
+// Format a single merged mod into a display line, preserving its stat ID so
+// downstream code can categorise it. _formatMods batches dgrp-grouping and
+// dedup but only returns strings — we need per-line provenance to bucket
+// lines under category headers, so we format individually here. Returns
+// { id, line } or null when the descfunc layer suppresses the line (some
+// internal/hidden stats). Composite-style group entries from applyDgrpGrouping
+// (e.g. the synthetic "All Resistances" produced when 4 res stats match)
+// carry a fake stat ID derived from their dgrp number — categorise those by
+// the first underlying member's stat ID so the line lands in 'resist'.
+function _formatModWithId(mod) {
+  if (!mod || mod.id === undefined) return null;
+  const line = _formatMod(mod.id, mod.param, mod.value, mod.value2, mod.value3);
+  if (!line) return null;
+  return { id: mod.id, line };
+}
+
+// Build the panel HTML for the equipped-items stat summary. When collapsed,
+// renders just the button; when expanded, renders sort-mode toggles + a
+// printout. dgrp-grouped lines (e.g. four resistance stats → "All Resistances
+// +X") happen as part of applyDgrpGrouping; category grouping happens after
+// that so each section header lists the dgrp-collapsed line in the
+// appropriate bucket.
+function _buildInvStatsSummaryHtml() {
+  const btnLabel = _invStatsExpanded
+    ? L('ui_inv_hide_summary','Hide Summary')
+    : L('ui_inv_summarize_stats','Summarize Stats');
+  const btnHtml = `
+    <button class="btn btn-primary" onclick="toggleInvStatsSummary()"
+            style="font-size:11px;padding:4px 12px;font-family:'Cinzel',serif;letter-spacing:1px">
+      ${esc(btnLabel)}
+    </button>`;
+
+  if (!_invStatsExpanded) {
+    return `<div style="margin-top:10px">${btnHtml}</div>`;
+  }
+
+  const merged = _summarizeEquippedMods();
+  // Run merged mods through the dgrp grouping pipeline (collapses related
+  // stats like the 4 resistances into one synthetic line) before we
+  // individually format & categorise each remaining entry. _grouped entries
+  // come with a pre-rendered displayLine and a dgrp number; for those we
+  // bucket by sampling the first member's stat ID, since dgrp 2 = res-all
+  // sits under Resistances etc.
+  const grouped = applyDgrpGrouping(merged);
+  const formatted = []; // { id, line } per visible row
+  for (const e of grouped) {
+    if (e._grouped) {
+      // Find a representative stat ID for category lookup. applyDgrpGrouping
+      // attaches a `dgrp` number; STAT_DGRP_MEMBERS maps that to the underlying
+      // stat IDs. Use the first member's ID — all members of a dgrp share the
+      // same category by definition (res-all is always Resistances, all-stats
+      // is always Attributes, etc.) so any member works. Fallback path uses
+      // the dgrp number itself as a stand-in (will land in 'misc') if the
+      // members table somehow isn't populated.
+      const dgrpMembers = (typeof STAT_DGRP_MEMBERS !== 'undefined') ? STAT_DGRP_MEMBERS[e.dgrp] : null;
+      const repId = (dgrpMembers && dgrpMembers[0]) != null ? dgrpMembers[0] : -1;
+      formatted.push({ id: repId, line: e.displayLine });
+      continue;
+    }
+    const fm = _formatModWithId(e);
+    if (fm) formatted.push(fm);
+  }
+
+  // Sort-mode toggle row — three buttons. Active mode gets a subtle gold
+  // outline so the user can see at a glance what ordering they're looking at.
+  const sortBtn = (mode, fallback, labelKey) => {
+    const active = _invStatsSortMode === mode;
+    const baseStyle = "font-size:10px;padding:3px 10px;font-family:'Cinzel',serif;letter-spacing:1px;cursor:pointer;border-radius:2px;border:1px solid var(--d2-border);background:var(--d2-bg);color:var(--d2-text-dim)";
+    const activeStyle = "border-color:var(--d2-gold-dim);color:var(--d2-gold-bright);background:rgba(200,168,75,0.10)";
+    return `<button type="button" onclick="setInvStatsSortMode('${mode}')"
+              style="${baseStyle};${active ? activeStyle : ''}">${esc(L(labelKey, fallback))}</button>`;
+  };
+  // Include-charms toggle. Visually styled like the sort buttons but acts as
+  // a binary checkbox — active = charms contribute to the sum, inactive =
+  // equipped gear only. Tooltip explains the effect on hover for users who
+  // wonder why the totals jump when they toggle it.
+  const charmBaseStyle = "font-size:10px;padding:3px 10px;font-family:'Cinzel',serif;letter-spacing:1px;cursor:pointer;border-radius:2px;border:1px solid var(--d2-border);background:var(--d2-bg);color:var(--d2-text-dim)";
+  const charmActiveStyle = "border-color:var(--d2-gold-dim);color:var(--d2-gold-bright);background:rgba(200,168,75,0.10)";
+  const charmBtnLabel = _invStatsIncludeCharms
+    ? L('ui_inv_summary_charms_on',  '☑ Include Charms')
+    : L('ui_inv_summary_charms_off', '☐ Include Charms');
+  const charmsTitle = esc(L('ui_inv_summary_charms_help',
+    'D2 charms grant their stats while sitting in inventory. Toggle off to limit the summary to equipped gear only.'));
+
+  const sortRow = `<div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
+    <span style="color:var(--d2-text-dim);font-size:10px;font-family:'Cinzel',serif;letter-spacing:1px">${esc(L('ui_inv_summary_sort','Sort:'))}</span>
+    ${sortBtn('category', 'By Category', 'ui_inv_summary_sort_category')}
+    ${sortBtn('alpha',    'A → Z',       'ui_inv_summary_sort_alpha')}
+    ${sortBtn('priority', 'Default',     'ui_inv_summary_sort_default')}
+    <span style="margin-left:6px;border-left:1px solid var(--d2-border);height:14px"></span>
+    <button type="button" onclick="toggleInvStatsIncludeCharms()" title="${charmsTitle}"
+            style="${charmBaseStyle};${_invStatsIncludeCharms ? charmActiveStyle : ''}">${esc(charmBtnLabel)}</button>
+  </div>`;
+
+  const headerHtml = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+    ${btnHtml}
+    <span style="color:var(--d2-text-dim);font-size:10px;font-style:italic">
+      ${esc(Lfmt('ui_inv_summary_count','{n} unique modifier(s) from equipped gear', { n: formatted.length }))}
+    </span>
+  </div>
+  ${sortRow}`;
+
+  if (!formatted.length) {
+    return `<div style="margin-top:10px">${headerHtml}
+      <div style="border:1px solid var(--d2-border);background:var(--d2-bg);border-radius:2px;padding:10px;margin-top:6px;color:var(--d2-text-dim);font-size:11px;font-style:italic">
+        ${esc(L('ui_inv_summary_empty','No stats found — nothing is equipped, or equipped items have no rolled modifiers.'))}
+      </div>
+    </div>`;
+  }
+
+  // Build the inner printout based on sort mode.
+  let inner;
+  if (_invStatsSortMode === 'alpha') {
+    const sorted = [...formatted].sort((a, b) => a.line.localeCompare(b.line));
+    inner = sorted.map(f =>
+      `<div style="padding:2px 8px;color:var(--d2-text);font-size:11px;line-height:1.35">${esc(f.line)}</div>`
+    ).join('');
+  } else if (_invStatsSortMode === 'priority') {
+    inner = formatted.map(f =>
+      `<div style="padding:2px 8px;color:var(--d2-text);font-size:11px;line-height:1.35">${esc(f.line)}</div>`
+    ).join('');
+  } else {
+    // category — group under section headers in the configured display order,
+    // 'misc' last for anything we didn't explicitly categorise.
+    const buckets = new Map();
+    for (const f of formatted) {
+      const cat = _invCategoryKeyFor(f.id);
+      if (!buckets.has(cat)) buckets.set(cat, []);
+      buckets.get(cat).push(f);
+    }
+    const orderedKeys = [..._INV_STAT_CATEGORIES.map(c => c.key), 'misc'];
+    const labelByKey = new Map(_INV_STAT_CATEGORIES.map(c => [c.key, c.label]));
+    labelByKey.set('misc', L('ui_inv_summary_cat_misc','Other'));
+    const sections = [];
+    for (const k of orderedKeys) {
+      const lines = buckets.get(k);
+      if (!lines || !lines.length) continue;
+      const headerLabel = L(`ui_inv_summary_cat_${k}`, labelByKey.get(k) || k);
+      const linesHtml = lines.map(f =>
+        `<div style="padding:1px 8px;color:var(--d2-text);font-size:11px;line-height:1.35">${esc(f.line)}</div>`
+      ).join('');
+      sections.push(`
+        <div style="grid-column:1 / -1;color:var(--d2-gold);font-family:'Cinzel',serif;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;padding:6px 6px 2px;border-bottom:1px solid var(--d2-border);margin-top:4px">
+          ${esc(headerLabel)}
+        </div>
+        ${linesHtml}`);
+    }
+    inner = sections.join('');
+  }
+
+  // Two-column grid for compact display. Category headers span both columns
+  // via `grid-column:1 / -1` so they read as section dividers, not as cells.
+  return `<div style="margin-top:10px">${headerHtml}
+    <div style="border:1px solid var(--d2-border);background:var(--d2-bg);border-radius:2px;padding:8px;margin-top:6px;display:grid;grid-template-columns:1fr 1fr;gap:1px 12px;max-height:380px;overflow-y:auto">
+      ${inner}
+    </div>
+  </div>`;
+}
+
+window.toggleInvStatsSummary = function() {
+  _invStatsExpanded = !_invStatsExpanded;
+  renderInventory(document.getElementById('tabContent'));
+};
+
+window.setInvStatsSortMode = function(mode) {
+  if (mode !== 'category' && mode !== 'alpha' && mode !== 'priority') return;
+  _invStatsSortMode = mode;
+  renderInventory(document.getElementById('tabContent'));
+};
+
+window.toggleInvStatsIncludeCharms = function() {
+  _invStatsIncludeCharms = !_invStatsIncludeCharms;
+  renderInventory(document.getElementById('tabContent'));
+};
+
+// Inventory tab — Builds (saved equipment loadouts)
+// ────────────────────────────────────────────────────────────────
+// Five named slots per character that store the raw binary bytes of every
+// equipped item. Loading a slot replaces the character's current paperdoll
+// with the saved items, exactly as they were when captured (rolls, sockets,
+// ethereal flag, prefix/suffix, the works). Storage is localStorage keyed
+// by character name so switching characters surfaces a different slot set.
+// Belt items + inventory + merc gear are NOT included — builds are
+// specifically about the player's paperdoll loadout (helm/body/weapon/etc).
+const _BUILD_SLOT_COUNT = 5;
+
+function _buildsStorageKey() {
+  if (!parsedChar || !parsedChar.header) return null;
+  const name = (parsedChar.header.name || 'unknown').replace(/[^A-Za-z0-9_-]/g, '_');
+  return `d2rr_builds:${name}`;
+}
+
+function _loadBuilds() {
+  const empty = new Array(_BUILD_SLOT_COUNT).fill(null);
+  const key = _buildsStorageKey();
+  if (!key) return empty;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return empty;
+    const parsed = JSON.parse(raw);
+    const slots = Array.isArray(parsed.slots) ? parsed.slots : [];
+    while (slots.length < _BUILD_SLOT_COUNT) slots.push(null);
+    return slots.slice(0, _BUILD_SLOT_COUNT);
+  } catch (e) {
+    console.warn('Failed to load builds:', e);
+    return empty;
+  }
+}
+
+function _saveBuildsToStorage(slots) {
+  const key = _buildsStorageKey();
+  if (!key) return false;
+  try {
+    localStorage.setItem(key, JSON.stringify({ slots }));
+    return true;
+  } catch (e) {
+    console.error('Failed to save builds:', e);
+    showPopup(L('ui_builds_save_failed','Failed to save build — browser localStorage may be full.'));
+    return false;
+  }
+}
+
+// Capture current equipped items into build slot N. Slices each item's raw
+// bytes (or pulls from `_virtualBytes` for items that haven't been flushed
+// to workBytes yet) so the saved snapshot survives later inserts/deletes
+// shifting workBytes offsets around. Base64 encoded for JSON-safe storage.
+window.saveBuildSlot = function(slotIdx) {
+  if (!parsedChar || !workBytes) return;
+  if (slotIdx < 0 || slotIdx >= _BUILD_SLOT_COUNT) return;
+
+  // Section end for getItemBinaryLength — corpse JM marker after itemsOffset.
+  let sectionEnd = 0;
+  const jmOff = parsedChar.itemsOffset;
+  if (jmOff >= 0) {
+    for (let i = jmOff + 4; i < workBytes.length - 1; i++) {
+      if (workBytes[i] === 0x4a && workBytes[i + 1] === 0x4d) { sectionEnd = i; break; }
+    }
+  }
+  const sameKindItems = parsedChar.items.filter(x => !x.isMerc);
+
+  const equipped = getItemsByLocation().equipped || {};
+  const items = [];
+  for (const [slotKey, item] of Object.entries(equipped)) {
+    if (!item) continue;
+    const slot = parseInt(slotKey, 10);
+    let bytes;
+    if (item.isVirtual && item._virtualBytes) {
+      bytes = item._virtualBytes;
+    } else if (item.byteOffset >= 0) {
+      const len = getItemBinaryLength(workBytes, item.byteOffset, sameKindItems, sectionEnd);
+      bytes = workBytes.slice(item.byteOffset, item.byteOffset + len);
+    } else if (item._grailCopyBytes) {
+      bytes = item._grailCopyBytes;
+    } else continue;
+    // btoa handles bytes via String.fromCharCode-per-byte. Items larger than
+    // ~64KB would blow the call stack, but a single D2 item is at most a few
+    // hundred bytes so this is fine in practice.
+    const b64 = btoa(String.fromCharCode.apply(null, bytes));
+    items.push({
+      equipSlot:   slot,
+      typeCode:    item.typeCode || '',
+      displayName: (itemDisplayName(item) || {}).name || (item.typeCode || ''),
+      bytesB64:    b64,
+    });
+  }
+
+  if (!items.length) {
+    showPopup(L('ui_builds_nothing_equipped','No equipped items to save.'));
+    return;
+  }
+
+  const slots = _loadBuilds();
+  slots[slotIdx] = { savedAt: Date.now(), items };
+  if (_saveBuildsToStorage(slots)) {
+    setStatus(Lfmt('ui_builds_saved','Saved {n} item(s) to Build {slot}', { n: items.length, slot: slotIdx + 1 }), 'saved');
+    renderTab();
+  }
+};
+
+// Restore build slot N. Replaces every currently-equipped item with the
+// saved items as virtual items pointing at the snapshot bytes — the next
+// save flushes them into workBytes through the standard virtual-item path.
+window.loadBuildSlot = function(slotIdx) {
+  if (!parsedChar) return;
+  const slots = _loadBuilds();
+  const build = slots[slotIdx];
+  if (!build || !build.items || !build.items.length) {
+    showPopup(Lfmt('ui_builds_empty_slot','Build {slot} is empty.', { slot: slotIdx + 1 }));
+    return;
+  }
+
+  // Loading replaces current equipped gear — warn before doing it. Wrap the
+  // destructive flow in the styled confirm dialog (same one the rest of the
+  // app uses) instead of the native browser confirm() so the modal matches
+  // the editor's look and respects the user's chosen theme.
+  const msg = Lfmt('ui_builds_load_confirm',
+    'Load Build {slot}? This replaces every currently-equipped item with the {n} saved item(s). Currently-equipped items will be removed.',
+    { slot: slotIdx + 1, n: build.items.length });
+  showConfirm(msg, () => _applyLoadBuildSlot(slotIdx, build), L('ui_builds_load','Load'));
+};
+
+// Inner destructive half of loadBuildSlot — runs after the user confirms the
+// styled dialog. Kept as a separate function so the dialog handler is a clean
+// one-liner that doesn't need to capture loop locals from the click site.
+function _applyLoadBuildSlot(slotIdx, build) {
+  // 1. Remove currently equipped items. Real items get marked for deletion
+  //    via _deletedItemOffsets; virtual items just drop out of parsedChar.items.
+  const equipped = getItemsByLocation().equipped || {};
+  const equippedOffsets = new Set();
+  for (const item of Object.values(equipped)) {
+    if (!item) continue;
+    equippedOffsets.add(item.byteOffset);
+    if (item.byteOffset >= 0 && !item.isVirtual) {
+      _deletedItemOffsets.add(item.byteOffset);
+    }
+  }
+  parsedChar.items = (parsedChar.items || []).filter(it => !equippedOffsets.has(it.byteOffset));
+
+  // 2. Add each saved item as a virtual with its captured bytes. The bytes
+  //    already encode parent=1 + the original equipSlot bits, so we don't
+  //    need to patch them — the encoder uses _virtualBytes verbatim.
+  let restored = 0;
+  for (const saved of build.items) {
+    let bytes;
+    try {
+      bytes = Uint8Array.from(atob(saved.bytesB64), c => c.charCodeAt(0));
+    } catch (e) {
+      console.warn('Build item decode failed:', e);
+      continue;
+    }
+    parsedChar.items.push({
+      byteOffset:    nextFakeOffset(),
+      identified:    1,
+      typeCode:      saved.typeCode,
+      parent:        1,
+      location:      1,
+      equipSlot:     saved.equipSlot,
+      storage:       0,
+      x: 0, y: 0,
+      isVirtual:     true,
+      _virtualBytes: bytes,
+      _propsDecoded: false,
+    });
+    restored++;
+  }
+
+  // 3. Flush deletes + virtuals to workBytes, then re-parse. ensureItemProps
+  //    skips virtual items entirely (it returns early when item.isVirtual is
+  //    truthy), so without the flush the restored items show up as
+  //    quality-default "white" placeholders because their unique/set/prefix/
+  //    suffix/prop-list fields never get decoded. Round-tripping through
+  //    flushVirtualItems + parseD2S writes the saved bytes into the canonical
+  //    char binary and pulls them back as fully-decoded items, identical to
+  //    how `_resyncStartingItemsFromCharstats` finalises template-injected
+  //    starting gear.
+  try {
+    flushDeletedItems();
+    flushVirtualItems();
+    parsedChar = parseD2S(workBytes);
+  } catch (e) {
+    console.error('Build load: flush/reparse failed', e);
+    showPopup(L('ui_builds_load_failed','Failed to apply build — see browser console.'));
+    return;
+  }
+
+  markDirty();
+  setStatus(Lfmt('ui_builds_loaded','Loaded Build {slot} ({n} item(s))', { slot: slotIdx + 1, n: restored }), 'modified');
+  renderTab();
+};
+
+window.clearBuildSlot = function(slotIdx) {
+  if (slotIdx < 0 || slotIdx >= _BUILD_SLOT_COUNT) return;
+  const slots = _loadBuilds();
+  if (!slots[slotIdx]) return;
+  // Styled confirm matches the rest of the app instead of the unthemed
+  // native browser dialog. The actual clear logic runs only on confirm.
+  showConfirm(
+    Lfmt('ui_builds_clear_confirm','Clear Build {slot}?', { slot: slotIdx + 1 }),
+    () => {
+      const fresh = _loadBuilds(); // re-load in case it changed between click and confirm
+      fresh[slotIdx] = null;
+      if (_saveBuildsToStorage(fresh)) renderTab();
+    },
+    L('ui_builds_clear','Clear slot')
+  );
+};
+
+// Build the right-side panel HTML — 5 rows, each with Save / Load / Clear
+// actions and a status line. Empty rows show "empty"; filled rows show the
+// item count + the saved date in the user's locale.
+function _buildBuildsPanelHtml() {
+  if (!parsedChar) return '';
+  const slots = _loadBuilds();
+  let body = '';
+  for (let i = 0; i < _BUILD_SLOT_COUNT; i++) {
+    const slot = slots[i];
+    const filled = !!slot;
+    const status = filled
+      ? Lfmt('ui_builds_status_filled','{n} items · {date}', {
+          n: slot.items.length,
+          date: new Date(slot.savedAt).toLocaleDateString(),
+        })
+      : L('ui_builds_status_empty','empty');
+    const previewNames = filled
+      ? slot.items.slice(0, 4).map(it => esc(it.displayName || it.typeCode)).join(', ')
+        + (slot.items.length > 4 ? ` +${slot.items.length - 4}` : '')
+      : '';
+    const previewLine = previewNames
+      ? `<div style="color:var(--d2-text-dim);font-size:9px;margin-top:2px;font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px" title="${previewNames}">${previewNames}</div>`
+      : '';
+    // Load disables to the .disabled visual when no snapshot exists. Reusing
+    // the btn-primary class' built-in `.disabled` rule means the muted look
+    // matches every other disabled gold button in the app (cloud upload when
+    // logged out, save buttons when nothing's loaded, etc).
+    const loadDisabledAttr  = filled ? '' : 'disabled';
+    const loadDisabledClass = filled ? '' : ' disabled';
+    // Clear is the only non-gold action — red-tinted to read as destructive.
+    // It overrides only colour/border, keeping the btn-primary base padding
+    // and font so it doesn't visually jump next to the Save/Load buttons.
+    const clearBtn = filled
+      ? `<button class="btn btn-primary" onclick="clearBuildSlot(${i})" title="${esc(L('ui_builds_clear','Clear slot'))}"
+                style="font-size:10px;padding:3px 8px;color:#d46060;border-color:#5a2020;background:#3a0e0e">✕</button>`
+      : '';
+    body += `<div style="border:1px solid var(--d2-border);padding:6px 8px;margin-bottom:5px;background:var(--d2-bg);border-radius:2px">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+        <span style="color:var(--d2-gold);font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;font-weight:bold">
+          ${esc(Lfmt('ui_builds_slot_label','Build {slot}', { slot: i + 1 }))}
+        </span>
+        <span style="color:var(--d2-text-dim);font-size:9px;font-style:italic;margin-left:auto">${esc(status)}</span>
+      </div>
+      ${previewLine}
+      <div style="display:flex;gap:4px;margin-top:5px">
+        <button class="btn btn-primary" onclick="saveBuildSlot(${i})" title="${esc(L('ui_builds_save_hint','Save current equipped gear'))}"
+                style="font-size:10px;padding:3px 8px;flex:1">${esc(L('ui_builds_save','Save'))}</button>
+        <button class="btn btn-primary${loadDisabledClass}" onclick="loadBuildSlot(${i})" ${loadDisabledAttr} title="${esc(L('ui_builds_load_hint','Restore this build'))}"
+                style="font-size:10px;padding:3px 8px;flex:1">${esc(L('ui_builds_load','Load'))}</button>
+        ${clearBtn}
+      </div>
+    </div>`;
+  }
+  return `<div style="flex-shrink:0;min-width:220px">
+    ${h2(L('ui_builds_panel_title','Builds'))}
+    <div style="color:var(--d2-text-dim);font-size:9px;font-style:italic;margin:-4px 0 8px">
+      ${esc(L('ui_builds_panel_help','Save / restore equipped loadouts. Saved per character in your browser.'))}
+    </div>
+    ${body}
+  </div>`;
+}
+
 function renderInventory(c) {
   if (!parsedChar.items) parsedChar.items = [];
 
@@ -10492,8 +11070,21 @@ function renderInventory(c) {
   const invGrid = buildInvGrid(inventory, dims.invW, dims.invH, INV_CELL, {mode:'inventory', storage:1});
 
 
+  // Equipped-items stat summary — lives below the inventory grid in the right
+  // column, putting it directly to the right of the Belt panel in the left
+  // column. Aggregates property lists across every equipped slot (helm/body/
+  // weapon/shield/gloves/boots/belt/rings/amulet) so the user can see at a
+  // glance what their gear actually grants — useful when planning swaps or
+  // checking total resistances against an item that's about to be inserted.
+  const statsSummaryHtml = _buildInvStatsSummaryHtml();
+
+  // Builds panel — third column to the right of the inventory grid. Lets the
+  // user snapshot the current paperdoll into 1 of 5 slots and restore it
+  // later, so swapping loadouts (e.g. MF gear vs main set) is one click.
+  const buildsHtml = _buildBuildsPanelHtml();
+
   c.innerHTML = html + `
-    <div style="display:flex;gap:20px;align-items:flex-start">
+    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
       <div style="flex-shrink:0">
         ${h2(L('ui_equipped','Equipped'))}
         ${paperdoll}
@@ -10503,7 +11094,9 @@ function renderInventory(c) {
         ${h2(L('ui_tab_inventory','Inventory') + ` (${dims.invW}×${dims.invH})`)}
         ${invGrid}
         ${inventory.length===0?'<p class="note" style="margin-top:4px">Empty</p>':''}
+        ${statsSummaryHtml}
       </div>
+      ${buildsHtml}
     </div>
     `;
   // Clear the one-shot search highlight — the CSS pulse animation still plays
