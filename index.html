@@ -17883,6 +17883,246 @@ function decodeVaultHeader(buf) {
 // Loads items from the JM block starting at jmOffset. Reuses the grail-style
 // scanner so we don't duplicate all the bit-decode plumbing. Phase 1 keeps a
 // copy of each item's raw bytes in _vaultRawBytes for lossless round-trip.
+// ════════════════════════════════════════════════════════════════════════════
+// Per-item-type length calculator. Returns the byte offset just past the end
+// of the item at byteOff, by walking the encoder's exact field-by-field
+// sequence. Used by parseVaultItems (and any other heuristic-scan parser)
+// to reject false-positive bit patterns that sit INSIDE a real item's prop
+// list — the byte-distance approach can't tell those apart, but stepping
+// through the structure precisely can.
+//
+// Mirrors encodeCompactItem (line ~5993) and encodeExtendedItem (line ~6048).
+// When new encoder branches are added there, the matching branch must be
+// added here too — otherwise the parser starts mis-slicing items.
+//
+// Returns null when the structural decode fails (bad type code, mid-stream
+// bit pattern that isn't actually an item, etc). Callers should treat null
+// as "not a real item — skip it."
+function _itemEndByte(buf, byteOff, typeCode) {
+  if (byteOff < 0 || byteOff + 5 > buf.length) return null;
+
+  const rb = (bit, n) => {
+    let v = 0;
+    for (let i = 0; i < n; i++) {
+      const p = byteOff * 8 + bit + i;
+      if (p >= buf.length * 8) return null;
+      v |= ((buf[p >> 3] >> (p & 7)) & 1) << i;
+    }
+    return v;
+  };
+  const code = (typeCode || '').slice(0, 3);
+  if (!code) return null;
+
+  const simple = rb(21, 1);
+  const ethereal = rb(22, 1);
+  const personalized = rb(24, 1);
+  const runeword = rb(26, 1);
+
+  // Find post-huffman bit position. Walk the huffman tree for 4 chars
+  // (3-char code + space) so we know where the extended/compact body starts.
+  let bit = 53;
+  for (let i = 0; i < 4; i++) {
+    let node = D2R_HUFFMAN;
+    let safety = 32;
+    while (Array.isArray(node) && safety-- > 0) {
+      if (bit >= buf.length * 8) return null;
+      const p = byteOff * 8 + bit;
+      node = node[(buf[p >> 3] >> (p & 7)) & 1];
+      bit++;
+    }
+    if (typeof node !== 'string') return null;
+  }
+
+  // ── COMPACT items: short fixed-shape body, no prop list ──
+  if (simple) {
+    const isGem = /^gm[a-z]$/.test(code) || /^gf[a-z]$/.test(code) || /^gs[a-z]$/.test(code)
+               || /^gl[a-z]$/.test(code) || /^gp[a-z]$/.test(code) || /^gc[a-z]$/.test(code)
+               || /^gz[a-z]$/.test(code) || /^sk[a-z]$/.test(code);
+    const isRejuv = code === 'rvs' || code === 'rvl';
+    if (isGem) {
+      bit++;                       // 0 bit after huffman
+      bit++;                       // 1 bit (gem tail marker)
+      while (bit & 7) bit++;
+      bit += 8;                    // extra zero byte
+    } else if (isRejuv) {
+      bit += 9;                    // doses field
+      bit += 2;                    // pad
+      while (bit & 7) bit++;
+    } else {
+      bit += 2;                    // V105 pad
+      while (bit & 7) bit++;
+    }
+    return byteOff + (bit >> 3);
+  }
+
+  // ── EXTENDED items: walk the full structural sequence ──
+  // socketed flag at bit 11 controls whether num_sockets gets written.
+  const socketed = rb(11, 1);
+
+  // Reimagined uber statues — bit 13 is set; layout has a 2-bit pad + 511
+  // and an extra trailing zero byte.
+  const isAdvStack = /^ua\d$/.test(code);
+  // compactsave=0 misc items carry bit-17 + a 1-bit stack marker before the
+  // prop list. We DON'T have EXTENDED_MISC_SET available here at the global
+  // scope across all call sites, but the bit-17 flag itself is what gates
+  // the extra pad, so we read it directly from the binary. Charms (cm[1-5])
+  // and rolled-mod misc (amu/rin/jew/cjw) get the mp=1 cs=1 layout but NOT
+  // the extended-misc 1-bit pad — those have rolled mods.
+  const isExtendedMiscBit = rb(17, 1);
+  const isRolledMiscType = /^cm\d$/.test(code) ||
+                           code === 'amu' || code === 'rin' ||
+                           code === 'jew' || code === 'cjw';
+
+  bit += 3;                                // num_sockets_field (gems socketed count)
+  bit += 32;                               // item_id
+  bit += 7;                                // ilvl
+  const quality = rb(bit, 4); bit += 4;
+  if (quality === null) return null;
+
+  // mp / cs flags. Encoder uses mp=1 cs=1 with picId=csData=0 for charms +
+  // amulets + rings + jewels (Reimagined rolled-mod misc). Other items use
+  // mp=0 cs=0. But the BINARY may carry whatever the original encoder wrote,
+  // so we read the bits and follow them rather than assuming.
+  const mp = rb(bit, 1); bit++;
+  if (mp) bit += 3;                        // picId
+  const cs = rb(bit, 1); bit++;
+  if (cs) bit += 11;                       // csData
+
+  // For armor/weapon, no extra-bit gate. For non-armor non-weapon, +1 bit
+  // after the q=5 / q=7 block. We need to know which side this item lives
+  // on — same lookup the encoder uses.
+  const isArmor = (typeof ARMOR_SET !== 'undefined') && ARMOR_SET.has(code);
+  const isWeapon = (typeof WEAPON_SET !== 'undefined') && WEAPON_SET.has(code);
+  const wantsNonArmorExtraBit = !isArmor && !isWeapon;
+
+  // Quality-specific block
+  if (quality === 1) bit += 3;
+  else if (quality === 3) bit += 3;
+  else if (quality === 4) {                // magic
+    bit += 11;                             // prefix id
+    bit += 11;                             // suffix id
+    bit += 1;                              // trailing gap
+  } else if (quality === 5) {              // set
+    bit += 12;                             // setId
+    if (wantsNonArmorExtraBit) bit += 1;
+  } else if (quality === 6 || quality === 8) { // rare/crafted
+    bit += 8;                              // name1
+    bit += 8;                              // name2
+    bit += 6;                              // 6 affix flags (no inline IDs in the encoder)
+  } else if (quality === 7) {              // unique
+    bit += 12;                             // uniqueId
+    if (wantsNonArmorExtraBit) bit += 1;
+  }
+  const isRuneCode = /^[rs]\d{2}$/.test(code);
+  if (isRuneCode) bit += 1;                // rune extra bit
+
+  bit += 1;                                // timestamp
+
+  // Extended-misc 1-bit stack marker after timestamp
+  if (isExtendedMiscBit && !isRolledMiscType) {
+    const stackMarker = rb(bit, 1);
+    bit++;
+    if (stackMarker) bit += 9;             // inline qty
+  }
+
+  if (isArmor) bit += 11;                  // base_defense
+
+  // Armor/weapon durability: 8 bits curDur + (10 bits maxDur if curDur > 0)
+  if (isArmor || isWeapon) {
+    const curDur = rb(bit, 8); bit += 8;
+    if (curDur === null) return null;
+    if (curDur > 0) bit += 10;             // maxDur (V105)
+  }
+
+  // Stackable items (arrows, bolts, throwing weapons, gold) carry a 9-bit qty
+  if ((typeof STACK_SET !== 'undefined') && STACK_SET.has(code)) bit += 9;
+
+  // Socket count (4 bits) only present when the socketed flag is set
+  if (socketed) bit += 4;
+
+  // Personalization: up to 16 chars × 7 bits, null-terminated. Walk until we
+  // hit a zero char or hit the cap.
+  if (personalized) {
+    for (let i = 0; i < 16; i++) {
+      const ch = rb(bit, 7); bit += 7;
+      if (ch === null) return null;
+      if (ch === 0) break;
+    }
+  }
+
+  // Runeword marker — 16 bits after the type-specific block, then the runeword
+  // mod list goes inside the standard prop-list walk further down.
+  if (runeword) bit += 16;
+
+  // ua* statues: 2-bit gap, then 9-bit terminator (no rolled stats). Then the
+  // trailing pad and an extra zero byte.
+  if (isAdvStack) {
+    bit += 2;                              // 0,1 pad
+    bit += 9;                              // 511 terminator
+    bit++;                                 // phase-10 pad +1
+    while (bit & 7) bit++;
+    bit += 8;                              // extra zero byte
+    return byteOff + (bit >> 3);
+  }
+
+  // Set items: 5-bit sbf flag follows the type-specific block; bits get
+  // consumed by partial-bonus stat lists later, after the main prop list.
+  let sbf = 0;
+  if (quality === 5) { sbf = rb(bit, 5); bit += 5; if (sbf === null) return null; }
+
+  // Read the prop list — walk stats until we hit the 511 terminator. Each
+  // stat is 9 bits ID + saveParamBits[id] + saveBits[id] + follow stats.
+  const readStatList = () => {
+    let safety = 300;  // hard cap so a corrupt prop list can't infinite-loop
+    while (safety-- > 0) {
+      if (bit + 9 > buf.length * 8) return false;
+      const id = rb(bit, 9); bit += 9;
+      if (id === null) return false;
+      if (id === 511) return true;         // terminator
+      if (id >= SAVE_BITS.length) return false;
+      const sb = SAVE_BITS[id];
+      if (!sb) {
+        // Some stat IDs have no save bits (engine-internal). Skip and keep
+        // walking — same as the existing decoder's behavior.
+        continue;
+      }
+      const pb = (id < SAVE_PARAM_BITS.length) ? SAVE_PARAM_BITS[id] : 0;
+      bit += pb;
+      bit += sb;
+      // Follow stats — fire min → fire max, cold min → cold max → length, etc.
+      const fc = (id < FOLLOW_STATS.length) ? FOLLOW_STATS[id] : 0;
+      for (let f = 1; f <= fc; f++) {
+        const fid = id + f;
+        const fsb = (fid < SAVE_BITS.length) ? SAVE_BITS[fid] : 0;
+        const fpb = (fid < SAVE_PARAM_BITS.length) ? SAVE_PARAM_BITS[fid] : 0;
+        if (!fsb) continue;
+        bit += fpb;
+        bit += fsb;
+      }
+    }
+    return false;
+  };
+
+  if (!readStatList()) return null;
+
+  // Partial bonus stat lists for set items — one prop list per active sbf bit.
+  if (quality === 5) {
+    for (let s = 0; s < 5; s++) {
+      if (!(sbf & (1 << s))) continue;
+      if (!readStatList()) return null;
+    }
+  }
+  // Runeword mod list — one extra prop list after the main one.
+  if (runeword) {
+    if (!readStatList()) return null;
+  }
+
+  // Trailing pad: +1 bit, then byte-align. Mirrors the encoder.
+  bit++;
+  while (bit & 7) bit++;
+  return byteOff + (bit >> 3);
+}
+
 function parseVaultItems(buf, jmOffset, itemPageIds) {
   // JM block: "JM" [u16 count] [items...]
   if (buf[jmOffset] !== 0x4A || buf[jmOffset+1] !== 0x4D) {
@@ -17955,19 +18195,95 @@ function parseVaultItems(buf, jmOffset, itemPageIds) {
   // Byte range = from this item's offset to the next one (or end of file).
   // Also pair each item with its vault pageId from the parallel array.
   found.sort((a, b) => a.byteOffset - b.byteOffset);
-  const pageIds = Array.isArray(itemPageIds) ? itemPageIds : [];
-  const pageIdsMatch = pageIds.length === found.length;
-  for (let i = 0; i < found.length; i++) {
-    const start = found[i].byteOffset;
-    const end   = (i + 1 < found.length) ? found[i+1].byteOffset : buf.length;
-    found[i]._vaultRawBytes = buf.slice(start, end);
-    found[i].pageId = pageIdsMatch ? (pageIds[i] | 0) : 0;
+
+  // The heuristic scan is loose — same as parseSharedStash — so byte patterns
+  // INSIDE other items' bit streams can match the item-start signature and
+  // produce false positives. Two filters in sequence isolate the real items:
+  //   1) parent/storage signature: vault items are always parent=0 storage=5
+  //   2) structural item-end walk via _itemEndByte (mirrors the encoder's
+  //      exact field-by-field sequence) — rejects any subsequent candidate
+  //      whose offset falls inside the previous accepted item's byte range.
+  //
+  // Step 2 is what catches false positives sitting inside an item's prop
+  // list. Without it, the byte slice for the real item gets TRUNCATED to
+  // "next candidate offset" instead of "true item end" — taking the item
+  // out of the vault then captures only its first chunk and dropping it
+  // back writes corrupted bytes, producing "lost properties / doubled items
+  // / slot occupied" symptoms.
+  //
+  // Socketed children (parent=6) belong inside their parent item's byte
+  // range and don't need their own pageId — the byte slice from one real
+  // vault item to the next naturally includes any socketed children that
+  // sit between them, so they round-trip correctly without separate entries.
+  const candidatesByParentStorage = found.filter(it => it.parent === 0 && it.storage === 5);
+  candidatesByParentStorage.sort((a, b) => a.byteOffset - b.byteOffset);
+
+  // Walk candidates in byte order, using _itemEndByte to reject any candidate
+  // whose offset falls inside the previous accepted item's bit range. The
+  // byte-pattern scanner is loose: a real item's stat list bits can match
+  // the 5-byte item-start signature AND huffman-decode to a valid item code,
+  // creating phantom items between real ones. Letting those through would
+  // cause _vaultRawBytes slicing to truncate the host item (each entry gets
+  // sliced from its byteOffset to the next entry's byteOffset, so a phantom
+  // between two real items steals bytes from the first one's slice).
+  const filtered = [];
+  let nextAcceptableStart = 0;
+  for (const cand of candidatesByParentStorage) {
+    if (cand.byteOffset < nextAcceptableStart) continue;  // inside previous item
+    const endByte = _itemEndByte(buf, cand.byteOffset, cand.typeCode);
+    if (endByte === null) {
+      // Structural walk failed — accept the candidate but advance only by
+      // a conservative minimum so we don't accidentally swallow the next
+      // real item. 11 bytes covers the smallest compact item plus the
+      // signature-margin needed to skip any bit pattern matching the
+      // item-start signature within those 11 bytes.
+      filtered.push(cand);
+      nextAcceptableStart = cand.byteOffset + 11;
+      continue;
+    }
+    filtered.push(cand);
+    nextAcceptableStart = endByte;
   }
-  if (found.length !== count) {
-    console.warn(`Vault item count mismatch: header says ${count}, scanner found ${found.length}`);
+
+
+  // Pair filtered items with pageIds positionally. The pageIds array is in
+  // byte-order at write time, which includes socketed children (parent=6)
+  // as separate entries. Our filter dropped those, so we may have fewer
+  // items than pageIds. Trimming pageIds to filtered.length gives every
+  // accepted item its own page assignment from the first N entries —
+  // since socketed children always come AFTER their parent in the byte
+  // stream, the first N entries are exactly the parent items' pageIds.
+  //
+  // If filtered.length > pageIds.length (rare — would mean the filter let
+  // through false positives that survived structural decode), slice
+  // filtered to match so the pair-up still works.
+  const pageIds = Array.isArray(itemPageIds) ? itemPageIds : [];
+  let trimmed = filtered;
+  if (filtered.length > pageIds.length && pageIds.length > 0) {
+    trimmed = filtered.slice(0, pageIds.length);
+  }
+  const usablePageIds = pageIds.length >= trimmed.length
+    ? pageIds.slice(0, trimmed.length)
+    : pageIds;
+  const pageIdsMatch = usablePageIds.length === trimmed.length;
+
+  for (let i = 0; i < trimmed.length; i++) {
+    const start = trimmed[i].byteOffset;
+    const end   = (i + 1 < trimmed.length) ? trimmed[i+1].byteOffset : buf.length;
+    trimmed[i]._vaultRawBytes = buf.slice(start, end);
+    trimmed[i].pageId = pageIdsMatch ? (usablePageIds[i] | 0) : 0;
+  }
+  // Replace `found` with the filtered+trimmed list so downstream consumers
+  // (the function's return, any callers operating on its result) see only
+  // the real vault items, not the parent=6 socketed children or false
+  // positives the loose heuristic also matched.
+  found.length = 0;
+  for (const it of trimmed) found.push(it);
+  if (count !== found.length) {
+    console.warn(`Vault item count: header says ${count}, found ${found.length} parent=0/storage=5 items`);
   }
   if (pageIds.length && !pageIdsMatch) {
-    console.warn(`Vault pageId array length (${pageIds.length}) != item count (${found.length}); defaulting to page 0`);
+    console.warn(`Vault pageId array length (${pageIds.length}) != filtered item count (${found.length}); defaulting to page 0`);
   }
   return found;
 }
