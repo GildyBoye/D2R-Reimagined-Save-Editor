@@ -18934,6 +18934,12 @@ window.moveSourceItemToVault = function(byteOffset, explicit) {
   const resolved = _resolveSourceForMove(byteOffset);
   if (!resolved) { showPopup('Source item not found.'); return; }
   const { kind, item, buf, items, lengthItems, sectionEnd } = resolved;
+  // Horadric Cube contents are independent items at storage=4; moving the cube
+  // alone orphans them. Block it until cube-with-contents transfer is built.
+  if ((item.typeCode || '').toLowerCase() === 'box') {
+    showPopup(L('ui_vault_no_cube','The Horadric Cube can’t be moved to the vault — its contents are separate items that would be left behind.'));
+    return;
+  }
   ensureItemProps(item);
 
   // Cascade children (socketed gems/runes/jewels go with the parent).
