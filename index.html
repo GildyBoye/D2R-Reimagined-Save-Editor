@@ -11457,6 +11457,68 @@ function _catalogEntryEquipReqs(entry) {
 // so the user can tell at a glance whether their character can actually equip
 // the item they're about to insert. No character loaded → reqs render in the
 // neutral gold colour without any "you have X" annotation.
+// Equip requirements for an actual decoded item (vs catalog entry).
+// Includes runeword bump from highest socketed rune level.
+function _itemEquipReqs(item) {
+  if (!item) return null;
+  const code = item.typeCode || '';
+  const baseReqs = ITEM_REQS_BY_CODE[code];
+  let { reqstr = 0, reqdex = 0, levelreq = 0 } = baseReqs || {};
+  let runewordHint = false;
+
+  if (item.runeword) {
+    runewordHint = true;
+    const sources = item.isGrail
+                  ? (grailParsed ? grailParsed.tabs.flatMap(t => t.items) : null)
+                  : item.isVault
+                  ? vaultItems
+                  : item.isSharedStash
+                  ? (sharedStashParsed ? sharedStashParsed.tabs.flatMap(t => t.items) : null)
+                  : (parsedChar?.items || null);
+    if (sources) {
+      const myOff = item.byteOffset;
+      const childRunes = [];
+      if (item.isVirtual || myOff < 0) {
+        const idx = sources.indexOf(item);
+        if (idx >= 0) {
+          for (let j = idx + 1; j < sources.length; j++) {
+            const n = sources[j];
+            if (n.parent !== 6) break;
+            childRunes.push(n);
+          }
+        }
+      } else {
+        let found = false;
+        for (const it of sources) {
+          if (it === item) { found = true; continue; }
+          if (!found) continue;
+          const p = it.parent ?? it.location ?? 0;
+          if (p === 6 && it.byteOffset > myOff) childRunes.push(it);
+          else if (p !== 6) break;
+        }
+      }
+      for (const rune of childRunes) {
+        const r = ITEM_REQS_BY_CODE[rune.typeCode] || {};
+        if ((r.levelreq || 0) > levelreq) levelreq = r.levelreq;
+      }
+    }
+  } else if (item.quality === 7 && item.uniqueId !== undefined && item.uniqueId !== null) {
+    const row = UNIQUE_ROW_BY_ID[item.uniqueId];
+    const uLvl = parseInt((row && row['lvl req']) || '0', 10);
+    if (uLvl > levelreq) levelreq = uLvl;
+  } else if (item.quality === 5) {
+    const sid = item.setId ?? item.setItemId;
+    if (sid !== undefined && sid !== null) {
+      const row = SET_ROW_BY_ID && SET_ROW_BY_ID[sid];
+      const sLvl = parseInt((row && row['lvl req']) || '0', 10);
+      if (sLvl > levelreq) levelreq = sLvl;
+    }
+  }
+
+  if (!reqstr && !reqdex && !levelreq) return null;
+  return { reqstr, reqdex, levelreq, runewordHint };
+}
+
 function _catalogReqsHtml(reqs) {
   if (!reqs) return '';
   const charLvl = parsedChar ? (parsedChar.header?.level || 1) : null;
@@ -12448,6 +12510,7 @@ function buildItemTooltipHtml(item, options) {
     <div class="tt-row"><span style="color:var(--d2-text-dim)">${esc(L('ui_label_base','Base:'))}</span><b>${baseLabel}</b><span style="opacity:0.4;font-size:10px;margin-left:2px">${codeLabel}</span></div>
     <div class="tt-row"><span style="color:var(--d2-text-dim)">${esc(L('ui_label_size','Size:'))}</span><b>${w}×${h}</b></div>
     ${decodedIlvl?`<div class="tt-row"><span style="color:var(--d2-text-dim)">${esc(L('ui_label_ilvl','iLvl:'))}</span><b>${decodedIlvl}</b></div>`:''}
+    ${_catalogReqsHtml(_itemEquipReqs(item))}
     ${flags.length?`<div class="tt-flag">${flags.join(' &nbsp; ')}</div>`:''}
     ${(()=>{
       // Socket info for socketable items
