@@ -10694,7 +10694,8 @@ window.saveBuildSlot = function(slotIdx) {
     if (item.isVirtual && item._virtualBytes) {
       bytes = item._virtualBytes;
     } else if (item.byteOffset >= 0) {
-      const len = getItemBinaryLength(workBytes, item.byteOffset, sameKindItems, sectionEnd);
+      ensureItemProps(item);
+      const len = _structuralItemLength(workBytes, item, sameKindItems, sectionEnd);
       bytes = workBytes.slice(item.byteOffset, item.byteOffset + len);
     } else if (item._grailCopyBytes) {
       bytes = item._grailCopyBytes;
@@ -14208,16 +14209,15 @@ window.startCopyItem = function(byteOffset) {
       }
     }
   }
-  const len = getItemBinaryLength(workBytes, byteOffset, sectionItems, sectionEnd);
+  ensureItemProps(item);
+  const len = _structuralItemLength(workBytes, item, sectionItems, sectionEnd);
   const itemBytes = new Uint8Array(workBytes.slice(byteOffset, byteOffset + len));
   const { w, h } = getItemSize(item.typeCode);
   const { name } = itemDisplayName(item);
 
-  ensureItemProps(item);
-
   const children = findSocketedChildren(workBytes, sectionItems, item);
   const childBytes = children.map(ch => {
-    const cLen = getItemBinaryLength(workBytes, ch.byteOffset, sectionItems, sectionEnd);
+    const cLen = _structuralItemLength(workBytes, ch, sectionItems, sectionEnd);
     return {
       bytes: new Uint8Array(workBytes.slice(ch.byteOffset, ch.byteOffset + cLen)),
       typeCode: ch.typeCode,
@@ -16291,6 +16291,21 @@ function getItemBinaryLength(buf, off, itemList, sectionEnd) {
   return buf.length - off;
 }
 
+// Structural length via decodeItemProperties — avoids truncation when the
+// byte-pattern scanner picks up a phantom inside an item's stat list.
+// Falls back to getItemBinaryLength for simple items (gems) where the
+// decoder bails early without an endBit.
+function _structuralItemLength(buf, item, fallbackList, fallbackSectionEnd) {
+  if (!buf || !item || item.byteOffset < 0) return 0;
+  try {
+    const ext = decodeItemProperties(buf, item.byteOffset, item);
+    if (ext && ext.endBit && !ext.simple && !ext.decodeError) {
+      return Math.ceil((ext.endBit + 1) / 8);
+    }
+  } catch (e) {}
+  return getItemBinaryLength(buf, item.byteOffset, fallbackList, fallbackSectionEnd);
+}
+
 // Add multiple items to the grail d2i in one batch
 function addItemsToGrail(itemEntries) {
   // itemEntries: [{bytes: Uint8Array, typeCode: string}, ...]
@@ -16653,21 +16668,18 @@ window.executeGrailTransfer = function(removeOriginals) {
       }
     }
 
-    // Get parent item binary
     let itemBytes;
     if (item._grailCopyBytes) {
-      // Virtual item from grail copy — use stored bytes directly
       itemBytes = new Uint8Array(item._grailCopyBytes);
     } else {
-      const len = getItemBinaryLength(sourceBuf, item.byteOffset, sourceItems, sectionEnd);
+      const len = _structuralItemLength(sourceBuf, item, sourceItems, sectionEnd);
       itemBytes = new Uint8Array(sourceBuf.slice(item.byteOffset, item.byteOffset + len));
     }
     allEntries.push({ bytes: itemBytes, typeCode: item.typeCode });
 
-    // Find and add socketed children
     const children = findSocketedChildren(sourceBuf, sourceItems, item);
     for (const child of children) {
-      const cLen = getItemBinaryLength(sourceBuf, child.byteOffset, sourceItems, sectionEnd);
+      const cLen = _structuralItemLength(sourceBuf, child, sourceItems, sectionEnd);
       const cBytes = new Uint8Array(sourceBuf.slice(child.byteOffset, child.byteOffset + cLen));
       allEntries.push({ bytes: cBytes, typeCode: child.typeCode });
       if (removeOriginals && source !== 'shared') {
@@ -16965,16 +16977,15 @@ window.startGrailCopyToInventory = function(byteOffset) {
     if (tab.items.some(it => it.byteOffset === byteOffset)) { ownerTab = tab; break; }
   }
   const tabItems = ownerTab ? ownerTab.items : [];
-  const len = getItemBinaryLength(grailD2i, byteOffset, tabItems);
+  ensureItemProps(item);
+  const len = _structuralItemLength(grailD2i, item, tabItems, 0);
   const itemBytes = new Uint8Array(grailD2i.slice(byteOffset, byteOffset + len));
   const { w, h } = getItemSize(item.typeCode);
   const { name } = itemDisplayName(item);
 
-  // Capture socketed children too — copying a socketed unique without its
-  // gems would leave the inventory copy with bogus socket flags but no fill.
   const children = findSocketedChildren(grailD2i, tabItems, item);
   const childBytes = children.map(ch => {
-    const cLen = getItemBinaryLength(grailD2i, ch.byteOffset, tabItems);
+    const cLen = _structuralItemLength(grailD2i, ch, tabItems, 0);
     return { bytes: new Uint8Array(grailD2i.slice(ch.byteOffset, ch.byteOffset + cLen)), typeCode: ch.typeCode };
   });
 
@@ -19053,15 +19064,9 @@ window.moveSourceItemToVault = function(byteOffset, explicit) {
     }
   }
 
-  // Extract raw bytes. Items with a valid positive byteOffset can slice
-  // directly from the source buffer (most common case). Virtual items with
-  // a fake negative byteOffset can't — we'd slice from the TAIL of the
-  // buffer and get garbage. Fall back to their cached bytes instead.
-  // This is what was making a vault→inv→vault round-trip of a set item
-  // re-save as a white item.
   let parentBytes;
   if (item.byteOffset >= 0 && buf) {
-    const parentLen = getItemBinaryLength(buf, item.byteOffset, lengthItems, sectionEnd);
+    const parentLen = _structuralItemLength(buf, item, lengthItems, sectionEnd);
     parentBytes = buf.slice(item.byteOffset, item.byteOffset + parentLen);
   } else if (item._virtualBytes) {
     parentBytes = new Uint8Array(item._virtualBytes);
@@ -19095,7 +19100,7 @@ window.moveSourceItemToVault = function(byteOffset, explicit) {
   for (const child of children) {
     let cBytes;
     if (child.byteOffset >= 0 && buf) {
-      const cLen = getItemBinaryLength(buf, child.byteOffset, lengthItems, sectionEnd);
+      const cLen = _structuralItemLength(buf, child, lengthItems, sectionEnd);
       cBytes = buf.slice(child.byteOffset, child.byteOffset + cLen);
     } else if (child._virtualBytes) {
       cBytes = new Uint8Array(child._virtualBytes);
