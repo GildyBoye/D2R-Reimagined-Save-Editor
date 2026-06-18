@@ -1,13 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
+  <meta charset="UTF-8">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>D2R Hero Editor — Reimagined</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>D2R Hero Editor — Reimagined</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
   :root {
     --d2-bg: #0a0804;
@@ -1305,6 +1305,8 @@ const ALL_FILES = [
   // ── Item properties (magic/rare affix names for tooltip display) ──
   'magicprefix.txt',    // magic prefix names and property codes (quality=4 items)
   'magicsuffix.txt',    // magic suffix names and property codes
+  'rareprefix.txt',     // rare-prefix name lookup for rare/crafted name header
+  'raresuffix.txt',     // rare-suffix name lookup for rare/crafted name header
 
   // ── Stats / properties (needed for correct property decoding) ──
   'itemstatcost.txt',   // save_add bias + save_bits per stat ID (overrides our hardcoded values)
@@ -1857,6 +1859,7 @@ function rebuildStringsForLang(lang) {
   buildSkillNameMap();
   buildSkillTreeData();
   buildMagicAffixMaps();
+  buildRareAffixMaps();
   buildSetNameMap();
   buildItemNameMap();
   buildItemCatalog();
@@ -2022,6 +2025,29 @@ function buildMagicAffixMaps() {
     });
     console.log(`buildMagicAffixMaps: ${Object.keys(magicSuffixById).length} suffixes`);
   }
+}
+
+let rarePrefixById = {};
+let rareSuffixById = {};
+
+function buildRareAffixMaps() {
+  rarePrefixById = {};
+  rareSuffixById = {};
+  const pData = baseData['rareprefix'];
+  if (pData) {
+    pData.rows.forEach((row, i) => {
+      const name = (row['name'] || row['Name'] || '').trim();
+      if (name) rarePrefixById[i + 1] = stringTable[name] || name;
+    });
+  }
+  const sData = baseData['raresuffix'];
+  if (sData) {
+    sData.rows.forEach((row, i) => {
+      const name = (row['name'] || row['Name'] || '').trim();
+      if (name) rareSuffixById[i + 1] = stringTable[name] || name;
+    });
+  }
+  console.log(`buildRareAffixMaps: ${Object.keys(rarePrefixById).length} prefixes, ${Object.keys(rareSuffixById).length} suffixes`);
 }
 
 // ── Set name map (built from sets.txt) ──
@@ -3754,6 +3780,20 @@ function _getExpectedStatValues(item) {
   return vals;
 }
 
+function _resolveRareName(item) {
+  if (!item) return null;
+  const q = item.quality;
+  if (q !== 6 && q !== 8) return null;
+  const pre = rarePrefixById[item._rareNameId1];
+  const suf = rareSuffixById[item._rareNameId2];
+  if (pre && suf) return pre + ' ' + suf;
+  if (pre) return pre;
+  if (suf) return suf;
+  return q === 8
+    ? L('ui_quality_crafted', 'Crafted Item')
+    : L('LootFilterRareRarity', 'Rare Item');
+}
+
 function resolveRunewordName(item) {
   if (!item.runeword) return null;
   const items = item.isGrail
@@ -4015,6 +4055,7 @@ function buildItemNameMap() {
 
   buildSkillNameMap();
   buildMagicAffixMaps();
+  buildRareAffixMaps();
   buildSetNameMap();
   buildStatCostMap();
   buildQuestItemSet();
@@ -12502,6 +12543,11 @@ function buildItemTooltipHtml(item, options) {
   if(item.runeword){
     const rwName=resolveRunewordName(item);
     if(rwName)headerLines+=`<div class="tt-row" style="color:#c8a030;font-size:11px">${esc(rwName)}</div>`;
+  }
+  if((decodedQual===6||decodedQual===8)&&!item.runeword){
+    const rareName=_resolveRareName(item);
+    const color=decodedQual===8?'#ff8000':'#c8c800';
+    if(rareName)headerLines+=`<div class="tt-row" style="color:${color};font-size:11px">${esc(rareName)}</div>`;
   }
   return `
     <div class="tt-name ${cls}">${esc(name)}</div>
