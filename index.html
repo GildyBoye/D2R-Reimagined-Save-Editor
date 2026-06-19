@@ -1801,6 +1801,11 @@ let setItemNames    = [];  // index -> display name (from setitems.txt)
 let skillNameById = {};  // numeric skill ID → display name string
 // Per-class ordered skill IDs: SKILL_IDS_BY_CLASS['ama'] = [6,7,8,...35] (30 entries)
 let SKILL_IDS_BY_CLASS = {};
+// Skill IDs that a player can legitimately gain (class skill OR class-neutral
+// item-grantable skill — Reimagined adds several oskill rows with no charclass
+// but a valid skilldesc). Monster skills (no charclass AND no skilldesc) are
+// excluded so the +Skill picker doesn't list internal AI behaviors.
+let PLAYER_USABLE_SKILL_IDS = new Set();
 
 // Rebuild localized label arrays/maps from stringTable. Called after language switch.
 // Uses Blizzard string keys where available (class names, quality, elements, item flags)
@@ -1946,6 +1951,7 @@ window.switchLanguage = function(lang) {
 function buildSkillNameMap() {
   skillNameById = {};
   SKILL_IDS_BY_CLASS = {};
+  PLAYER_USABLE_SKILL_IDS = new Set();
   const data = baseData['skills'];
   if (!data) return;
 
@@ -1997,6 +2003,11 @@ function buildSkillNameMap() {
       if (!classSkills[cls]) classSkills[cls] = [];
       classSkills[cls].push(id);
     }
+    // Player-usable filter: a charclass marks a class skill, a skilldesc marks
+    // an item-grantable / displayable skill (basic Attack/Kick/Throw plus any
+    // Reimagined oskill row that lacks charclass but still surfaces in the UI).
+    // Monster skills have neither and stay out of the +Skill picker.
+    if (cls || descKey) PLAYER_USABLE_SKILL_IDS.add(id);
   }
   SKILL_IDS_BY_CLASS = classSkills;
   console.log(`buildSkillNameMap: ${Object.keys(skillNameById).length} skills resolved, classes: ${Object.keys(classSkills).join(',')}`);
@@ -13093,10 +13104,87 @@ function _itemEditAddableStatsForItem(item) {
     });
   }
 
+  // Skill-bearing stats — parametric mods that the saveParamBits>0 filter
+  // above excludes. We add them back as explicit options because they are
+  // legitimate user-facing properties; the Add row renders a context-aware
+  // dropdown (skill / class / tab) instead of a numeric param input.
+  const _SKILL_DEFS = [
+    { id: 107, kind: 'any',      paramBits: 9,  labelKey: 'ui_edit_skill_any',   labelFallback: '+# to Skill (oskill)' },
+    { id: 97,  kind: 'classany', paramBits: 9,  labelKey: 'ui_edit_skill_class', labelFallback: '+# to Class Skill' },
+    { id: 83,  kind: 'class',    paramBits: 3,  labelKey: 'ui_edit_skill_tree',  labelFallback: '+# to <Class> Skills' },
+    { id: 188, kind: 'skilltab', paramBits: 16, labelKey: 'ui_edit_skill_tab',   labelFallback: '+# to <Skill Tab>' },
+  ];
+  for (const def of _SKILL_DEFS) {
+    const meta = (() => {
+      for (const name in STAT_BY_NAME) {
+        if (STAT_BY_NAME[name].id === def.id) return STAT_BY_NAME[name];
+      }
+      return null;
+    })();
+    if (!meta || !meta.saveBits) continue;
+    out.push({
+      id: def.id, name: 'skill_' + def.kind,
+      label:    L(def.labelKey, def.labelFallback),
+      saveBits: meta.saveBits,
+      saveAdd:  meta.saveAdd || 0,
+      paramBits: def.paramBits,
+      roles:    ['prefix','suffix'],
+      _skillKind: def.kind,
+    });
+  }
+
+  // Disambiguate duplicate labels — D2's descfunc templates collapse e.g.
+  // maxhp ("+# to Life") and item_maxhp_percent ("+#% to Life") to the same
+  // cleaned "Life" string. Without this, the dropdown shows "Life" twice with
+  // no way to tell which is the percent variant. Append the raw stat name in
+  // parens to every entry whose label collides with another.
+  const labelCounts = {};
+  for (const o of out) labelCounts[o.label] = (labelCounts[o.label] || 0) + 1;
+  for (const o of out) {
+    if (labelCounts[o.label] > 1) o.label = `${o.label} (${o.name})`;
+  }
+
   // Sort by the localized label, not the raw stat name — alphabetical order
   // should reflect what the user actually sees in the dropdown.
   out.sort((a, b) => a.label.localeCompare(b.label));
   return out;
+}
+
+// Builds <option> markup for the Add-row skill picker, given the kind from the
+// stat entry's _skillKind marker. Returns '' for unknown kinds so the caller
+// can safely write the result into a select without injecting stray options.
+function _itemEditBuildSkillOptions(kind) {
+  if (kind === 'any' || kind === 'classany') {
+    // Flat skill list — oskill / singleskill use 9-bit skill ID directly.
+    // PLAYER_USABLE_SKILL_IDS includes every class skill PLUS class-neutral
+    // skills with a skilldesc (basic actions and Reimagined-added oskills);
+    // monster abilities (no charclass + no skilldesc) are excluded.
+    const entries = [...PLAYER_USABLE_SKILL_IDS]
+      .map(id => ({ id, name: skillNameById[id] }))
+      .filter(e => e.name)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return entries.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
+  }
+  if (kind === 'class') {
+    // 3-bit class id — matches CLASS_NAMES ordering (0=ama … 6=asn, 7=Warlock).
+    return CLASS_NAMES.map((nm, i) =>
+      `<option value="${i}">${esc(nm)}</option>`
+    ).join('');
+  }
+  if (kind === 'skilltab') {
+    // Flat tab index — getSkillTabName resolves class+tree from the same int
+    // the prop list stores. Walk every class × 3 trees.
+    const out = [];
+    for (let c = 0; c < CLASS_NAMES.length; c++) {
+      for (let t = 0; t < 3; t++) {
+        const idx = c * 3 + t;
+        const nm  = getSkillTabName(idx);
+        out.push(`<option value="${idx}">${esc(CLASS_NAMES[c])} — ${esc(nm)}</option>`);
+      }
+    }
+    return out.join('');
+  }
+  return '';
 }
 
 // Strip `%+d`, `%d`, `%s`, `%%` format tokens and tidy whitespace from a
@@ -13668,8 +13756,10 @@ function _renderItemEditDialog() {
     // Each option carries its own roles in data-roles so the role dropdown
     // can rebuild against the active stat's actual D2 affix membership —
     // a stat that only rolls as a suffix shouldn't be selectable as a prefix.
+    // data-skill-kind marks parametric skill stats so the row swaps the value
+    // input for a context-aware skill / class / tab dropdown.
     const addOptions = addable.map(s =>
-      `<option value="${s.id}" data-roles="${esc(s.roles.join(','))}">${esc(s.label || s.name)}</option>`
+      `<option value="${s.id}" data-roles="${esc(s.roles.join(','))}" data-skill-kind="${esc(s._skillKind || '')}" data-idx="${addable.indexOf(s)}">${esc(s.label || s.name)}</option>`
     ).join('');
     const firstStat = addable[0];
     const firstRoles = firstStat.roles;
@@ -13686,15 +13776,24 @@ function _renderItemEditDialog() {
     const firstFallbackMax = ((1 << firstStat.saveBits) - 1) - firstStat.saveAdd;
     const initialMin = (firstRange.min != null) ? firstRange.min : firstFallbackMin;
     const initialMax = (firstRange.max != null) ? firstRange.max : firstFallbackMax;
+    // Skill picker — populated by _itemEditUpdateAddSkillField for parametric
+    // skill stats (oskill / class-skills / skill-tab). Hidden via style.display
+    // for non-skill stats so the row collapses back to the default layout.
+    const firstSkillKind = firstStat._skillKind || '';
+    const firstSkillOptions = firstSkillKind ? _itemEditBuildSkillOptions(firstSkillKind) : '';
     addRow = `<div style="display:flex;align-items:center;gap:8px;padding:8px;border-top:2px solid var(--d2-green);background:rgba(0,128,0,0.08);font-size:12px;flex-wrap:wrap">
-      <select id="itemEditAddStat" onchange="_itemEditUpdateAddRole();_itemEditUpdateAddBounds()"
+      <select id="itemEditAddStat" onchange="_itemEditUpdateAddRole();_itemEditUpdateAddBounds();_itemEditUpdateAddSkillField()"
               style="flex:1;min-width:140px;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-text);font-family:'Crimson Text',serif;font-size:12px;padding:3px 6px">${addOptions}</select>
+      <select id="itemEditAddSkill"
+              style="flex-shrink:0;min-width:140px;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-text);font-family:'Crimson Text',serif;font-size:12px;padding:3px 6px;display:${firstSkillKind ? 'inline-block' : 'none'}">
+        ${firstSkillOptions}
+      </select>
       <select id="itemEditAddRole" ${initialRoleDisabled}
               title="${esc(L('ui_edit_role_help','Affix role drives the magic→rare promotion: 1 prefix + 1 suffix stays magic; 2 of the same kind goes rare. Locked when the stat only rolls as one or the other in D2.'))}"
               style="flex-shrink:0;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-text);font-family:'Crimson Text',serif;font-size:12px;padding:3px 6px">
         ${initialRoleOptions}
       </select>
-      <input type="number" id="itemEditAddValue" value="0" min="${initialMin}" max="${initialMax}" placeholder="value"
+      <input type="number" id="itemEditAddValue" value="${firstSkillKind ? 1 : 0}" min="${initialMin}" max="${initialMax}" placeholder="value"
              onchange="_itemEditClampInput(this)"
              style="width:70px;flex-shrink:0;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-gold-bright);font-family:'Crimson Text',serif;font-size:13px;padding:3px 6px;text-align:center">
       <button type="button" style="flex-shrink:0;background:#0e2a0e;border:1px solid var(--d2-green);color:#7fc77f;font-family:'Cinzel',serif;font-size:11px;padding:3px 12px;border-radius:2px;cursor:pointer" onclick="_itemEditAddMod()">${esc(L('ui_edit_add_btn','Add'))}</button>
@@ -13786,6 +13885,26 @@ window._itemEditUpdateAddRole = function() {
     `<option value="${r}">${esc(labels[r] || r)}</option>`
   ).join('');
   roleSel.disabled = roles.length <= 1;
+};
+
+// Show / hide / repopulate the skill picker when the user picks a different
+// stat. Runs alongside _itemEditUpdateAddRole and _itemEditUpdateAddBounds on
+// the stat dropdown's change event.
+window._itemEditUpdateAddSkillField = function() {
+  const state = _itemEditState;
+  if (!state) return;
+  const statSel  = document.getElementById('itemEditAddStat');
+  const skillSel = document.getElementById('itemEditAddSkill');
+  if (!statSel || !skillSel) return;
+  const opt = statSel.options[statSel.selectedIndex];
+  const kind = (opt && opt.dataset.skillKind) || '';
+  if (!kind) {
+    skillSel.style.display = 'none';
+    skillSel.innerHTML = '';
+    return;
+  }
+  skillSel.innerHTML    = _itemEditBuildSkillOptions(kind);
+  skillSel.style.display = 'inline-block';
 };
 
 // Refresh the value input's min/max attributes when the user picks a different
@@ -13917,10 +14036,16 @@ function _itemEditCommitPendingAdd(state) {
   const min   = (range.min != null) ? range.min : fbMin;
   const max   = (range.max != null) ? range.max : fbMax;
   const value = Math.max(min, Math.min(max, isNaN(raw) ? 0 : raw));
+  // Skill-bearing stats: param comes from the skill picker, paramBits from
+  // the addable meta. For non-skill stats both stay at 0 / 0 (vanilla path).
+  const skillSel  = document.getElementById('itemEditAddSkill');
+  const isSkill   = !!meta._skillKind;
+  const paramBits = isSkill ? (meta.paramBits || 0) : 0;
+  const param     = isSkill && skillSel ? (parseInt(skillSel.value, 10) || 0) : 0;
   state.mods.push({
-    id, param: 0, value, value2: undefined, value3: undefined,
+    id, param, value, value2: undefined, value3: undefined,
     stored: value + meta.saveAdd,
-    valueBits: meta.saveBits, paramBits: 0,
+    valueBits: meta.saveBits, paramBits,
     paramBitOff: -1, valueBitOff: -1,  // unused — re-encoder doesn't need them
     saveAdd: meta.saveAdd,
     _isNew: true,
