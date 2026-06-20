@@ -1801,10 +1801,7 @@ let setItemNames    = [];  // index -> display name (from setitems.txt)
 let skillNameById = {};  // numeric skill ID → display name string
 // Per-class ordered skill IDs: SKILL_IDS_BY_CLASS['ama'] = [6,7,8,...35] (30 entries)
 let SKILL_IDS_BY_CLASS = {};
-// Skill IDs that a player can legitimately gain (class skill OR class-neutral
-// item-grantable skill — Reimagined adds several oskill rows with no charclass
-// but a valid skilldesc). Monster skills (no charclass AND no skilldesc) are
-// excluded so the +Skill picker doesn't list internal AI behaviors.
+// Player-grantable skills (class skill OR has skilldesc) — excludes monster AI.
 let PLAYER_USABLE_SKILL_IDS = new Set();
 
 // Rebuild localized label arrays/maps from stringTable. Called after language switch.
@@ -2003,10 +2000,6 @@ function buildSkillNameMap() {
       if (!classSkills[cls]) classSkills[cls] = [];
       classSkills[cls].push(id);
     }
-    // Player-usable filter: a charclass marks a class skill, a skilldesc marks
-    // an item-grantable / displayable skill (basic Attack/Kick/Throw plus any
-    // Reimagined oskill row that lacks charclass but still surfaces in the UI).
-    // Monster skills have neither and stay out of the +Skill picker.
     if (cls || descKey) PLAYER_USABLE_SKILL_IDS.add(id);
   }
   SKILL_IDS_BY_CLASS = classSkills;
@@ -4673,9 +4666,9 @@ window._advOptsToggleRemember = function(checked) {
 const _itemSpriteCache = new Map();
 // D2R-Reimagined's HD item→sprite mapping, fetched from the mod repo at
 // startup (with a local fallback). Populated by loadHdSpriteMappings().
-//   ITEM_SPRITE_ASSETS[typeCode]       = "category/file"
-//   UNIQUE_SPRITE_ASSETS[snakeKey]     = { normal, uber, ultra }
-//   SET_SPRITE_ASSETS[snakeKey]        = { normal, uber, ultra }
+//   ITEM_SPRITE_ASSETS[typeCode]   = "category/file"
+//   UNIQUE_SPRITE_ASSETS[snakeKey] = "category/file"
+//   SET_SPRITE_ASSETS[snakeKey]    = "category/file"
 let ITEM_SPRITE_ASSETS   = {};
 let UNIQUE_SPRITE_ASSETS = {};
 let SET_SPRITE_ASSETS    = {};
@@ -4914,22 +4907,18 @@ async function loadHdSpriteMappings(timeout) {
     return null;
   };
 
-  // Flatten the array-of-single-entry-objects shape used by all three files.
-  const flatten = (arr, out) => {
-    if (!Array.isArray(arr)) return;
-    for (const entry of arr) {
-      if (!entry || typeof entry !== 'object') continue;
-      for (const [key, val] of Object.entries(entry)) out[key] = val;
+  // All three files are now flat `{key: assetPath}` dicts — value is the
+  // direct sprite path string. No wrapper object, no unused uber/ultra fields.
+  const loadSpriteMap = (data, target) => {
+    if (!data || typeof data !== 'object') return;
+    for (const [key, val] of Object.entries(data)) {
+      if (typeof val === 'string') target[key] = val;
     }
   };
 
   const itemsData = await pull('items.json');
   if (itemsData) {
-    const indexed = {};
-    flatten(itemsData, indexed);
-    for (const [code, val] of Object.entries(indexed)) {
-      if (val && typeof val.asset === 'string') ITEM_SPRITE_ASSETS[code] = val.asset;
-    }
+    loadSpriteMap(itemsData, ITEM_SPRITE_ASSETS);
     addLog('ok', `✓ items.json (${Object.keys(ITEM_SPRITE_ASSETS).length} item sprites)`);
   } else {
     addLog('warn', '⚠ items.json — not loaded (base item sprites disabled)');
@@ -4937,7 +4926,7 @@ async function loadHdSpriteMappings(timeout) {
 
   const uniquesData = await pull('uniques.json');
   if (uniquesData) {
-    flatten(uniquesData, UNIQUE_SPRITE_ASSETS);
+    loadSpriteMap(uniquesData, UNIQUE_SPRITE_ASSETS);
     addLog('ok', `✓ uniques.json (${Object.keys(UNIQUE_SPRITE_ASSETS).length} unique sprites)`);
   } else {
     addLog('warn', '⚠ uniques.json — not loaded (unique sprites fall back to base)');
@@ -4945,7 +4934,7 @@ async function loadHdSpriteMappings(timeout) {
 
   const setsData = await pull('sets.json');
   if (setsData) {
-    flatten(setsData, SET_SPRITE_ASSETS);
+    loadSpriteMap(setsData, SET_SPRITE_ASSETS);
     addLog('ok', `✓ sets.json (${Object.keys(SET_SPRITE_ASSETS).length} set sprites)`);
   } else {
     addLog('warn', '⚠ sets.json — not loaded (set sprites fall back to base)');
@@ -4978,16 +4967,16 @@ function _spriteFileForItem(item) {
 
   if (item.quality === 7 && item.uniqueId != null) {
     for (const key of _spriteKeyVariants(_uniqueNameById[item.uniqueId])) {
-      const entry = UNIQUE_SPRITE_ASSETS[key];
-      if (entry && entry.normal) return entry.normal;
+      const path = UNIQUE_SPRITE_ASSETS[key];
+      if (path) return path;
     }
   }
   if (item.quality === 5) {
     const sid = (item.setItemId != null) ? item.setItemId : item.setId;
     if (sid != null) {
       for (const key of _spriteKeyVariants(_setNameByItemId[sid])) {
-        const entry = SET_SPRITE_ASSETS[key];
-        if (entry && entry.normal) return entry.normal;
+        const path = SET_SPRITE_ASSETS[key];
+        if (path) return path;
       }
     }
   }
@@ -13104,10 +13093,8 @@ function _itemEditAddableStatsForItem(item) {
     });
   }
 
-  // Skill-bearing stats — parametric mods that the saveParamBits>0 filter
-  // above excludes. We add them back as explicit options because they are
-  // legitimate user-facing properties; the Add row renders a context-aware
-  // dropdown (skill / class / tab) instead of a numeric param input.
+  // Skill stats — bypass the saveParamBits>0 filter so the Add row can offer
+  // them with a skill/class/tab picker instead of a raw numeric param input.
   const _SKILL_DEFS = [
     { id: 107, kind: 'any',      paramBits: 9,  labelKey: 'ui_edit_skill_any',   labelFallback: '+# to Skill (oskill)' },
     { id: 97,  kind: 'classany', paramBits: 9,  labelKey: 'ui_edit_skill_class', labelFallback: '+# to Class Skill' },
@@ -13115,12 +13102,7 @@ function _itemEditAddableStatsForItem(item) {
     { id: 188, kind: 'skilltab', paramBits: 16, labelKey: 'ui_edit_skill_tab',   labelFallback: '+# to <Skill Tab>' },
   ];
   for (const def of _SKILL_DEFS) {
-    const meta = (() => {
-      for (const name in STAT_BY_NAME) {
-        if (STAT_BY_NAME[name].id === def.id) return STAT_BY_NAME[name];
-      }
-      return null;
-    })();
+    const meta = Object.values(STAT_BY_NAME).find(s => s.id === def.id);
     if (!meta || !meta.saveBits) continue;
     out.push({
       id: def.id, name: 'skill_' + def.kind,
@@ -13133,11 +13115,8 @@ function _itemEditAddableStatsForItem(item) {
     });
   }
 
-  // Disambiguate duplicate labels — D2's descfunc templates collapse e.g.
-  // maxhp ("+# to Life") and item_maxhp_percent ("+#% to Life") to the same
-  // cleaned "Life" string. Without this, the dropdown shows "Life" twice with
-  // no way to tell which is the percent variant. Append the raw stat name in
-  // parens to every entry whose label collides with another.
+  // Disambiguate duplicate cleaned labels (e.g. maxhp + item_maxhp_percent
+  // both clean to "Life") by appending the raw stat name to the collisions.
   const labelCounts = {};
   for (const o of out) labelCounts[o.label] = (labelCounts[o.label] || 0) + 1;
   for (const o of out) {
@@ -13150,15 +13129,8 @@ function _itemEditAddableStatsForItem(item) {
   return out;
 }
 
-// Builds <option> markup for the Add-row skill picker, given the kind from the
-// stat entry's _skillKind marker. Returns '' for unknown kinds so the caller
-// can safely write the result into a select without injecting stray options.
 function _itemEditBuildSkillOptions(kind) {
   if (kind === 'any' || kind === 'classany') {
-    // Flat skill list — oskill / singleskill use 9-bit skill ID directly.
-    // PLAYER_USABLE_SKILL_IDS includes every class skill PLUS class-neutral
-    // skills with a skilldesc (basic actions and Reimagined-added oskills);
-    // monster abilities (no charclass + no skilldesc) are excluded.
     const entries = [...PLAYER_USABLE_SKILL_IDS]
       .map(id => ({ id, name: skillNameById[id] }))
       .filter(e => e.name)
@@ -13166,23 +13138,15 @@ function _itemEditBuildSkillOptions(kind) {
     return entries.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
   }
   if (kind === 'class') {
-    // 3-bit class id — matches CLASS_NAMES ordering (0=ama … 6=asn, 7=Warlock).
     return CLASS_NAMES.map((nm, i) =>
       `<option value="${i}">${esc(nm)}</option>`
     ).join('');
   }
   if (kind === 'skilltab') {
-    // Flat tab index — getSkillTabName resolves class+tree from the same int
-    // the prop list stores. Walk every class × 3 trees.
-    const out = [];
-    for (let c = 0; c < CLASS_NAMES.length; c++) {
-      for (let t = 0; t < 3; t++) {
-        const idx = c * 3 + t;
-        const nm  = getSkillTabName(idx);
-        out.push(`<option value="${idx}">${esc(CLASS_NAMES[c])} — ${esc(nm)}</option>`);
-      }
-    }
-    return out.join('');
+    const total = CLASS_NAMES.length * 3;
+    return Array.from({ length: total }, (_, idx) =>
+      `<option value="${idx}">${esc(CLASS_NAMES[Math.floor(idx / 3)])} — ${esc(getSkillTabName(idx))}</option>`
+    ).join('');
   }
   return '';
 }
@@ -13753,13 +13717,10 @@ function _renderItemEditDialog() {
       prefix: L('ui_edit_role_prefix','Prefix'),
       suffix: L('ui_edit_role_suffix','Suffix'),
     };
-    // Each option carries its own roles in data-roles so the role dropdown
-    // can rebuild against the active stat's actual D2 affix membership —
-    // a stat that only rolls as a suffix shouldn't be selectable as a prefix.
-    // data-skill-kind marks parametric skill stats so the row swaps the value
-    // input for a context-aware skill / class / tab dropdown.
+    // data-roles drives the role dropdown rebuild; data-skill-kind swaps the
+    // value input for a skill / class / tab picker.
     const addOptions = addable.map(s =>
-      `<option value="${s.id}" data-roles="${esc(s.roles.join(','))}" data-skill-kind="${esc(s._skillKind || '')}" data-idx="${addable.indexOf(s)}">${esc(s.label || s.name)}</option>`
+      `<option value="${s.id}" data-roles="${esc(s.roles.join(','))}" data-skill-kind="${esc(s._skillKind || '')}">${esc(s.label || s.name)}</option>`
     ).join('');
     const firstStat = addable[0];
     const firstRoles = firstStat.roles;
@@ -13776,9 +13737,6 @@ function _renderItemEditDialog() {
     const firstFallbackMax = ((1 << firstStat.saveBits) - 1) - firstStat.saveAdd;
     const initialMin = (firstRange.min != null) ? firstRange.min : firstFallbackMin;
     const initialMax = (firstRange.max != null) ? firstRange.max : firstFallbackMax;
-    // Skill picker — populated by _itemEditUpdateAddSkillField for parametric
-    // skill stats (oskill / class-skills / skill-tab). Hidden via style.display
-    // for non-skill stats so the row collapses back to the default layout.
     const firstSkillKind = firstStat._skillKind || '';
     const firstSkillOptions = firstSkillKind ? _itemEditBuildSkillOptions(firstSkillKind) : '';
     addRow = `<div style="display:flex;align-items:center;gap:8px;padding:8px;border-top:2px solid var(--d2-green);background:rgba(0,128,0,0.08);font-size:12px;flex-wrap:wrap">
@@ -13887,9 +13845,6 @@ window._itemEditUpdateAddRole = function() {
   roleSel.disabled = roles.length <= 1;
 };
 
-// Show / hide / repopulate the skill picker when the user picks a different
-// stat. Runs alongside _itemEditUpdateAddRole and _itemEditUpdateAddBounds on
-// the stat dropdown's change event.
 window._itemEditUpdateAddSkillField = function() {
   const state = _itemEditState;
   if (!state) return;
@@ -14036,8 +13991,6 @@ function _itemEditCommitPendingAdd(state) {
   const min   = (range.min != null) ? range.min : fbMin;
   const max   = (range.max != null) ? range.max : fbMax;
   const value = Math.max(min, Math.min(max, isNaN(raw) ? 0 : raw));
-  // Skill-bearing stats: param comes from the skill picker, paramBits from
-  // the addable meta. For non-skill stats both stay at 0 / 0 (vanilla path).
   const skillSel  = document.getElementById('itemEditAddSkill');
   const isSkill   = !!meta._skillKind;
   const paramBits = isSkill ? (meta.paramBits || 0) : 0;
@@ -16462,19 +16415,21 @@ function getItemBinaryLength(buf, off, itemList, sectionEnd) {
   return buf.length - off;
 }
 
-// Structural length via decodeItemProperties — avoids truncation when the
-// byte-pattern scanner picks up a phantom inside an item's stat list.
-// Falls back to getItemBinaryLength for simple items (gems) where the
-// decoder bails early without an endBit.
+// MAX(decoder, scanner) handles both phantom-inside-prop-list (scanner short)
+// and Reimagined trailing-extension after 511 (decoder short) without either
+// truncating the byte-exact slice the vault round-trip needs.
 function _structuralItemLength(buf, item, fallbackList, fallbackSectionEnd) {
   if (!buf || !item || item.byteOffset < 0) return 0;
+  const scannerLen = getItemBinaryLength(buf, item.byteOffset, fallbackList, fallbackSectionEnd);
+  let decoderLen = 0;
   try {
     const ext = decodeItemProperties(buf, item.byteOffset, item);
     if (ext && ext.endBit && !ext.simple && !ext.decodeError) {
-      return Math.ceil((ext.endBit + 1) / 8);
+      decoderLen = Math.ceil((ext.endBit + 1) / 8);
     }
   } catch (e) {}
-  return getItemBinaryLength(buf, item.byteOffset, fallbackList, fallbackSectionEnd);
+  if (!decoderLen) return scannerLen;
+  return Math.max(decoderLen, scannerLen);
 }
 
 // Add multiple items to the grail d2i in one batch

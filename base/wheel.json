@@ -1,401 +1,103 @@
 {
-    "challenges": [
-        {
-            "name": "No Runewords",
-            "desc": "Cannot create or use runewords"
-        },
-        {
-            "name": "No Teleport",
-            "desc": "Teleport skill and Enigma are forbidden"
-        },
-        {
-            "name": "SSF",
-            "desc": "Solo self-found — no trading, no outside help"
-        },
-        {
-            "name": "No Mercenary",
-            "desc": "Adventure alone, no hireling"
-        },
-        {
-            "name": "Walking Only",
-            "desc": "Toggle run off, walk everywhere"
-        },
-        {
-            "name": "Rare Items Only",
-            "desc": "Can only equip rare (yellow) items"
-        },
-        {
-            "name": "Magic Items Only",
-            "desc": "Can only equip magic (blue) items"
-        },
-        {
-            "name": "No Potions",
-            "desc": "Wells only — no healing/mana potions"
-        },
-        {
-            "name": "Pacifist",
-            "desc": "No direct attacks — thorns, auras, reflect only"
-        },
-        {
-            "name": "No Rare Items",
-            "desc": "Cannot equip rare (yellow) items"
-        },
-        {
-            "name": "No Unique Items",
-            "desc": "Cannot equip unique (gold) items"
-        },
-        {
-            "name": "No Set Items",
-            "desc": "Cannot equip set (green) items"
-        },
-        {
-            "name": "Cosplay Run",
-            "desc": "Must use items matching a specific theme of your choice"
-        },
-        {
-            "name": "Glass Cannon",
-            "desc": "No defensive stat investment (vit, block, etc.)"
-        },
-        {
-            "name": "No Synergies",
-            "desc": "Cannot invest in skills that synergize with your signature"
-        },
-        {
-            "name": "No Waypoints",
-            "desc": "Must travel on foot; town portals allowed"
-        },
-        {
-            "name": "No Town Portal",
-            "desc": "Only waypoints for travel — no scrolls, no Enigma TP"
-        },
-        {
-            "name": "No Charms",
-            "desc": "Inventory must stay charm-free"
-        },
-        {
-            "name": "No Crafting",
-            "desc": "No Horadric Cube crafting recipes"
-        },
-        {
-            "name": "First Skill Tree Banned",
-            "desc": "Cannot invest in any skill from the first tree"
-        },
-        {
-            "name": "Second Skill Tree Banned",
-            "desc": "Cannot invest in any skill from the second tree"
-        },
-        {
-            "name": "Third Skill Tree Banned",
-            "desc": "Cannot invest in any skill from the third tree"
-        },
-        {
-            "name": "Drop on Level",
-            "desc": "Drop one equipped item every level up"
-        },
-        {
-            "name": "No Repairs",
-            "desc": "Cannot repair gear — replace when broken"
-        },
-        {
-            "name": "No Vendor Trading",
-            "desc": "Cannot buy or sell items to NPCs"
-        },
-        {
-            "name": "No Rejuvenation Potions",
-            "desc": "Cannot use rejuv potions of either size"
-        },
-        {
-            "name": "No Mana Potions",
-            "desc": "Mana recovery from regen/leech only"
-        },
-        {
-            "name": "Same Song on Repeat",
-            "desc": "Pick one song, loop it the whole run"
-        },
-        {
-            "name": "Ethereals Only",
-            "desc": "Only ethereal items may be equipped"
-        },
-        {
-            "name": "No Shields",
-            "desc": "No shields or off-hand items"
-        },
-        {
-            "name": "Bow Only",
-            "desc": "Bows are the only permitted weapon"
-        },
-        {
-            "name": "Shirtless Wonder",
-            "desc": "No chest armor may be equipped"
-        },
-        {
-            "name": "Fisticuffs",
-            "desc": "No main-hand weapon equipped"
-        },
-        {
-            "name": "Wash Yo Feet",
-            "desc": "No boots equipped"
-        },
-        {
-            "name": "Thick Head",
-            "desc": "No helmet equipped"
-        },
-        {
-            "name": "Butterfingers",
-            "desc": "No rings equipped"
-        },
-        {
-            "name": "Bare Knuckle",
-            "desc": "No gloves equipped"
-        },
-        {
-            "name": "Unbelted",
-            "desc": "No belt equipped"
-        },
-        {
-            "name": "Neck Exposed",
-            "desc": "No amulet equipped"
-        },
-        {
-            "name": "Sword Dance",
-            "desc": "Swords only"
-        },
-        {
-            "name": "Axe Murderer",
-            "desc": "Axes only"
-        },
-        {
-            "name": "Mace Face",
-            "desc": "Maces, clubs, and hammers only"
-        },
-        {
-            "name": "Spear Phisher",
-            "desc": "Spears and polearms only"
-        },
-        {
-            "name": "Staff Infection",
-            "desc": "Staves only"
-        },
-        {
-            "name": "Dagger Daddy",
-            "desc": "Daggers only"
-        },
-        {
-            "name": "Wand Aficionado",
-            "desc": "Wands only"
-        },
-        {
-            "name": "Claw Machine",
-            "desc": "Claws only"
-        },
-        {
-            "name": "Throwing Fit",
-            "desc": "Throwing weapons only"
-        },
-        {
-            "name": "Plain Jane",
-            "desc": "White/gray (normal-tier) items only"
-        },
-        {
-            "name": "Perfectionist",
-            "desc": "Only uniques/sets with ≥80% perfection rolls"
-        },
-        {
-            "name": "One-Trick Pony",
-            "desc": "Only the rolled signature skill — no other skill investment"
-        },
-        {
-            "name": "No Passives",
-            "desc": "No weapon/armor/element passive skills"
-        },
-        {
-            "name": "Pre-req Shuffle",
-            "desc": "Every skill capped at exactly 5 points"
-        },
-        {
-            "name": "No Respec",
-            "desc": "Cannot use any respec mechanic"
-        },
-        {
-            "name": "Stat Purist",
-            "desc": "All stat points into Vitality"
-        },
-        {
-            "name": "Stat Dumper",
-            "desc": "All stat points into Energy (yes, even on Barb)"
-        },
-        {
-            "name": "Snail Pace",
-            "desc": "No +Faster Run/Walk gear"
-        },
-        {
-            "name": "Slow Hands",
-            "desc": "No +Increased Attack Speed gear"
-        },
-        {
-            "name": "Molasses",
-            "desc": "None of FRW / IAS / FCR / FHR"
-        },
-        {
-            "name": "Stand Your Ground",
-            "desc": "No movement skills (Teleport, Whirlwind, Vigor, Leap, etc.)"
-        },
-        {
-            "name": "Naked Merc",
-            "desc": "Mercenary wears no gear"
-        },
-        {
-            "name": "Merc Minimum",
-            "desc": "Never upgrade mercenary's starting gear"
-        },
-        {
-            "name": "Lone Wolf",
-            "desc": "Mercenary cannot be revived once killed"
-        },
-        {
-            "name": "Hoarder's Curse",
-            "desc": "Never sell anything to a vendor"
-        },
-        {
-            "name": "Spendthrift",
-            "desc": "Must buy one vendor item per level gained"
-        },
-        {
-            "name": "Pocket Lint",
-            "desc": "Max 10 items in stash at any time"
-        },
-        {
-            "name": "Poverty Pact",
-            "desc": "Gold must stay under 10,000 at all times"
-        },
-        {
-            "name": "No Gheed",
-            "desc": "Never visit Gheed — no gambling, no charm vendor"
-        },
-        {
-            "name": "No Cain",
-            "desc": "No Deckard identifies — scrolls only or raw guesswork"
-        },
-        {
-            "name": "No Chests",
-            "desc": "Every chest / container / body stays closed"
-        },
-        {
-            "name": "Rag Tag",
-            "desc": "Only use gear bought from vendors — no drops"
-        }
-    ],
-    "exclusionGroups": [
-        [
-            "Rare Items Only",
-            "Magic Items Only",
-            "Ethereals Only",
-            "Plain Jane"
-        ],
-        [
-            "Stat Purist",
-            "Stat Dumper",
-            "Glass Cannon"
-        ],
-        [
-            "Bow Only",
-            "Sword Dance",
-            "Axe Murderer",
-            "Mace Face",
-            "Spear Phisher",
-            "Staff Infection",
-            "Dagger Daddy",
-            "Wand Aficionado",
-            "Claw Machine",
-            "Throwing Fit",
-            "Fisticuffs"
-        ]
-    ],
-    "pairConflicts": [
-        [
-            "Rare Items Only",
-            "No Rare Items"
-        ],
-        [
-            "No Vendor Trading",
-            "Spendthrift"
-        ],
-        [
-            "No Vendor Trading",
-            "Rag Tag"
-        ],
-        [
-            "No Mercenary",
-            "Naked Merc"
-        ],
-        [
-            "No Mercenary",
-            "Merc Minimum"
-        ],
-        [
-            "No Mercenary",
-            "Lone Wolf"
-        ],
-        [
-            "One-Trick Pony",
-            "Pre-req Shuffle"
-        ],
-        [
-            "One-Trick Pony",
-            "First Skill Tree Banned"
-        ],
-        [
-            "One-Trick Pony",
-            "Second Skill Tree Banned"
-        ],
-        [
-            "One-Trick Pony",
-            "Third Skill Tree Banned"
-        ],
-        [
-            "Pacifist",
-            "Bow Only"
-        ],
-        [
-            "Pacifist",
-            "Sword Dance"
-        ],
-        [
-            "Pacifist",
-            "Axe Murderer"
-        ],
-        [
-            "Pacifist",
-            "Mace Face"
-        ],
-        [
-            "Pacifist",
-            "Spear Phisher"
-        ],
-        [
-            "Pacifist",
-            "Staff Infection"
-        ],
-        [
-            "Pacifist",
-            "Dagger Daddy"
-        ],
-        [
-            "Pacifist",
-            "Wand Aficionado"
-        ],
-        [
-            "Pacifist",
-            "Claw Machine"
-        ],
-        [
-            "Pacifist",
-            "Throwing Fit"
-        ]
-    ],
-    "treeBans": [
-        "First Skill Tree Banned",
-        "Second Skill Tree Banned",
-        "Third Skill Tree Banned"
-    ]
+  "challenges": [
+    {"name":"No Runewords","desc":"Cannot create or use runewords"},
+    {"name":"No Teleport","desc":"Teleport skill and Enigma are forbidden"},
+    {"name":"SSF","desc":"Solo self-found — no trading, no outside help"},
+    {"name":"No Mercenary","desc":"Adventure alone, no hireling"},
+    {"name":"Walking Only","desc":"Toggle run off, walk everywhere"},
+    {"name":"Rare Items Only","desc":"Can only equip rare (yellow) items"},
+    {"name":"Magic Items Only","desc":"Can only equip magic (blue) items"},
+    {"name":"No Potions","desc":"Wells only — no healing/mana potions"},
+    {"name":"Pacifist","desc":"No direct attacks — thorns, auras, reflect only"},
+    {"name":"No Rare Items","desc":"Cannot equip rare (yellow) items"},
+    {"name":"No Unique Items","desc":"Cannot equip unique (gold) items"},
+    {"name":"No Set Items","desc":"Cannot equip set (green) items"},
+    {"name":"Cosplay Run","desc":"Must use items matching a specific theme of your choice"},
+    {"name":"Glass Cannon","desc":"No defensive stat investment (vit, block, etc.)"},
+    {"name":"No Synergies","desc":"Cannot invest in skills that synergize with your signature"},
+    {"name":"No Waypoints","desc":"Must travel on foot; town portals allowed"},
+    {"name":"No Town Portal","desc":"Only waypoints for travel — no scrolls, no Enigma TP"},
+    {"name":"No Charms","desc":"Inventory must stay charm-free"},
+    {"name":"No Crafting","desc":"No Horadric Cube crafting recipes"},
+    {"name":"First Skill Tree Banned","desc":"Cannot invest in any skill from the first tree"},
+    {"name":"Second Skill Tree Banned","desc":"Cannot invest in any skill from the second tree"},
+    {"name":"Third Skill Tree Banned","desc":"Cannot invest in any skill from the third tree"},
+    {"name":"Drop on Level","desc":"Drop one equipped item every level up"},
+    {"name":"No Repairs","desc":"Cannot repair gear — replace when broken"},
+    {"name":"No Vendor Trading","desc":"Cannot buy or sell items to NPCs"},
+    {"name":"No Rejuvenation Potions","desc":"Cannot use rejuv potions of either size"},
+    {"name":"No Mana Potions","desc":"Mana recovery from regen/leech only"},
+    {"name":"Same Song on Repeat","desc":"Pick one song, loop it the whole run"},
+    {"name":"Ethereals Only","desc":"Only ethereal items may be equipped"},
+    {"name":"No Shields","desc":"No shields or off-hand items"},
+    {"name":"Bow Only","desc":"Bows are the only permitted weapon"},
+    {"name":"Shirtless Wonder","desc":"No chest armor may be equipped"},
+    {"name":"Fisticuffs","desc":"No main-hand weapon equipped"},
+    {"name":"Wash Yo Feet","desc":"No boots equipped"},
+    {"name":"Thick Head","desc":"No helmet equipped"},
+    {"name":"Butterfingers","desc":"No rings equipped"},
+    {"name":"Bare Knuckle","desc":"No gloves equipped"},
+    {"name":"Unbelted","desc":"No belt equipped"},
+    {"name":"Neck Exposed","desc":"No amulet equipped"},
+    {"name":"Sword Dance","desc":"Swords only"},
+    {"name":"Axe Murderer","desc":"Axes only"},
+    {"name":"Mace Face","desc":"Maces, clubs, and hammers only"},
+    {"name":"Spear Phisher","desc":"Spears and polearms only"},
+    {"name":"Staff Infection","desc":"Staves only"},
+    {"name":"Dagger Daddy","desc":"Daggers only"},
+    {"name":"Wand Aficionado","desc":"Wands only"},
+    {"name":"Claw Machine","desc":"Claws only"},
+    {"name":"Throwing Fit","desc":"Throwing weapons only"},
+    {"name":"Plain Jane","desc":"White/gray (normal-tier) items only"},
+    {"name":"Perfectionist","desc":"Only uniques/sets with ≥80% perfection rolls"},
+    {"name":"One-Trick Pony","desc":"Only the rolled signature skill — no other skill investment"},
+    {"name":"No Passives","desc":"No weapon/armor/element passive skills"},
+    {"name":"Pre-req Shuffle","desc":"Every skill capped at exactly 5 points"},
+    {"name":"No Respec","desc":"Cannot use any respec mechanic"},
+    {"name":"Stat Purist","desc":"All stat points into Vitality"},
+    {"name":"Stat Dumper","desc":"All stat points into Energy (yes, even on Barb)"},
+    {"name":"Snail Pace","desc":"No +Faster Run/Walk gear"},
+    {"name":"Slow Hands","desc":"No +Increased Attack Speed gear"},
+    {"name":"Molasses","desc":"None of FRW / IAS / FCR / FHR"},
+    {"name":"Stand Your Ground","desc":"No movement skills (Teleport, Whirlwind, Vigor, Leap, etc.)"},
+    {"name":"Naked Merc","desc":"Mercenary wears no gear"},
+    {"name":"Merc Minimum","desc":"Never upgrade mercenary's starting gear"},
+    {"name":"Lone Wolf","desc":"Mercenary cannot be revived once killed"},
+    {"name":"Hoarder's Curse","desc":"Never sell anything to a vendor"},
+    {"name":"Spendthrift","desc":"Must buy one vendor item per level gained"},
+    {"name":"Pocket Lint","desc":"Max 10 items in stash at any time"},
+    {"name":"Poverty Pact","desc":"Gold must stay under 10,000 at all times"},
+    {"name":"No Gheed","desc":"Never visit Gheed — no gambling, no charm vendor"},
+    {"name":"No Cain","desc":"No Deckard identifies — scrolls only or raw guesswork"},
+    {"name":"No Chests","desc":"Every chest / container / body stays closed"},
+    {"name":"Rag Tag","desc":"Only use gear bought from vendors — no drops"}
+  ],
+  "exclusionGroups": [
+    ["Rare Items Only","Magic Items Only","Ethereals Only","Plain Jane"],
+    ["Stat Purist","Stat Dumper","Glass Cannon"],
+    ["Bow Only","Sword Dance","Axe Murderer","Mace Face","Spear Phisher","Staff Infection","Dagger Daddy","Wand Aficionado","Claw Machine","Throwing Fit","Fisticuffs"]
+  ],
+  "pairConflicts": [
+    ["Rare Items Only","No Rare Items"],
+    ["No Vendor Trading","Spendthrift"],
+    ["No Vendor Trading","Rag Tag"],
+    ["No Mercenary","Naked Merc"],
+    ["No Mercenary","Merc Minimum"],
+    ["No Mercenary","Lone Wolf"],
+    ["One-Trick Pony","Pre-req Shuffle"],
+    ["One-Trick Pony","First Skill Tree Banned"],
+    ["One-Trick Pony","Second Skill Tree Banned"],
+    ["One-Trick Pony","Third Skill Tree Banned"],
+    ["Pacifist","Bow Only"],
+    ["Pacifist","Sword Dance"],
+    ["Pacifist","Axe Murderer"],
+    ["Pacifist","Mace Face"],
+    ["Pacifist","Spear Phisher"],
+    ["Pacifist","Staff Infection"],
+    ["Pacifist","Dagger Daddy"],
+    ["Pacifist","Wand Aficionado"],
+    ["Pacifist","Claw Machine"],
+    ["Pacifist","Throwing Fit"]
+  ],
+  "treeBans": ["First Skill Tree Banned","Second Skill Tree Banned","Third Skill Tree Banned"]
 }
