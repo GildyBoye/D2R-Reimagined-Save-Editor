@@ -1399,6 +1399,12 @@ const AUTOSAVE_DELAY_MS = 2500;
 const AUTOSAVE_HANDLE_DB = 'd2rr-editor';
 const AUTOSAVE_HANDLE_STORE = 'handles';
 let _autoSaveEnabled = false;
+// Auto-load (separate from auto-save): when on, the external-change detector
+// runs on focus AND on a polling timer, reloading any kind whose on-disk mtime
+// advanced past _lastSeenMtime. Both toggles share _fileHandles for I/O.
+let _autoLoadEnabled = false;
+let _autoLoadPollTimer = null;
+const AUTOLOAD_POLL_MS = 2500;
 // Order: char → sharedStash → grail → vault (how they render in Advanced Options)
 const _autoSaveTimers = { char: null, sharedStash: null, grail: null, vault: null };
 const _fileHandles    = { char: null, sharedStash: null, grail: null, vault: null };
@@ -4514,6 +4520,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // gets a clean slate and must re-load each file + reconfigure auto-save
   // targets explicitly — matches the "advanced option" intent.
   _autoSaveEnabled = false;
+  _autoLoadEnabled = false;
   try { localStorage.removeItem('autoSaveEnabled'); }
   catch (e) { /* best-effort: localStorage may be disabled */ }
   const dropZone = document.getElementById('dropZone');
@@ -5812,6 +5819,7 @@ function _doReset() {
   // later requires explicitly re-loading each file. Ensures no stale data
   // can be silently saved to the wrong target.
   setAutoSaveEnabled(false);
+  setAutoLoadEnabled(false);
 
   // Clear aux file state so their tabs start empty next time the user visits them
   vaultD2i = null;
@@ -7467,6 +7475,28 @@ window.openAdvancedOptions = function() {
   const canFlip = hasChar || autoOn;
   const showHint = !hasChar && !autoOn;
 
+  const loadOn = _autoLoadEnabled;
+  const autoLoadRow = hasFSA
+    ? `<label style="display:flex;align-items:center;gap:10px;
+                     cursor:${canFlip ? 'pointer' : 'not-allowed'};
+                     opacity:${canFlip ? '1' : '0.55'};
+                     padding:10px 12px;margin-top:10px;border:1px solid var(--d2-border);
+                     border-radius:2px;background:var(--d2-surface2)">
+         <input type="checkbox" id="autoLoadToggle" ${loadOn ? 'checked' : ''}
+                ${canFlip ? '' : 'disabled'}
+                onchange="onAutoLoadToggleChange(this)">
+         <span style="flex:1">
+           <div style="color:var(--d2-gold);font-family:'Cinzel',serif;
+                       font-size:11px;letter-spacing:1px;margin-bottom:4px">
+             ${esc(L('ui_adv_autoload_title', 'Auto-load'))}
+           </div>
+           <div style="color:var(--d2-text-dim);font-size:11px">
+             ${esc(L('ui_adv_autoload_desc','Reload loaded files from disk when an external change is detected (e.g. the game writes a save). Polls every few seconds; clean reload, prompts when local edits are pending.'))}
+           </div>
+         </span>
+       </label>`
+    : '';
+
   const toggleRow = hasFSA
     ? `<label style="display:flex;align-items:center;gap:10px;
                      cursor:${canFlip ? 'pointer' : 'not-allowed'};
@@ -7486,7 +7516,7 @@ window.openAdvancedOptions = function() {
            </div>
            ${showHint ? `<div style="color:#c8a030;font-size:10px;margin-top:6px;font-style:italic">${esc(needCharMsg)}</div>` : ''}
          </span>
-       </label>`
+       </label>${autoLoadRow}`
     : `<div style="padding:10px 12px;border:1px solid var(--d2-border);border-radius:2px;
                    background:var(--d2-surface2);color:var(--d2-text-dim);font-size:11px">
          ${esc(L('ui_adv_autosave_unavailable','Auto-save requires File System Access API (Chrome, Edge, or Brave).'))}
@@ -7652,6 +7682,17 @@ window.clearSpriteCache = async function(ev) {
 };
 
 // Called when the checkbox flips. Turning OFF is free; turning ON shows the
+// Auto-load is non-destructive (it overwrites in-memory state, prompts on
+// dirty buffers), so no warning gate — just flip the flag.
+window.onAutoLoadToggleChange = function(checkbox) {
+  setAutoLoadEnabled(!!checkbox.checked);
+  setStatus(checkbox.checked
+    ? L('ui_autoload_enabled', 'Auto-load enabled — watching loaded files for external changes.')
+    : L('ui_autoload_disabled', 'Auto-load disabled.'),
+    checkbox.checked ? 'ready' : 'loaded');
+  _refreshAdvancedOptionsDialog();
+};
+
 // confirmation warning and, on confirm, prompts for handles for any loaded
 // kind that doesn't already have one — using the confirm-click gesture.
 window.onAutoSaveToggleChange = function(checkbox) {
@@ -7799,6 +7840,18 @@ function setAutoSaveEnabled(on) {
   updateSaveButton();
 }
 
+// Auto-load: gates the external-change detector and runs an active poll so
+// changes are picked up even while the editor stays focused.
+function setAutoLoadEnabled(on) {
+  _autoLoadEnabled = !!on;
+  if (_autoLoadPollTimer) { clearInterval(_autoLoadPollTimer); _autoLoadPollTimer = null; }
+  if (_autoLoadEnabled) {
+    _autoLoadPollTimer = setInterval(() => {
+      checkExternalFileChanges().catch(err => _logCaught('autoLoadPoll', err));
+    }, AUTOLOAD_POLL_MS);
+  }
+}
+
 // ── External file-change detection ──
 // When the user alt-tabs away to play D2R and comes back, the save file on
 // disk may have been rewritten by the game. Compare each handle's current
@@ -7934,6 +7987,7 @@ async function _handleExternalChange(kind, file) {
 // visibilitychange (user returning from another app/tab) and a one-shot
 // after DOM ready if handles were rehydrated.
 async function checkExternalFileChanges() {
+  if (!_autoLoadEnabled) return;
   if (!('showSaveFilePicker' in window)) return;
   for (const kind of ['char', 'sharedStash', 'grail', 'vault']) {
     const handle = _fileHandles[kind];
@@ -15499,16 +15553,13 @@ let sharedStashParsed = null; // { gold, tabs:[{jmOff, count, items:[]}] }
 let sharedStashOpenTab = '';  // id of expanded tab; '' = none. Ids are e.g. 't0' for regular tab 0, or 's5_gems'/'s5_runes'/'s5_mats' for the virtual sub-tabs of specialty section 5.
 
 function renderSharedStash(c) {
-  // Intro line uses a {d2i} token that gets replaced with `<code>.d2i</code>` after escaping the rest.
-  const introRaw = L('ui_ss_intro','Load a {d2i} shared stash file to view and edit its contents. This is separate from the character save — it stores items across all characters.\nIf a shared stash is loaded, Grail import will search it too.');
-  const introHtml = esc(introRaw).replace('{d2i}', '<code>.d2i</code>').replace(/\n/g, '<br>');
   c.innerHTML = `
-    <div style="padding:20px;max-width:700px;margin:0 auto">
-      <h2 style="color:var(--d2-gold);font-family:'Cinzel',serif;margin:0 0 16px">${esc(L('ui_tab_shared_stash','Shared Stash'))}</h2>
-      <div style="color:var(--d2-text-dim);margin-bottom:16px">
-        ${introHtml}
+    <div style="padding:20px;max-width:760px;margin:0 auto">
+      <h2 style="color:var(--d2-gold);font-family:'Cinzel',serif;margin:0 0 12px">${esc(L('ui_tab_shared_stash','Shared Stash'))}</h2>
+      <div style="margin-bottom:14px;padding:10px 14px;border-left:3px solid var(--d2-gold);background:rgba(200,160,48,0.06);font-size:12px;color:var(--d2-text-dim);line-height:1.55">
+        ${esc(L('ui_ss_tip','Only a Shared Stash .d2i file is needed on this page — no character save required. The shared stash is separate from any individual character; items here are accessible across every character in the same realm. If one is loaded, Grail import and the Vault source panel will both pull from it.'))}
       </div>
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap">
         <button type="button" class="btn btn-primary" style="margin:0" onclick="openAuxFileForKind('sharedStash')">
           ${esc(L('ui_ss_browse_btn','Browse .d2i'))}
         </button>
@@ -16875,7 +16926,10 @@ function renderGrail(c) {
   const grailHasItems = !!grailD2i && (grailParsed?.tabs || []).some(t => (t.items || []).length > 0);
 
   let html = `<div style="padding:20px;max-width:800px;margin:0 auto">
-    <h2 style="color:var(--d2-gold);font-family:'Cinzel',serif;margin:0 0 16px">${esc(L('ui_grail_heading','Holy Grail'))}</h2>
+    <h2 style="color:var(--d2-gold);font-family:'Cinzel',serif;margin:0 0 12px">${esc(L('ui_grail_heading','Holy Grail'))}</h2>
+    <div style="margin-bottom:14px;padding:10px 14px;border-left:3px solid var(--d2-gold);background:rgba(200,160,48,0.06);font-size:12px;color:var(--d2-text-dim);line-height:1.55">
+      ${esc(L('ui_grail_tip','Only a Grail.d2i file is needed on this page — no character save required. Load Grail .d2i to track progress, then use "Copy Items to Grail" while a character / shared stash is loaded to import their uniques and sets in one click.'))}
+    </div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
       <button class="btn btn-primary" onclick="openAuxFileForKind('grail')">${esc(L('ui_grail_load_btn','Load Grail .d2i'))}</button>
       <input type="file" accept=".d2i" id="grailFileInput" style="display:none" onchange="loadGrailFile(this.files[0])">
@@ -18208,25 +18262,47 @@ function parseVaultItems(buf, jmOffset, itemPageIds) {
     }
   }
 
+  // Filter phantom scan hits: the byte-pattern scanner picks up false positives
+  // inside items' stat bits (e.g. Reimagined uniques carrying item_skillonlevelup
+  // + passive_*_mastery; Knell-class rings). Walk in offset order, decode each
+  // accepted item's true end via decodeItemProperties, and drop any subsequent
+  // scan hit that lands inside that range. Without this, a single phantom
+  // throws off the pageId parallel-array alignment and ALL items collapse onto
+  // tab 0.
+  found.sort((a, b) => a.byteOffset - b.byteOffset);
+  const realFound = [];
+  let acceptedEndByte = 0;
+  for (const it of found) {
+    if (it.byteOffset < acceptedEndByte) continue;
+    realFound.push(it);
+    try {
+      const ext = decodeItemProperties(buf, it.byteOffset, it);
+      acceptedEndByte = (ext && ext.endBit && !ext.simple && !ext.decodeError)
+        ? it.byteOffset + Math.ceil((ext.endBit + 1) / 8)
+        : it.byteOffset + 1;
+    } catch (e) {
+      acceptedEndByte = it.byteOffset + 1;
+    }
+  }
+
   // Attach raw bytes per item so we can round-trip without a full re-encoder.
   // Byte range = from this item's offset to the next one (or end of file).
-  // Also pair each item with its vault pageId from the parallel array.
-  found.sort((a, b) => a.byteOffset - b.byteOffset);
+  // PageIds assigned positionally — items beyond the metadata array (legacy
+  // .d2i files without VLT metadata, or under-count edge cases) default to 0.
   const pageIds = Array.isArray(itemPageIds) ? itemPageIds : [];
-  const pageIdsMatch = pageIds.length === found.length;
-  for (let i = 0; i < found.length; i++) {
-    const start = found[i].byteOffset;
-    const end   = (i + 1 < found.length) ? found[i+1].byteOffset : buf.length;
-    found[i]._vaultRawBytes = buf.slice(start, end);
-    found[i].pageId = pageIdsMatch ? (pageIds[i] | 0) : 0;
+  for (let i = 0; i < realFound.length; i++) {
+    const start = realFound[i].byteOffset;
+    const end   = (i + 1 < realFound.length) ? realFound[i+1].byteOffset : buf.length;
+    realFound[i]._vaultRawBytes = buf.slice(start, end);
+    realFound[i].pageId = (i < pageIds.length) ? (pageIds[i] | 0) : 0;
   }
-  if (found.length !== count) {
-    console.warn(`Vault item count mismatch: header says ${count}, scanner found ${found.length}`);
+  if (realFound.length !== count) {
+    console.warn(`Vault item count mismatch: header says ${count}, accepted ${realFound.length} after phantom filter (raw scan: ${found.length})`);
   }
-  if (pageIds.length && !pageIdsMatch) {
-    console.warn(`Vault pageId array length (${pageIds.length}) != item count (${found.length}); defaulting to page 0`);
+  if (pageIds.length && pageIds.length !== realFound.length) {
+    console.warn(`Vault pageId array length (${pageIds.length}) != accepted item count (${realFound.length}); items beyond the array default to page 0`);
   }
-  return found;
+  return realFound;
 }
 
 window.loadVaultFile = function(file) {
@@ -19519,6 +19595,9 @@ function renderVault(c) {
         <button class="btn btn-primary" onclick="openAuxFileForKind('vault')">${esc(L('ui_vault_load_btn','Load Vault .d2i'))}</button>
         <input type="file" accept=".d2i" id="vaultFileInput" style="display:none" onchange="loadVaultFile(this.files[0])">
         <span style="color:var(--d2-text-dim);font-size:12px;flex:1">${fileInfo}</span>
+      </div>
+      <div style="margin-bottom:14px;padding:10px 14px;max-width:760px;border-left:3px solid var(--d2-gold);background:rgba(200,160,48,0.06);font-size:12px;color:var(--d2-text-dim);line-height:1.55">
+        ${esc(L('ui_vault_tip','Only a Vault.d2i file is needed on this page. The source panel pulls items from a character / shared stash if loaded on their own tabs, but the vault itself works standalone — drag items between the source and the grid, switch pages on the right, save when done.'))}
       </div>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
         <button class="btn btn-primary" onclick="saveVaultFile()" ${loaded ? '' : 'disabled'}>${esc(L('ui_vault_save_btn','Save Vault .d2i'))}</button>
