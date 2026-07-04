@@ -13197,10 +13197,17 @@ function _itemEditBuildSkillOptions(kind) {
     ).join('');
   }
   if (kind === 'skilltab') {
-    const total = CLASS_NAMES.length * 3;
-    return Array.from({ length: total }, (_, idx) =>
-      `<option value="${idx}">${esc(CLASS_NAMES[Math.floor(idx / 3)])} — ${esc(getSkillTabName(idx))}</option>`
-    ).join('');
+    // Reimagined packs the param as classIdx*8 + localTab (not classIdx*3+localTab).
+    // descfunc 14 unpacks via /8 and %8, so the option value MUST match that
+    // layout or the in-game tooltip resolves to the wrong class/tab.
+    const opts = [];
+    for (let c = 0; c < CLASS_NAMES.length; c++) {
+      for (let t = 0; t < 3; t++) {
+        const param = c * 8 + t;
+        opts.push(`<option value="${param}">${esc(CLASS_NAMES[c])} — ${esc(getSkillTabName(c * 3 + t))}</option>`);
+      }
+    }
+    return opts.join('');
   }
   return '';
 }
