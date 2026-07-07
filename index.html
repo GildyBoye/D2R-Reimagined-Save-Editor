@@ -11916,6 +11916,7 @@ function decodeItemProperties(buf, byteOff, item) {
     if(isArm)bit+=11;
     if(isArm||isWep){const md=rbL(bit,8);bit+=8;if(md>0)bit+=10;}  // D2R V105: curDur is 10 bits
     if(STACK_SET.has(code))bit+=9;
+    r.numSocketsBitOff = bit;  // 4-bit numSockets field lives here (or would, if socketed=1)
     if(item.socketed)bit+=4;
     let sbf=0;if(q===5){sbf=rbL(bit,5);bit+=5;}
     const _mainList=_readPropList(buf,byteOff,bit);
@@ -12878,7 +12879,7 @@ function _itemEditEncodePropList(mods) {
 // bit offset. `qualityChange` is null for value-only edits or for items
 // that already carry a quality block; for promotions it carries the new
 // quality nibble (4) or (6) and the bits to insert at qualityBlockStartBit.
-function _itemEditSpliceItemBytes(oldItemBytes, ext, newPropBits, qualityChange, item) {
+function _itemEditSpliceItemBytes(oldItemBytes, ext, newPropBits, qualityChange, item, socketChange) {
   const oldTotalBits = oldItemBytes.length * 8;
   const allBits = [];
   const pushRange = (from, to) => {
@@ -12889,23 +12890,61 @@ function _itemEditSpliceItemBytes(oldItemBytes, ext, newPropBits, qualityChange,
   const pushVal = (val, n) => {
     for (let i = 0; i < n; i++) allBits.push((val >> i) & 1);
   };
+  // Socket-flag override: bit 11 = 1 when the new count > 0. Copies the raw
+  // bit from oldItemBytes unless socketChange asks for a different state.
+  const pushBitAt = (bitPos) => {
+    if (socketChange && bitPos === 11) {
+      allBits.push(socketChange.newCount > 0 ? 1 : 0);
+    } else {
+      allBits.push((oldItemBytes[bitPos >> 3] >> (bitPos & 7)) & 1);
+    }
+  };
+  const pushRangeWithFlagOverride = (from, to) => {
+    if (socketChange && from <= 11 && to > 11) {
+      pushRange(from, 11);
+      pushBitAt(11);
+      pushRange(12, to);
+    } else {
+      pushRange(from, to);
+    }
+  };
+
+  // Compute where the header ends (start of prop list) and where the
+  // numSockets 4-bit field lives. socketChange rewrites the flag bit + this
+  // field: insert 4 bits if old was 0-sockets, delete 4 bits if new is 0.
+  const headerEnd    = ext.mainPropListStartBit;
+  const socketFldOff = (socketChange && typeof ext.numSocketsBitOff === 'number') ? ext.numSocketsBitOff : -1;
+  const oldSocketed  = !!(item && item.socketed);
+  const oldSocketEnd = oldSocketed ? socketFldOff + 4 : socketFldOff;
 
   if (qualityChange) {
     // Header up to (but not including) the 4-bit quality nibble.
-    pushRange(0, ext.qualityBitOff);
+    pushRangeWithFlagOverride(0, ext.qualityBitOff);
     // New quality nibble.
     pushVal(qualityChange.newQuality, 4);
     // Header from after the nibble to where the quality block lives. This
     // captures the multi-pic-gfx and class-info flag-prefixed sections —
     // dynamic-length, must be preserved bit-for-bit.
-    pushRange(ext.qualityBitOff + 4, ext.qualityBlockStartBit);
+    pushRangeWithFlagOverride(ext.qualityBitOff + 4, ext.qualityBlockStartBit);
     // Inject the new quality block bits (zero-filled prefix/suffix/etc. for
     // a fresh promotion — properties live in the prop list, not affixes).
     for (const b of qualityChange.newQualityBlockBits) allBits.push(b ? 1 : 0);
-    // Header from after the OLD quality block to the start of the prop list.
-    pushRange(ext.qualityBlockEndBit, ext.mainPropListStartBit);
+    // Header from after the OLD quality block to the start of the prop list,
+    // splicing the socket field if changed.
+    if (socketChange && socketFldOff >= ext.qualityBlockEndBit) {
+      pushRange(ext.qualityBlockEndBit, socketFldOff);
+      if (socketChange.newCount > 0) pushVal(socketChange.newCount, 4);
+      pushRange(oldSocketEnd, headerEnd);
+    } else {
+      pushRange(ext.qualityBlockEndBit, headerEnd);
+    }
+  } else if (socketChange && socketFldOff >= 0) {
+    // Just a socket edit — splice the flag bit and the 4-bit count field.
+    pushRangeWithFlagOverride(0, socketFldOff);
+    if (socketChange.newCount > 0) pushVal(socketChange.newCount, 4);
+    pushRange(oldSocketEnd, headerEnd);
   } else {
-    pushRange(0, ext.mainPropListStartBit);
+    pushRange(0, headerEnd);
   }
   // New main property list.
   for (const b of newPropBits) allBits.push(b ? 1 : 0);
@@ -13019,15 +13058,45 @@ function _itemEditIsFollowerStat(id) {
   return false;
 }
 
-// Stats whose binary encoding REQUIRES inline follower values (elemental
-// damage min always followed by max; cold/poison also carry length). The
-// simple Add UI only collects one value, so adding a follow-parent without
-// also setting its followers produces "fire damage 10-0" garbage. Until
-// the UI grows a dual-value form, hide these from the dropdown — existing
-// follow stats already on items can still be edited (their value2/value3
-// are decoded and round-tripped by the splicer).
+// Follower-parent stats (elemental damage min → max, cold/poison length) are
+// allowed in the Add list. The commit path seeds value2 = value (min=max) so
+// the initial mod isn't nonsense; the row renderer exposes min/max/[frames]
+// inputs for user tuning after Add.
 function _itemEditHasFollowers(id) {
   return id >= 0 && id < FOLLOW_STATS.length && FOLLOW_STATS[id] > 0;
+}
+
+// Look up the base item's socket cap from armor.txt / weapons.txt gemsockets.
+// Returns 0 for items that can't be socketed at all (misc, potions, etc.).
+function _baseGemsockets(typeCode) {
+  const code = (typeCode || '').trim();
+  if (!code) return 0;
+  const armor  = baseData && baseData['armor'];
+  const weapon = baseData && baseData['weapons'];
+  const findIn = (data) => {
+    if (!data || !data.rows) return null;
+    const row = data.rows.find(r => (r['code'] || '').trim() === code);
+    return row ? parseInt(row['gemsockets'] || '0', 10) || 0 : null;
+  };
+  const a = findIn(armor); if (a !== null) return a;
+  const w = findIn(weapon); if (w !== null) return w;
+  return 0;
+}
+
+// Count socketed children (parent=6) currently attached to this item so the
+// socket-count minimum can't drop below what's already inside.
+function _countSocketedChildren(item) {
+  if (!item) return 0;
+  const items = (parsedChar && parsedChar.items) || [];
+  const idx = items.indexOf(item);
+  if (idx < 0) return 0;
+  let count = 0;
+  for (let j = idx + 1; j < items.length; j++) {
+    const next = items[j];
+    if (next.parent !== 6) break;
+    count++;
+  }
+  return count;
 }
 
 // Build the set of stat IDs the open item could legally roll, classified by
@@ -13079,7 +13148,6 @@ function _itemEditAddableStatsForItem(item) {
     if (!meta.saveBits) continue;
     if (meta.saveParamBits > 0) continue;
     if (_itemEditIsFollowerStat(meta.id)) continue;
-    if (_itemEditHasFollowers(meta.id)) continue;
     if (_itemEditIsBlockedStat(name)) continue;
     // Require a display descriptor (descfunc != 0). Stats without one are
     // engine-internal — instance state, character-only stats, hidden flags.
@@ -13323,11 +13391,20 @@ window.openItemEditor = function(byteOffset) {
 
   // Stash the editor state on the global so the dialog handlers (Apply,
   // Add, Remove) can mutate it across re-renders.
+  // Socket state: floor is what's already inside (can't yank runes/gems by
+  // shrinking), ceiling is the base's gemsockets cap. Runewords are locked
+  // (their socket count is baked into the runeword definition).
+  const socketFloor = _countSocketedChildren(item);
+  const socketMax   = _baseGemsockets(item.typeCode);
+  const socketOrig  = item.numSockets | 0;
   _itemEditState = {
     item, buf, ext,
     mods: mods.map(m => ({ ...m })),  // working copy — values get edited, entries removed/added
     addable: _itemEditAddableStatsForItem(item),
     addOpen: false,                    // toggled by the green + button
+    socketOrig, socketFloor, socketMax,
+    socketCount: socketOrig,           // user-editable; write-back read from the input on Apply
+    socketLocked: !!item.runeword,
   };
   _renderItemEditDialog();
 };
@@ -13838,11 +13915,36 @@ function _renderItemEditDialog() {
             onclick="_itemEditOpenAdd()">+</button>
   </div>`;
 
+  // Socket-editor row. Hidden entirely for items whose base has 0 gemsockets
+  // (rings, amulets, most misc). Locked read-only for runewords.
+  let socketsRow = '';
+  if (state.socketMax > 0) {
+    if (state.socketLocked) {
+      socketsRow = `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;margin-bottom:10px;border:1px solid var(--d2-border);border-radius:2px;background:var(--d2-surface2);font-size:12px;opacity:0.75">
+        <span style="color:var(--d2-gold);font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;min-width:80px">${esc(L('ui_edit_sockets','SOCKETS'))}</span>
+        <span style="color:var(--d2-text)">${state.socketOrig}</span>
+        <span style="color:var(--d2-text-dim);font-size:11px;font-style:italic">${esc(L('ui_edit_sockets_runeword','Locked — runeword socket count is fixed'))}</span>
+      </div>`;
+    } else {
+      const floorNote = state.socketFloor > 0
+        ? Lfmt('ui_edit_sockets_floor','minimum {n} — remove socketed runes/gems to shrink below', { n: state.socketFloor })
+        : L('ui_edit_sockets_help','0 removes the socketed flag entirely');
+      socketsRow = `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;margin-bottom:10px;border:1px solid var(--d2-border);border-radius:2px;background:var(--d2-surface2);font-size:12px">
+        <span style="color:var(--d2-gold);font-family:'Cinzel',serif;font-size:11px;letter-spacing:1px;min-width:80px">${esc(L('ui_edit_sockets','SOCKETS'))}</span>
+        <input type="number" id="itemEditSockets" value="${state.socketCount}" min="${state.socketFloor}" max="${state.socketMax}"
+               onchange="_itemEditClampInput(this)"
+               style="width:64px;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-gold-bright);font-family:'Crimson Text',serif;font-size:13px;padding:3px 6px;text-align:center">
+        <span style="color:var(--d2-text-dim);font-size:11px;font-style:italic">${esc(Lfmt('ui_edit_sockets_range','range {min}…{max} · {note}', { min: state.socketFloor, max: state.socketMax, note: floorNote }))}</span>
+      </div>`;
+    }
+  }
+
   showDialog({
     title:    L('ui_edit_title','Edit Item Properties'),
     titleTone:'gold',
     maxWidth: 'min(640px, 92vw)',
     bodyHtml: `<div style="text-align:left">
+      ${socketsRow}
       <div style="max-height:42vh;overflow-y:auto;border:1px solid var(--d2-border);background:var(--d2-surface2);border-radius:2px">
         ${rows}
         ${addRow}
@@ -14056,8 +14158,14 @@ function _itemEditCommitPendingAdd(state) {
   const isSkill   = !!meta._skillKind;
   const paramBits = isSkill ? (meta.paramBits || 0) : 0;
   const param     = isSkill && skillSel ? (parseInt(skillSel.value, 10) || 0) : 0;
+  // Follower-parent stats (firemindam → firemaxdam, coldmindam → coldmaxdam →
+  // coldlength, etc.) need value2/value3 populated so a freshly-added mod
+  // isn't "min N max 0". Default max = min; length = 0 (user edits in row).
+  const followCount = (id >= 0 && id < FOLLOW_STATS.length) ? FOLLOW_STATS[id] : 0;
+  const value2 = followCount >= 1 ? value : undefined;
+  const value3 = followCount >= 2 ? 0     : undefined;
   state.mods.push({
-    id, param, value, value2: undefined, value3: undefined,
+    id, param, value, value2, value3,
     stored: value + meta.saveAdd,
     valueBits: meta.saveBits, paramBits,
     paramBitOff: -1, valueBitOff: -1,  // unused — re-encoder doesn't need them
@@ -14332,14 +14440,31 @@ function _applyItemEditsInner(state) {
     }
   }
 
+  // Read the socket input (if the row was rendered) and build a socketChange
+  // when it moved. Clamped to [floor, max] defensively even though the input
+  // already carries min/max attrs.
+  let socketChange = null;
+  if (state.socketMax > 0 && !state.socketLocked) {
+    const el = document.getElementById('itemEditSockets');
+    if (el) {
+      const raw = parseInt(el.value, 10);
+      const clamped = Math.max(state.socketFloor, Math.min(state.socketMax, isNaN(raw) ? state.socketOrig : raw));
+      if (clamped !== state.socketOrig) socketChange = { newCount: clamped };
+    }
+  }
+
   // Encode new main property list and splice.
   let newItemBytes;
   try {
     const newPropBits = _itemEditEncodePropList(state.mods);
-    newItemBytes = _itemEditSpliceItemBytes(oldItemBytes, ext, newPropBits, qualityChange, item);
+    newItemBytes = _itemEditSpliceItemBytes(oldItemBytes, ext, newPropBits, qualityChange, item, socketChange);
   } catch (err) {
     showPopup(Lfmt('ui_edit_encode_failed','Failed to re-encode item: {msg}', { msg: err.message || err }));
     return;
+  }
+  if (socketChange) {
+    item.numSockets = socketChange.newCount;
+    item.socketed   = socketChange.newCount > 0;
   }
 
   _itemEditReplaceItemBytes(item, newItemBytes);
