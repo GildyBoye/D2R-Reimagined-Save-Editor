@@ -13058,14 +13058,6 @@ function _itemEditIsFollowerStat(id) {
   return false;
 }
 
-// Follower-parent stats (elemental damage min → max, cold/poison length) are
-// allowed in the Add list. The commit path seeds value2 = value (min=max) so
-// the initial mod isn't nonsense; the row renderer exposes min/max/[frames]
-// inputs for user tuning after Add.
-function _itemEditHasFollowers(id) {
-  return id >= 0 && id < FOLLOW_STATS.length && FOLLOW_STATS[id] > 0;
-}
-
 // Look up the base item's socket cap from armor.txt / weapons.txt gemsockets.
 // Returns 0 for items that can't be socketed at all (misc, potions, etc.).
 function _baseGemsockets(typeCode) {
