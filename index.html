@@ -1511,6 +1511,15 @@ function fetchTimed(url, ms=12000) {
     .catch(err => { clearTimeout(timer); throw err; });
 }
 
+async function fetchFirstSource(file, sources) {
+  let lastErr;
+  for (const [url, tag, ms] of sources) {
+    try { return { res: await fetchTimed(url + file, ms), tag }; }
+    catch (err) { lastErr = err; }
+  }
+  throw lastErr;
+}
+
 // ── Fallback base path (local copies bundled alongside index.html) ──
 const BASE_FALLBACK_URL  = './base/';
 const STR_FALLBACK_URL   = './base/strings/';
@@ -1586,10 +1595,13 @@ async function startBaseFileLoad() {
     const file = ALL_FILES[i];
     document.getElementById('progressBar').style.width = Math.round((i+1)/total*100)+'%';
     document.getElementById('loadingSub').textContent  = `Fetching ${file}  (${i+1} / ${total})${usingFallback?' [local]':''}`;
+    const sources = usingFallback
+      ? [[BASE_FALLBACK_URL, ' (local)', timeout]]
+      : [[srcBase, '', timeout], [EDITOR_DATA_URL, ' (editor repo)', 8000], [BASE_FALLBACK_URL, ' (local)', 8000]];
     try {
-      const res = await fetchTimed(srcBase + file, timeout);
+      const { res, tag } = await fetchFirstSource(file, sources);
       baseData[file.replace('.txt','')] = parseTSV(await res.text());
-      addLog('ok', `✓ ${file}${usingFallback?' (local)':''}`);
+      addLog('ok', `✓ ${file}${tag}`);
       successCount++;
     } catch(err) {
       const isAbort = err.name === 'AbortError';
