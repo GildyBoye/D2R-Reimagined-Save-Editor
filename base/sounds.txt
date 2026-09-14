@@ -6760,7 +6760,7 @@ druid_summon_layer_hd	6757		sfx/monster_hd	monster\druidwolf\druid_summon_layer_
 shrine_idle_fire_hd	6758		sfx/ambient/shrines_hd	object\shrine\shrine_idle_fire.flac	0	0	0	0	0	50	50	100	100	0	0	0	50	10	0	0	0	0	1	0	90	0	0	0	1	0	0	-1	-1	-1	0	0	
 sea_noise_hd	6759		sfx/ambient/event-3d_hd	ambient\event\sea_noise_hd.flac	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	4	0	0	0	0	0	0	0	0	0	-1	-1	-1	0	0	
 tristram_fire_rumble_hd	6760		sfx/ambient/environment-objects_hd	ambient\event\tristram_fire_rumble_hd.flac	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	4	0	0	0	0	0	0	0	0	0	-1	-1	-1	0	0	
-desecrated_enter_hd	6761		sfx/ambient/event-3d_hd	quest\desecrated_enter_hd.flac	0	0	0	0	0	255	255	100	100	0	0	0	0	0	1	0	0	0	4	0	60	255	1	0	0	0	0	-1	-1	-1	0	0	
+desecrated_enter_hd	6761		sfx/ambient/event-3d_hd	quest\desecrated_enter_hd.flac	0	0	0	0	0	0	0	0	0	0	0	0	0	0	1	0	0	0	4	0	60	255	1	0	0	0	0	-1	-1	-1	0	0	
 music_desecrated_hd	6762		music_hd	common\options_hd.flac	0	1	0	0	0	127	127	100	100	0	0	1	125	125	1	0	0	0	0	0	0	255	1	1	0	0	1	-1	-1	-1	0	0	
 warlock_act1_complete_andariel_hd	6763		vo/eax/player-dialog-shout_hd	act1\warlock\war_act1_complete_andariel.flac	1	0	0	0	0	112	112	100	100	0	0	0	0	0	1	0	0	0	4	0	0	255	1	0	1	1	0	-1	-1	-1	0	0	
 warlock_act1_complete_burial_hd	6764		vo/eax/player-dialog_hd	act1\warlock\war_act1_complete_burialground.flac	1	0	0	0	0	112	112	100	100	0	0	0	0	0	1	0	0	0	4	0	0	255	1	0	1	1	0	-1	-1	-1	0	0	
@@ -6826,9 +6826,9 @@ Warlock_Skill_Hex_Bane_Hit	6823		sfx/player-skills_hd	skill\Warlock\Warlock_Skil
 Warlock_Skill_Hex_Purge_Hit	6824		sfx/player-skills_hd	skill\Warlock\Warlock_Skill_Hex_Purge_Hit.flac	0	0	0	0	0	50	89	98	110	0	0	0	0	6	0	0	0	4	1	25	60	100	0	0	1	0	0	-1	-1	-1	0	0	
 Warlock_Skill_Hex_Siphon_Hit	6825		sfx/player-skills_hd	skill\Warlock\Warlock_Skill_Hex_Siphon_Hit.flac	0	0	0	0	0	63	89	98	110	0	0	0	0	6	0	0	0	4	1	25	60	100	0	0	1	0	0	-1	-1	-1	0	0	
 Warlock_Skill_Hex_Purge_Layer	6826		sfx/player-skills_hd	skill\Warlock\Warlock_Skill_Hex_Purge_Layer.flac	0	0	0	0	0	63	127	98	105	0	0	0	0	6	0	0	0	4	1	25	60	100	0	0	1	0	0	-1	-1	-1	0	0	
-Warlock_Skill_Seal_Lethargy_Hit	6827		sfx/player-skills_hd	skill\Warlock\Warlock_Skill_Seal_Lethargy_Hit.flac	0	0	0	0	0	50	100	100	100	0	0	0	5	6	0	0	0	4	1	25	30	100	0	0	1	0	0	-1	-1	-1	0	0	
-Warlock_Skill_Seal_Rancor_Hit	6828		sfx/player-skills_hd	skill\Warlock\Warlock_Skill_Seal_Rancor_Hit.flac	0	0	0	0	0	40	100	100	100	0	0	0	5	6	0	0	0	4	1	25	30	100	0	0	1	0	0	-1	-1	-1	0	0	
-Warlock_Skill_Seal_Death_Hit	6829		sfx/player-skills_hd	skill\Warlock\Warlock_Skill_Seal_Death_Hit.flac	0	0	0	0	0	40	89	100	100	0	0	0	5	6	0	0	0	4	1	25	30	100	0	0	1	0	0	-1	-1	-1	0	0	
+Warlock_Skill_Seal_Lethargy_Hit	6827		sfx/player-skills_hd	skill\Warlock\Warlock_Skill_Seal_Lethargy_Hit.flac	0	0	0	0	0	20	40	100	100	0	0	0	0	6	0	0	0	4	1	25	30	100	0	0	1	0	0	-1	-1	-1	0	0	
+Warlock_Skill_Seal_Rancor_Hit	6828		sfx/player-skills_hd	skill\Warlock\Warlock_Skill_Seal_Rancor_Hit.flac	0	0	0	0	0	20	40	100	100	0	0	0	0	6	0	0	0	4	1	25	30	100	0	0	1	0	0	-1	-1	-1	0	0	
+Warlock_Skill_Seal_Death_Hit	6829		sfx/player-skills_hd	skill\Warlock\Warlock_Skill_Seal_Death_Hit.flac	0	0	0	0	0	20	40	100	100	0	0	0	0	6	0	0	0	4	1	25	30	100	0	0	1	0	0	-1	-1	-1	0	0	
 item_worldstone_shard_hd	6830		sfx/items_hd	item\item_worldstone_shard_hd.flac	0	0	0	0	0	201	201	100	100	0	0	0	0	0	0	1	0	0	1	0	90	100	0	0	0	0	0	-1	-1	-1	0	0	
 item_mephistos_brain_hd	6831		sfx/items_hd	item\item_mephistos_brain.flac	0	0	0	0	0	255	255	100	100	0	0	0	0	0	0	1	0	0	1	0	90	100	0	0	0	0	0	-1	-1	-1	0	0	
 item_baals_eye_hd	6832		sfx/items_hd	item\item_baals_eye.flac	0	0	0	0	0	255	255	100	100	0	0	0	0	0	0	1	0	0	1	0	90	100	0	0	0	0	0	-1	-1	-1	0	0	
