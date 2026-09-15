@@ -2680,7 +2680,8 @@ function buildStatListFromMods(mods, useMaxRolls) {
   const byId = new Map();
   for (const mod of mods) {
     if (!mod.code) continue;
-    if (INTERNAL_PROP_CODES.has(mod.code)) continue;
+    // oskill_hide is hidden from tooltips but the game expects it saved (stat 97, e.g. Hidden Charm Passive)
+    if (INTERNAL_PROP_CODES.has(mod.code) && mod.code !== 'oskill_hide') continue;
     // Pass original min/max and the roll flag — propCodeToStatEntries handles rolling per-func
     const entries = propCodeToStatEntries(mod.code, mod.min||0, mod.max||0, mod.par||mod.param||'', useMaxRolls);
     for (const e of entries) {
@@ -3463,7 +3464,9 @@ function buildItemTypeSets() {
   if (weaponData) {
     for (const row of weaponData.rows) {
       const code = (row['code'] || '').trim();
-      if (code) newWeapon.add(code);
+      if (!code) continue;
+      newWeapon.add(code);
+      if ((row['stackable'] || '').trim() === '1') newStack.add(code);
     }
   }
   const newAdvStack = new Set();
@@ -6286,8 +6289,10 @@ function encodeExtendedItem(item) {
   // D2RR: runes (quality=2) need an extra bit (verified against real game Cham encoding)
   if (isRuneCode) pos += 1;
 
-  // timestamp (1 bit) — 0
-  wbN(pos, 0, 1); pos += 1;
+  // timestamp (1 bit). On rolled quivers this slot is the stackable marker: game-dropped
+  // unique bolts (GildBarb.d2s) carry 0,1 then qty=500; writing 0 crashes the game on join.
+  const isRolledStackMisc = quality >= 3 && !isArmor && !isWeapon && STACK_SET.has(code);
+  wbN(pos, isRolledStackMisc ? 1 : 0, 1); pos += 1;
 
   // compactsave=0 misc items (cube, tomes, gem bag, arrows, etc.) carry a
   // 1-bit "stackable marker" right after the timestamp — set to 1 if a
@@ -6329,13 +6334,21 @@ function encodeExtendedItem(item) {
       }
     }
     wbN(pos, maxDur, 8); pos += 8;
-    // if curDur > 0: max_durability (10 bits, D2R V105)
-    if (maxDur > 0) { wbN(pos, maxDur, 10); pos += 10; }
+    // current durability (10 bits, D2R V105). Top bit is the stackable marker on throwing
+    // weapons (game-written jav/9ts carry it; all other weapons and armor leave it 0).
+    const stackMarker = isWeapon && STACK_SET.has(code) ? 0x200 : 0;
+    if (maxDur > 0) { wbN(pos, maxDur | stackMarker, 10); pos += 10; }
   }
 
   if (STACK_SET.has(code)) {
-    // quantity (9 bits) — 1 for single items
-    wbN(pos, 1, 9); pos += 9;
+    // quantity (9 bits) — 1 by default; rolled quivers and throwing weapons drop as a full stack
+    let qty = 1;
+    const stackTable = isWeapon ? baseData['weapons'] : (isRolledStackMisc ? baseData['misc'] : null);
+    if (stackTable) {
+      const stackRow = stackTable.rows.find(r => (r['code'] || '').trim() === code);
+      qty = Math.min(parseInt((stackRow && stackRow['maxstack']) || '1', 10) || 1, 511);
+    }
+    wbN(pos, qty, 9); pos += 9;
   }
 
   // num_sockets (4 bits) — only present if socketed flag (bit 11) is set
