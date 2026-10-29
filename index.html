@@ -885,6 +885,13 @@
   .footer-github { display: inline-flex; align-items: center; color: rgba(255,255,255,0.5); transition: color 0.15s; }
   .footer-github:hover { color: var(--d2-gold); }
   .footer-github svg { display: block; }
+  .footer-issue-btn {
+    font-family: 'Cinzel', serif; font-size: 10px; letter-spacing: 0.5px;
+    padding: 4px 8px; border: 1px solid var(--d2-border); border-radius: 2px;
+    color: rgba(255,255,255,0.5); text-decoration: none; white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .footer-issue-btn:hover { color: var(--d2-gold); border-color: var(--d2-gold-dim); background: rgba(200,160,48,0.08); }
 
   /* ── Advanced Options gear ── */
   .footer-gear-btn {
@@ -1103,6 +1110,8 @@
       </button>
     </div>
     <div class="footer-right">
+      <a class="footer-issue-btn" href="https://github.com/GildyBoye/D2R-Reimagined-Save-Editor/issues/new"
+         target="_blank" rel="noopener noreferrer" title="Report a bug or problem on GitHub">Report an Issue</a>
       <button type="button" class="footer-gear-btn" id="advancedOptionsBtn"
               onclick="openAdvancedOptions()" title="Advanced options"
               aria-label="Advanced options">
@@ -6186,7 +6195,8 @@ function encodeExtendedItem(item) {
   const isExtendedMisc = !isAdvStack && !isRolledMiscType && quality <= 2 &&
                          (typeof EXTENDED_MISC_SET !== 'undefined') &&
                          EXTENDED_MISC_SET.has(code);
-  const ilvl = item.itemLevel || 80;
+  // ilvl is a 7-bit field; clamp to the game's 1-99 range so nothing wraps through & 0x7F
+  const ilvl = Math.max(1, Math.min(99, item.itemLevel || 80));
 
   // Header flags
   const isRuneCode = /^[rs]\d{2}$/.test(code);
@@ -13238,10 +13248,14 @@ function _itemEditAddableStatsForItem(item) {
   // Skill stats — bypass the saveParamBits>0 filter so the Add row can offer
   // them with a skill/class/tab picker instead of a raw numeric param input.
   const _SKILL_DEFS = [
-    { id: 107, kind: 'any',      paramBits: 9,  labelKey: 'ui_edit_skill_any',   labelFallback: '+# to Skill (oskill)' },
-    { id: 97,  kind: 'classany', paramBits: 9,  labelKey: 'ui_edit_skill_class', labelFallback: '+# to Class Skill' },
+    // 97 (item_nonclassskill) is the oskill — any class can use it. 107 (item_singleskill,
+    // descstrpos ItemModifierClassSkill) only works for the class that owns the skill.
+    { id: 97,  kind: 'any',      paramBits: 9,  labelKey: 'ui_edit_skill_any',   labelFallback: '+# to Skill (oskill — any class)' },
+    { id: 107, kind: 'classany', paramBits: 9,  labelKey: 'ui_edit_skill_class', labelFallback: '+# to Class Skill (owning class only)' },
     { id: 83,  kind: 'class',    paramBits: 3,  labelKey: 'ui_edit_skill_tree',  labelFallback: '+# to <Class> Skills' },
     { id: 188, kind: 'skilltab', paramBits: 16, labelKey: 'ui_edit_skill_tab',   labelFallback: '+# to <Skill Tab>' },
+    // Charges work for any class like an oskill, but run down as they're cast.
+    { id: 204, kind: 'charged',  paramBits: 16, labelKey: 'ui_edit_skill_charged', labelFallback: 'Charged Skill (any class)' },
   ];
   for (const def of _SKILL_DEFS) {
     const meta = Object.values(STAT_BY_NAME).find(s => s.id === def.id);
@@ -13272,7 +13286,7 @@ function _itemEditAddableStatsForItem(item) {
 }
 
 function _itemEditBuildSkillOptions(kind) {
-  if (kind === 'any' || kind === 'classany') {
+  if (kind === 'any' || kind === 'classany' || kind === 'charged') {
     const entries = [...PLAYER_USABLE_SKILL_IDS]
       .map(id => ({ id, name: skillNameById[id] }))
       .filter(e => e.name)
@@ -13298,6 +13312,29 @@ function _itemEditBuildSkillOptions(kind) {
     return opts.join('');
   }
   return '';
+}
+
+// Which picker a param-bearing stat's row should show instead of a raw number box.
+const _SKILL_PARAM_KINDS = { 83: 'class', 97: 'any', 107: 'any', 188: 'skilltab', 387: 'any' };
+
+// oskill halves: 97 grants the skill (never rendered in tooltips), 387 is its display twin.
+const _OSKILL_TWIN_OF = { 97: 387, 387: 97 };
+
+// Picker options with `current` guaranteed present and pre-selected. A decoded param can
+// point outside the player-usable skill list (monster-only skills, Reimagined internals);
+// without pinning it the <select> would silently rewrite the mod to the first option.
+function _itemEditSkillSelectOptions(kind, current) {
+  const cur  = current | 0;
+  const html = _itemEditBuildSkillOptions(kind);
+  const tag  = `<option value="${cur}"`;
+  // Only a skill picker can name an unknown param; a class / tab param that fell
+  // outside its list would otherwise be labelled with an unrelated skill name.
+  const isSkillKind = (kind === 'any' || kind === 'classany' || kind === 'charged');
+  const fallbackName = (isSkillKind && skillNameById[cur]) ? skillNameById[cur] : ('#' + cur);
+  const full = html.includes(tag)
+    ? html
+    : `${tag}>${esc(fallbackName)}</option>` + html;
+  return full.replace(tag, `${tag} selected`);
 }
 
 // Strip `%+d`, `%d`, `%s`, `%%` format tokens and tidy whitespace from a
@@ -13701,11 +13738,32 @@ function _itemEditSaveAddById(id) {
 function _itemEditModSlots(m) {
   const slots = [];
 
-  // Param slot (skill ID, skill tab, charged-skill packed value, etc.).
+  // Charged skill (204) packs three user-facing numbers: param = (skillId << 6) | level,
+  // stored = (maxCharges << 8) | currentCharges. Raw packed boxes are unusable, so the row
+  // exposes skill / level / charges and _itemEditWriteSlot re-packs them.
+  if (m.id === 204) {
+    const packed  = (m.stored != null) ? m.stored : (m.value || 0);
+    const charges = (packed >> 8) & 0xFF;
+    return [
+      { field: 'chargedSkill', label: L('ui_edit_slot_skill','skill'), type: 'select', kind: 'any',
+        value: (m.param || 0) >> 6, min: 0, max: 511 },
+      { field: 'chargedLevel', label: L('ui_edit_slot_level','level'),
+        value: (m.param || 0) & 0x3F, min: 1, max: 63 },
+      { field: 'charges', label: L('ui_edit_slot_charges','charges'),
+        value: charges || 1, min: 1, max: 255 },
+    ];
+  }
+
+  // Param slot (skill ID, class, skill tab). Skill-bearing stats get the matching picker;
+  // anything else keeps the raw number box.
   if (m.paramBits > 0) {
+    const kind = _SKILL_PARAM_KINDS[m.id];
+    const paramLabels = { any: L('ui_edit_slot_skill','skill'), class: L('ui_edit_slot_class','class'), skilltab: L('ui_edit_slot_tab','tab') };
     slots.push({
       field: 'param',
-      label: L('ui_edit_slot_param','param'),
+      label: kind ? paramLabels[kind] : L('ui_edit_slot_param','param'),
+      type:  kind ? 'select' : undefined,
+      kind,
       value: m.param || 0,
       min:   0,
       max:   (1 << m.paramBits) - 1,
@@ -13840,7 +13898,9 @@ function _renderItemEditDialog() {
     // (damage-range parents, skill grants) get a more compact help string —
     // each slot's own input already carries min/max via its native attrs and
     // shows the bounds-mismatch via the live clamp on change.
-    const mainSlot = slots.find(s => s.field === 'value') || slots[0];
+    const mainSlot = slots.find(s => s.field === 'value')
+      || slots.filter(s => s.type !== 'select').pop()
+      || slots[0];
     const range    = STAT_RANGES[m.id] || {};
     const help     = `range ${mainSlot.min}…${mainSlot.max}` + (range.perLevel ? ` · per-level (${range.perLevel})` : '');
     const newTag = m._isNew
@@ -13853,9 +13913,12 @@ function _renderItemEditDialog() {
     const inputsHtml = slots.map(s => `
       <label style="display:inline-flex;flex-direction:column;align-items:center;flex-shrink:0;gap:1px">
         <span style="color:var(--d2-text-dim);font-size:9px;font-family:'Cinzel',serif;letter-spacing:1px;text-transform:uppercase">${esc(s.label)}</span>
-        <input type="number" data-mod-idx="${i}" data-mod-field="${esc(s.field)}" value="${s.value}" min="${s.min}" max="${s.max}"
-               onchange="_itemEditClampInput(this)"
-               style="width:72px;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-gold-bright);font-family:'Crimson Text',serif;font-size:13px;padding:3px 6px;text-align:center">
+        ${s.type === 'select'
+          ? `<select data-mod-idx="${i}" data-mod-field="${esc(s.field)}"
+                     style="max-width:160px;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-gold-bright);font-family:'Crimson Text',serif;font-size:12px;padding:3px 6px">${_itemEditSkillSelectOptions(s.kind, s.value)}</select>`
+          : `<input type="number" data-mod-idx="${i}" data-mod-field="${esc(s.field)}" value="${s.value}" min="${s.min}" max="${s.max}"
+                    onchange="_itemEditClampInput(this)"
+                    style="width:72px;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-gold-bright);font-family:'Crimson Text',serif;font-size:13px;padding:3px 6px;text-align:center">`}
       </label>`).join('');
     return `<div class="item-edit-row" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--d2-border);font-size:12px">
       <span style="flex:1;min-width:0;color:var(--d2-text);word-break:break-word">${esc(label)}${newTag}</span>
@@ -13904,12 +13967,16 @@ function _renderItemEditDialog() {
               style="flex-shrink:0;min-width:140px;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-text);font-family:'Crimson Text',serif;font-size:12px;padding:3px 6px;display:${firstSkillKind ? 'inline-block' : 'none'}">
         ${firstSkillOptions}
       </select>
+      <input type="number" id="itemEditAddSkillLevel" value="1" min="1" max="63" placeholder="lvl"
+             title="${esc(L('ui_edit_charged_level','Skill level the charges cast at'))}"
+             onchange="_itemEditClampInput(this)"
+             style="width:56px;flex-shrink:0;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-gold-bright);font-family:'Crimson Text',serif;font-size:13px;padding:3px 6px;text-align:center;display:${firstSkillKind === 'charged' ? 'inline-block' : 'none'}">
       <select id="itemEditAddRole" ${initialRoleDisabled}
               title="${esc(L('ui_edit_role_help','Affix role drives the magic→rare promotion: 1 prefix + 1 suffix stays magic; 2 of the same kind goes rare. Locked when the stat only rolls as one or the other in D2.'))}"
               style="flex-shrink:0;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-text);font-family:'Crimson Text',serif;font-size:12px;padding:3px 6px">
         ${initialRoleOptions}
       </select>
-      <input type="number" id="itemEditAddValue" value="${firstSkillKind ? 1 : 0}" min="${initialMin}" max="${initialMax}" placeholder="value"
+      <input type="number" id="itemEditAddValue" value="${firstSkillKind === 'charged' ? 20 : (firstSkillKind ? 1 : 0)}" min="${firstSkillKind === 'charged' ? 1 : initialMin}" max="${firstSkillKind === 'charged' ? 255 : initialMax}" placeholder="value"
              onchange="_itemEditClampInput(this)"
              style="width:70px;flex-shrink:0;background:var(--d2-bg);border:1px solid var(--d2-border-bright);color:var(--d2-gold-bright);font-family:'Crimson Text',serif;font-size:13px;padding:3px 6px;text-align:center">
       <button type="button" style="flex-shrink:0;background:#0e2a0e;border:1px solid var(--d2-green);color:#7fc77f;font-family:'Cinzel',serif;font-size:11px;padding:3px 12px;border-radius:2px;cursor:pointer" onclick="_itemEditAddMod()">${esc(L('ui_edit_add_btn','Add'))}</button>
@@ -14036,6 +14103,17 @@ window._itemEditUpdateAddSkillField = function() {
   if (!statSel || !skillSel) return;
   const opt = statSel.options[statSel.selectedIndex];
   const kind = (opt && opt.dataset.skillKind) || '';
+  const lvlEl = document.getElementById('itemEditAddSkillLevel');
+  const valEl = document.getElementById('itemEditAddValue');
+  // Charged skills need a level alongside the skill, and the value box becomes the
+  // charge count (8 bits per half of the packed current|max pair).
+  if (lvlEl) lvlEl.style.display = (kind === 'charged') ? 'inline-block' : 'none';
+  if (valEl && kind === 'charged') {
+    valEl.min = 1;
+    valEl.max = 255;
+    const cur = parseInt(valEl.value || '0', 10) || 0;
+    if (cur < 1 || cur > 255) valEl.value = 20;
+  }
   if (!kind) {
     skillSel.style.display = 'none';
     skillSel.innerHTML = '';
@@ -14100,6 +14178,14 @@ window._itemEditRemoveMod = function(idx) {
   // composite identity).
   if (target && target._compositeGroup) {
     state.mods = state.mods.filter(m => m._compositeGroup !== target._compositeGroup);
+  } else if (target && _OSKILL_TWIN_OF[target.id] !== undefined) {
+    // oskill is a 97 + 387 pair sharing one param. Drop both halves together so the
+    // user can't strand a tooltip line with no skill grant (or a silent grant with no
+    // line). Matched on param so a lone hidden 97 (Hidden Charm Passive) stays put.
+    const twinId  = _OSKILL_TWIN_OF[target.id];
+    const twinIdx = state.mods.findIndex((m, j) => j !== idx && m.id === twinId && (m.param || 0) === (target.param || 0));
+    state.mods.splice(idx, 1);
+    if (twinIdx >= 0) state.mods.splice(twinIdx > idx ? twinIdx - 1 : twinIdx, 1);
   } else {
     state.mods.splice(idx, 1);
   }
@@ -14177,13 +14263,41 @@ function _itemEditCommitPendingAdd(state) {
   const skillSel  = document.getElementById('itemEditAddSkill');
   const isSkill   = !!meta._skillKind;
   const paramBits = isSkill ? (meta.paramBits || 0) : 0;
-  const param     = isSkill && skillSel ? (parseInt(skillSel.value, 10) || 0) : 0;
+  let   param     = isSkill && skillSel ? (parseInt(skillSel.value, 10) || 0) : 0;
+  // Charged skills pack skill+level into param and charges into the value as
+  // (maxCharges << 8) | currentCharges — fresh items start fully charged.
+  if (meta._skillKind === 'charged') {
+    const lvlEl   = document.getElementById('itemEditAddSkillLevel');
+    const level   = Math.max(1, Math.min(63,  parseInt((lvlEl || {}).value || '1', 10) || 1));
+    const charges = Math.max(1, Math.min(255, isNaN(raw) ? 20 : raw));
+    const packed  = (charges << 8) | charges;
+    state.mods.push({
+      id, param: ((param & 0x1FF) << 6) | level, value: packed, value2: undefined, value3: undefined,
+      stored: packed,
+      valueBits: meta.saveBits, paramBits,
+      paramBitOff: -1, valueBitOff: -1,
+      saveAdd: meta.saveAdd,
+      _isNew: true,
+      _role:   role,
+    });
+    state.addOpen = false;
+    return true;
+  }
   // Follower-parent stats (firemindam → firemaxdam, coldmindam → coldmaxdam →
   // coldlength, etc.) need value2/value3 populated so a freshly-added mod
   // isn't "min N max 0". Default max = min; length = 0 (user edits in row).
   const followCount = (id >= 0 && id < FOLLOW_STATS.length) ? FOLLOW_STATS[id] : 0;
   const value2 = followCount >= 1 ? value : undefined;
   const value3 = followCount >= 2 ? 0     : undefined;
+  // oskill is a pair: 97 grants the skill but _formatMod hides it, 387 is the tooltip
+  // twin. Game-rolled uniques carry both with the same param/value, so add both or the
+  // mod works in game while showing nothing anywhere.
+  const displayTwin = (id === 97) ? Object.values(STAT_BY_NAME).find(s => s.id === 387) : null;
+  if (displayTwin && state.mods.length + 2 > ITEM_EDIT_MOD_CAP) {
+    showPopup(Lfmt('ui_edit_at_cap','At the {n}-property cap — remove an existing property before adding a new one.', { n: ITEM_EDIT_MOD_CAP }));
+    state.addOpen = false;
+    return true;
+  }
   state.mods.push({
     id, param, value, value2, value3,
     stored: value + meta.saveAdd,
@@ -14193,6 +14307,18 @@ function _itemEditCommitPendingAdd(state) {
     _isNew: true,
     _role:   role,
   });
+  if (displayTwin && displayTwin.saveBits) {
+    state.mods.push({
+      id: 387, param, value, value2: undefined, value3: undefined,
+      stored: value + (displayTwin.saveAdd || 0),
+      valueBits: displayTwin.saveBits, paramBits: displayTwin.saveParamBits || paramBits,
+      paramBitOff: -1, valueBitOff: -1,
+      saveAdd: displayTwin.saveAdd || 0,
+      _isNew: true,
+      _role:   role,
+      _affixFree: true,   // rides along with the 97 grant — not its own affix slot
+    });
+  }
   state.addOpen = false;
   return true;
 }
@@ -14219,6 +14345,20 @@ window._itemEditAddMod = function() {
 // the apply-time final capture.
 function _itemEditWriteSlot(m, field, raw) {
   if (!m || isNaN(raw)) return;
+  // Charged-skill virtual slots — re-pack into the param / stored layout the game reads.
+  if (field === 'chargedSkill' || field === 'chargedLevel') {
+    const cur     = m.param || 0;
+    const skillId = (field === 'chargedSkill') ? raw : (cur >> 6);
+    const level   = (field === 'chargedLevel') ? Math.max(1, Math.min(63, raw)) : (cur & 0x3F);
+    m.param = ((skillId & 0x1FF) << 6) | (level & 0x3F);
+    return;
+  }
+  if (field === 'charges') {
+    const n = Math.max(1, Math.min(255, raw));
+    m.stored = (n << 8) | n;
+    m.value  = m.stored - (m.saveAdd || 0);
+    return;
+  }
   if (field === 'param') {
     const max = m.paramBits > 0 ? ((1 << m.paramBits) - 1) : 0;
     m.param = Math.max(0, Math.min(max, raw));
@@ -14256,7 +14396,7 @@ function _itemEditWriteSlot(m, field, raw) {
 function _itemEditCaptureInputs() {
   const state = _itemEditState;
   if (!state) return;
-  document.querySelectorAll('input[data-mod-idx]').forEach(inp => {
+  document.querySelectorAll('input[data-mod-idx], select[data-mod-idx]').forEach(inp => {
     const idx   = parseInt(inp.dataset.modIdx, 10);
     const field = inp.dataset.modField || 'value';
     const m     = state.mods[idx];
@@ -14370,10 +14510,14 @@ function _applyItemEditsInner(state) {
   // grants the same 4 stats from a single affix slot in-game. Without this,
   // adding all-res to a ring would force a rare promotion even though
   // the user picked a magic-tier composite.
+  // _affixFree mods (the 387 display twin an oskill carries) ride along with the stat
+  // that spawned them — counting them would turn one added oskill into two affix slots
+  // and over-promote a white item straight to rare.
   const _countAffixSlots = (mods) => {
     const groups = new Set();
     let ungrouped = 0;
     for (const m of mods) {
+      if (m._affixFree) continue;
       if (m._compositeGroup) groups.add(m._compositeGroup);
       else ungrouped++;
     }
@@ -14386,8 +14530,8 @@ function _applyItemEditsInner(state) {
   // those stats — without this, we'd write e.g. prefix=786 ("Heartened" = +%
   // Life) on a charm whose prop list says +% Experience, which Reimagined
   // rejects as a corrupt item at game-join.
-  const newPrefixStatIds = newMods.filter(m => m._role !== 'suffix').map(m => m.id);
-  const newSuffixStatIds = newMods.filter(m => m._role === 'suffix').map(m => m.id);
+  const newPrefixStatIds = newMods.filter(m => m._role !== 'suffix' && !m._affixFree).map(m => m.id);
+  const newSuffixStatIds = newMods.filter(m => m._role === 'suffix' && !m._affixFree).map(m => m.id);
 
   // Count user-editable mods only — hidden weight stats (charm/torch/soulstone)
   // are system-managed and uneditable, so they shouldn't keep an item "magic"
@@ -20353,7 +20497,8 @@ window.addEventListener('DOMContentLoaded', startBaseFileLoad);
       <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px">
         <div class="modal-row" id="modalIlvlRow" style="margin:0;flex:0 0 auto">
           <div class="modal-label" id="modalIlvlLabel">Item Level</div>
-          <input class="modal-input" id="modalIlvl" type="number" min="1" max="99" value="80" style="width:70px">
+          <input class="modal-input" id="modalIlvl" type="number" min="1" max="99" value="80" style="width:70px"
+                 onchange="if (this.value !== '') this.value = Math.max(1, Math.min(99, parseInt(this.value, 10) || 1))">
         </div>
         <div class="modal-row" id="modalSocketRow" style="margin:0;flex:0 0 auto;display:none">
           <div class="modal-label"><span id="modalSocketLabel">Sockets</span> <span id="modalSocketMax" style="color:var(--d2-text-dim)"></span></div>
