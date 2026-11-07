@@ -1341,6 +1341,11 @@ const ALL_FILES = [
   'item_stat_ranges.txt',
 ];
 
+// Authored by the editor, not shipped by the mod — never fetched from BASE_URL.
+const EDITOR_OWNED_FILES = new Set([
+  'item_stat_ranges.txt',
+]);
+
 const CRITICAL_FILES = new Set([
   // These block the editor entirely if missing
   'weapons.txt','armor.txt','misc.txt',
@@ -1604,9 +1609,14 @@ async function startBaseFileLoad() {
     const file = ALL_FILES[i];
     document.getElementById('progressBar').style.width = Math.round((i+1)/total*100)+'%';
     document.getElementById('loadingSub').textContent  = `Fetching ${file}  (${i+1} / ${total})${usingFallback?' [local]':''}`;
+    // EDITOR_OWNED_FILES aren't part of the mod's data — asking the mod repo for
+    // them just burns a round-trip on a guaranteed 404 and puts a red error in the
+    // console on every load. Go straight to the editor repo, then local.
     const sources = usingFallback
       ? [[BASE_FALLBACK_URL, ' (local)', timeout]]
-      : [[srcBase, '', timeout], [EDITOR_DATA_URL, ' (editor repo)', 8000], [BASE_FALLBACK_URL, ' (local)', 8000]];
+      : EDITOR_OWNED_FILES.has(file)
+        ? [[EDITOR_DATA_URL, ' (editor repo)', 8000], [BASE_FALLBACK_URL, ' (local)', 8000]]
+        : [[srcBase, '', timeout], [EDITOR_DATA_URL, ' (editor repo)', 8000], [BASE_FALLBACK_URL, ' (local)', 8000]];
     try {
       const { res, tag } = await fetchFirstSource(file, sources);
       baseData[file.replace('.txt','')] = parseTSV(await res.text());
@@ -2397,6 +2407,119 @@ function _syncStatEncodingTables() {
   SAVE_BITS = bits;
   SAVE_PARAM_BITS = pbits;
   console.log(`_syncStatEncodingTables: ${bits.length} stat slots, ${changed} differed from the built-in table`);
+}
+
+
+// ── Stat-width profile selection ───────────────────────────────────────────
+// itemstatcost.txt ships with the mod, and Reimagined has retuned the bit width
+// of individual stats between releases: item_maxhp_percent (76) and
+// item_maxmana_percent (77) went from 8 bits to 6, item_attackertakesdamage (78)
+// from 16 to 7. The editor pulls its table from the mod repo's `next` branch, so
+// a save written by the released mod decodes with the wrong widths.
+//
+// The failure is quiet rather than loud: the retuned stat itself reads a
+// plausible value, then every later stat in the list is shifted, the 9-bit ids
+// come out as garbage above the table's length, and the reader gives up mid-list
+// holding a partial mod list that looks real. 28 extended items across 15 test
+// saves failed exactly this way, and some reached the splicer.
+//
+// Pinning a version can't fix it — a user on `next` needs the new widths and a
+// user on the released mod needs the old ones. The save itself is the evidence:
+// the "+1 bit then byte align" pad rule means a correct item decode ends 1-8 bits
+// before the next item begins, so we can score a candidate table against it.
+//
+// We score whole PROFILES, not individual widths. Searching per-stat widths
+// freely was tried and is unsafe: one character's items don't constrain a width
+// uniquely, so the search happily adopts item_maxhp_percent = 22 bits for one
+// save and 5 bits for another, both of which satisfy the oracle locally and are
+// both wrong. Moving all of a release's widths together is well determined — over
+// the 15 test saves, 8 pick the release profile, 7 tie, and none prefer `next`.
+// A profile carries saveAdd as well as widths, and that is the point of grouping
+// them: 3.1.0 widened item_maxhp_percent / item_maxmana_percent from 6 bits to 8
+// AND moved their saveAdd from 10 to 100 in the same release. saveAdd never moves
+// a bit, so the pad-window oracle cannot see it — decoding a 3.0.11 save with
+// 3.1.0's saveAdd lines every item up correctly and then reports every one of
+// those two stats 90 points too low. The bias has to travel with the width.
+const STAT_WIDTH_PROFILES = [
+  // Measured from the installed mod's data/global/excel/itemstatcost.txt (3.0.11).
+  // Everything else in that file matches `next` apart from two rows that swap
+  // index (passive_dmg_pierce / hpregen_perlevel), which does not affect alignment.
+  { name: 'reimagined-3.0.11',
+    widths:  { 76: 6,  77: 6,  78: 7 },
+    saveAdd: { 76: 10, 77: 10 } },
+];
+let STAT_WIDTH_PROFILE = null;   // name of the adopted profile; null until decided
+
+// Each extended item paired with the bit offset it has to end at. Boundaries come
+// from every scanned item including socketed children, since those follow their
+// parent, and the last item is bounded by the corpse JM marker.
+function _statProfileTargets(buf, out) {
+  const all = (out.items || [])
+    .filter(it => !it.isMerc && it.byteOffset >= 0)
+    .sort((a, b) => a.byteOffset - b.byteOffset);
+  let sectionEnd = buf.length;
+  for (let i = (out.itemsOffset | 0) + 4; i < buf.length - 1; i++) {
+    if (buf[i] === 0x4a && buf[i + 1] === 0x4d) { sectionEnd = i; break; }
+  }
+  const targets = [];
+  for (let i = 0; i < all.length; i++) {
+    if (all[i].simple) continue;
+    const end = (i + 1 < all.length) ? all[i + 1].byteOffset : sectionEnd;
+    if (end > all[i].byteOffset) {
+      targets.push({ item: all[i], endBit: (end - all[i].byteOffset) * 8 });
+    }
+  }
+  return targets;
+}
+
+// How many targets land in the 1-8 bit pad window that a correct decode produces.
+function _statProfileScore(buf, targets) {
+  let ok = 0;
+  for (const t of targets) {
+    let ext;
+    try { ext = decodeItemProperties(buf, t.item.byteOffset, t.item); } catch (e) { continue; }
+    if (!ext || ext.simple || ext.skippedAdvStack) continue;
+    const slack = t.endBit - ext.endBit;
+    if (slack >= 1 && slack <= 8) ok++;
+  }
+  return ok;
+}
+
+function _selectStatWidthProfile(buf, out) {
+  if (STAT_WIDTH_PROFILE) return;
+  const targets = _statProfileTargets(buf, out);
+  // Deliberately do NOT latch when there's nothing to learn — too few items, or
+  // every item already decoding. A later character may be the one with evidence,
+  // and re-scoring a healthy save costs one decode pass.
+  if (targets.length < 20) return;
+  const baseScore = _statProfileScore(buf, targets);
+  if (baseScore === targets.length) return;
+  let best = null;
+  for (const p of STAT_WIDTH_PROFILES) {
+    const saved = {};
+    for (const id in p.widths) { saved[id] = SAVE_BITS[id]; SAVE_BITS[id] = p.widths[id]; }
+    const sc = _statProfileScore(buf, targets);
+    if (sc > baseScore && (!best || sc > best.score)) best = { profile: p, score: sc };
+    for (const id in saved) SAVE_BITS[id] = saved[id];
+  }
+  if (best) {
+    for (const id in best.profile.widths) SAVE_BITS[id] = best.profile.widths[id];
+    for (const id in (best.profile.saveAdd || {})) STAT_SAVE_ADD_BY_ID[id] = best.profile.saveAdd[id];
+    STAT_WIDTH_PROFILE = best.profile.name;
+    console.warn('stat widths: itemstatcost.txt as loaded decodes '
+      + baseScore + '/' + targets.length + ' items; adopted profile "'
+      + best.profile.name + '" which decodes ' + best.score + '/' + targets.length);
+    for (const id in best.profile.widths) {
+      const add = (best.profile.saveAdd || {})[id];
+      console.warn('   stat ' + id + ': ' + best.profile.widths[id] + ' bits'
+        + (add === undefined ? '' : ', saveAdd ' + add));
+    }
+  } else {
+    STAT_WIDTH_PROFILE = 'itemstatcost.txt as loaded';
+    console.warn('stat widths: ' + (targets.length - baseScore) + ' of ' + targets.length
+      + ' items do not decode within their own bounds and no known stat-width profile'
+      + ' explains it; those items are flagged undecodable and cannot be edited');
+  }
 }
 
 // Per-stat editing bounds loaded from item_stat_ranges.txt. Used by the
@@ -8434,11 +8557,21 @@ function parseD2S(buf) {
       return [c, bit];
     };
 
+    // A valid type code is not enough. The 5-byte signature also matches inside a
+    // real item's body, which emitted a phantom item 3-8 bytes into its parent
+    // (10 of them across 15 test saves). Two items can never start that close, and
+    // the header alone pins a floor: every item carries its huffman type code, and
+    // an extended item additionally carries the 3-bit socketed-gem count, 32-bit
+    // id, 7-bit ilvl and 4-bit quality before any optional field, so +46 bits.
+    // Phantoms are not cosmetic — they also shorten the PARENT's computed byte
+    // length, which is how a 4-byte "item" reached the splicer.
+    let lastAcceptedOff = -1, lastItemFloorBytes = 0;
     for (const byteOff of itemBounds) {
       if (jm2Off > 0 && byteOff >= jm2Off) break;
+      if (lastAcceptedOff >= 0 && byteOff - lastAcceptedOff < lastItemFloorBytes) continue;
 
       // Decode type code and validate — skip false positive item boundaries
-      const [typeCode] = huffDecodeType(byteOff);
+      const [typeCode, typeEndBit] = huffDecodeType(byteOff);
       if (!itemNameByCode[typeCode]) continue;
 
       const item = {
@@ -8473,6 +8606,8 @@ function parseD2S(buf) {
       }
 
       out.items.push(item);
+      lastAcceptedOff    = byteOff;
+      lastItemFloorBytes = Math.floor((typeEndBit + (item.simple ? 0 : 46)) / 8);
     }
 
     // Merc items — same byte-pattern signature as the character scan above.
@@ -8484,14 +8619,19 @@ function parseD2S(buf) {
         const mercStart = jmMercOff + 4;
         const kfOff    = findMarker(buf,'kf', jmMercOff+4);
         const mercEnd  = kfOff > 0 ? kfOff : buf.length;
+        // Structural floor, same reasoning as the character scan above.
+        let lastMercOff = -1, lastMercFloor = 0;
         for (let i = 0; i < mercEnd - mercStart - 4; i++) {
           const b0 = buf[mercStart+i];
           const b2 = buf[mercStart+i+2];
           const b4 = buf[mercStart+i+4];
           if ((b0 & 0xE0) === 0 && (b2 & 0x80) && (b4 & 0x05) === 0x05) {
             const byteOff = mercStart+i;
-            const [typeCode] = huffDecodeType(byteOff);
+            if (lastMercOff >= 0 && byteOff - lastMercOff < lastMercFloor) continue;
+            const [typeCode, typeEndBit] = huffDecodeType(byteOff);
             if (!itemNameByCode[typeCode]) continue;  // reject false-positive byte patterns
+            lastMercOff   = byteOff;
+            lastMercFloor = Math.floor((typeEndBit + (rb(byteOff, 21, 1) ? 0 : 46)) / 8);
             out.items.push({
               byteOffset:  byteOff,
               isMerc:      true,
@@ -8518,6 +8658,10 @@ function parseD2S(buf) {
       }
     }
   }
+
+  // Stat widths are versioned with the mod; pick the table that matches this save
+  // before anything decodes an item.
+  try { _selectStatWidthProfile(buf, out); } catch (e) { console.warn('stat width profile selection failed', e); }
 
   return out;
 }
@@ -11846,6 +11990,16 @@ let ADV_STACK_SET = new Set();
 // potions were removed from a fresh editor-made character.
 let EXTENDED_MISC_SET = new Set();
 
+// Size of the realm-data block that follows a set realm flag. Measured at 128 bits
+// (16 bytes of per-item high-entropy data, distinct for every item that carries it);
+// items in a save either all carry it or none do.
+const REALM_DATA_BITS = 128;
+
+// Size of the per-item trailing block gated by header bit 28. Measured at 52 bits: it is
+// the only size that puts every carrier's item end inside the 1-8 bit pad window the
+// "+1 bit then byte align" rule produces (39 items across 6 saves, tails 53-60).
+const TRAILING_BLOCK_BITS = 52;
+
 // Low-level prop-list reader — decodes stats starting at exactly `startBit`. Returns
 // `{mods, endBit, terminated}` where `terminated` is true only if we reached the 511 sentinel
 // (i.e. the decode was clean). Callers use the flag to detect misalignment and retry.
@@ -11956,10 +12110,13 @@ function decodeItemProperties(buf, byteOff, item) {
     // Quality-specific block. Trailing-gap rules per doc/PROPERTY-ENCODING.md:
     //   q=4 has a trailing gap; q=6/q=8 do NOT; q=5/q=7 have a gap only for MISC items.
     const isRuneItem = /^[rs]\d{2}$/.test((item.typeCode||''));
+    // The first filler bit after the quality payload is the realm-data flag — see the
+    // realmFlagBitOff handling below. Each branch that consumes a filler bit records it.
+    let realmFlagBitOff = -1;
     if(q===1)bit+=3;else if(q===2 && isRuneItem)bit+=1;else if(q===3)bit+=3;else if(q===4){
       r._prefixId=rbL(bit,11);bit+=11;
       r._suffixId=rbL(bit,11);bit+=11;
-      bit+=1;
+      realmFlagBitOff=bit;bit+=1;
     }
     else if(q===5){r.setId=rbL(bit,12);bit+=12;}
     else if(q===7){r.uniqueId=rbL(bit,12);bit+=12;}
@@ -11974,11 +12131,15 @@ function decodeItemProperties(buf, byteOff, item) {
     }
     r.qualityBlockEndBit=bit;
     const code=item.typeCode||'';
-    if ((q === 5 || q === 6 || q === 7 || q === 8) && MISC_SET.has(code)) bit += 1;
+    if ((q === 5 || q === 6 || q === 7 || q === 8) && MISC_SET.has(code)) { if(realmFlagBitOff<0)realmFlagBitOff=bit; bit += 1; }
     if(item.runeword)bit+=16; // runeword padding (name resolved by matching socketed runes)
     if(item.personalized){for(let i=0;i<50;i++){const c=rbL(bit,7);bit+=7;if(!c)break;}}
+    // Tomes (misc.txt type=book: tbk + ibk) carry a 5-bit field here. ibk was missing, so
+    // every Tome of Identify decoded 5 bits short. Scrolls (tsc/isc) are compactsave=1 and
+    // never reach this path.
     const tc=(item.typeCode||'').slice(0,3).toLowerCase();
-    if(tc==='tbk'||tc==='tsc')bit+=5;
+    if(tc==='tbk'||tc==='ibk')bit+=5;
+    if(realmFlagBitOff<0)realmFlagBitOff=bit;
     bit+=1; // timestamp
     const isArm=ARMOR_SET.has(code), isWep=WEAPON_SET.size?WEAPON_SET.has(code):(!ARMOR_SET.has(code)&&!STACK_SET.has(code)&&!MISC_SET.has(code)&&code.length===3);
     if(isArm)bit+=11;
@@ -11987,12 +12148,38 @@ function decodeItemProperties(buf, byteOff, item) {
     r.numSocketsBitOff = bit;  // 4-bit numSockets field lives here (or would, if socketed=1)
     if(item.socketed)bit+=4;
     let sbf=0;if(q===5){sbf=rbL(bit,5);bit+=5;}
+    // Realm data. The first filler bit after the quality payload is a flag, not padding:
+    // when it is set, a 128-bit block sits immediately before the property list. Items that
+    // carry it decode as pure garbage otherwise — the stat IDs read 128 bits early, so every
+    // value is wrong and the list only "terminates" by luck (verified on a magic Large Charm
+    // whose real stats are 128 bits further along and match the in-game tooltip exactly).
+    // Quality outside 1-8 means the header parse already went wrong (byte-pattern item
+    // scanner false positive), so the flag bit isn't trustworthy — don't act on it.
+    r.hasRealmData = (q>=1 && q<=8) ? rbL(realmFlagBitOff,1) : 0;
+    r.realmDataBitOff = r.hasRealmData ? bit : -1;
+    if(r.hasRealmData) bit += REALM_DATA_BITS;
     const _mainList=_readPropList(buf,byteOff,bit);
     r.mainPropListStartBit=_mainList.startBit;
     r.mainPropListEndBit=_mainList.endBit;
     r.mods=_mainList.mods;r._baseModCount=_mainList.mods.length;bit=_mainList.endBit;
+    // A list that never reached 511 left `mods` holding only the stats read before
+    // the stream stopped making sense. Those partial lists look real, so record the
+    // flag and let the splicer refuse to write one back.
+    r.mainPropListTerminated=_mainList.terminated?1:0;
     if(q===5){r.setBonusMods=[];for(let fi=0;fi<5;fi++){if(sbf&(1<<fi)){const {mods:bm,endBit:eb}=_readPropList(buf,byteOff,bit);r.setBonusMods.push({pieces:fi+2,mods:bm});bit=eb;}}}
     if(item.runeword){const {mods:rm,endBit:re}=_readPropList(buf,byteOff,bit);r._rwModCount=rm.length;r.mods=r.mods.concat(rm);bit=re;}
+    // Trailing block. Header bit 28 gates a 52-bit block that sits after EVERY property
+    // list (main, set bonuses, runeword). Bits 16-40 hold a per-character monotonically
+    // increasing value consistent with an item-creation time: within one character the
+    // order matches acquisition order, and items obtained together carry an identical
+    // value — two different set rings with different stats share one, so it is not a
+    // checksum over the item. The remaining bits read zero. Observed only on q=5/q=7.
+    // Treated as opaque: preserved verbatim on rewrite, never synthesized for new items.
+    // Only acted on when the main list reached its 511 sentinel — if that decode drifted,
+    // `bit` isn't a real position and skipping from it would compound the error.
+    r.hasTrailingBlock = (rbL(28,1) && _mainList.terminated) ? 1 : 0;
+    r.trailingBlockBitOff = r.hasTrailingBlock ? bit : -1;
+    if(r.hasTrailingBlock) bit += TRAILING_BLOCK_BITS;
   }catch(e){r.decodeError=e.message;}
   // Expose the final bit position — useful for cascade-delete to know where the parent's
   // binary actually ends, so socketed-child filtering can reject scanner false-positives
@@ -12948,9 +13135,27 @@ function _itemEditEncodePropList(mods) {
 // that already carry a quality block; for promotions it carries the new
 // quality nibble (4) or (6) and the bits to insert at qualityBlockStartBit.
 function _itemEditSpliceItemBytes(oldItemBytes, ext, newPropBits, qualityChange, item, socketChange) {
+  // The decode has to have reached the 511 sentinel for its mod list to be the
+  // whole list. When it didn't, `ext.mods` holds only the stats read before the
+  // stream stopped making sense, and re-encoding that writes a shorter property
+  // list than the item really has — silently dropping real stats and shifting
+  // everything after them. Usually it means the loaded itemstatcost.txt doesn't
+  // match the mod version that wrote the save (see _selectStatWidthProfile).
+  if (ext && ext.mainPropListTerminated === 0) {
+    throw new Error("this item's property list doesn't decode cleanly (no end marker found), so its stats can't be re-encoded without losing data — the loaded itemstatcost.txt probably doesn't match the mod version this save was made with");
+  }
   const oldTotalBits = oldItemBytes.length * 8;
   const allBits = [];
+  // oldItemBytes is bounded by the next scanned item, so a bad boundary — a
+  // scanner false positive landing a few bytes inside a real item — makes it far
+  // shorter than the decode says the item is. An out-of-range read here used to
+  // be silent: oldItemBytes[i>>3] is undefined, undefined>>n is 0, so the splice
+  // quietly zero-filled the rest of the header and produced a plausible-looking
+  // corrupt item. Fail loudly; the caller already catches and shows a popup.
   const pushRange = (from, to) => {
+    if (to > oldTotalBits) {
+      throw new Error(`item spans ${oldItemBytes.length} bytes but the decode needs bit ${to} — item boundary or decode is wrong, refusing to write a truncated item`);
+    }
     for (let i = from; i < to; i++) {
       allBits.push((oldItemBytes[i >> 3] >> (i & 7)) & 1);
     }
@@ -13034,10 +13239,38 @@ function _itemEditSpliceItemBytes(oldItemBytes, ext, newPropBits, qualityChange,
   // and re-apply the phase-10 pad to the new prop list end. For items WITH
   // additional stat lists (set / runeword), preserve the old trailing bits
   // as before since rebuilding those lists isn't in the Item Editor's scope.
+  //
+  // A third category joined these: the 52-bit trailing block gated by header bit 28
+  // (see decodeItemProperties). It sits after the last stat list, so a q=7 unique that
+  // carries one used to fall into the "drop the trailing data" branch below and lose it —
+  // the rewritten item came out ~7 bytes short. Preserving it needs the exact end of the
+  // decoded trailing structures rather than "everything to oldTotalBits": copying to
+  // oldTotalBits drags the OLD pad along too, which is the very misalignment this block
+  // comment warns about, and only went unnoticed because a set item's prop list usually
+  // keeps its length. So copy mainPropListEndBit..endBit (set lists + runeword list +
+  // trailing block, whichever exist) and then re-apply the pad ourselves.
   const hasSetBonuses = ext.quality === 5;
   const hasRuneword   = !!(ext.runeword || (item && item.runeword));
-  if (hasSetBonuses || hasRuneword) {
-    pushRange(ext.mainPropListEndBit, oldTotalBits);
+  // Re-padding from endBit is only safe when endBit really is where the item ends. The
+  // "+1 bit then byte align" rule leaves a 1-8 bit remainder, so a decode that accounts
+  // for the whole item lands in that window; anything else means there is still
+  // unmodelled data back there (or oldItemBytes runs to the section end rather than the
+  // next item), and truncating to endBit would throw it away.
+  const trailingEnd   = ext.endBit;
+  const trailingSlack = oldTotalBits - trailingEnd;
+  const trailingOk    = typeof trailingEnd === 'number'
+                     && trailingEnd >= ext.mainPropListEndBit
+                     && trailingSlack >= 1 && trailingSlack <= 8;
+  if (hasSetBonuses || hasRuneword || ext.hasTrailingBlock) {
+    if (trailingOk) {
+      pushRange(ext.mainPropListEndBit, trailingEnd);
+      allBits.push(0);
+      while (allBits.length & 7) allBits.push(0);
+    } else {
+      // endBit isn't trustworthy (decode drifted) — fall back to preserving everything,
+      // which is what this path did before the trailing block was understood.
+      pushRange(ext.mainPropListEndBit, oldTotalBits);
+    }
   } else {
     // Phase-10 trailing pad: +1 bit, then byte align. Mirrors encodeExtendedItem.
     allBits.push(0);
@@ -16000,8 +16233,11 @@ function parseSharedStash() {
     // stop at `count` items per section's JM header below — D2's per-section
     // count is authoritative, so anything found past that is dead-space junk.
     const candidates = [];
+    // Structural floor, same reasoning as the character scan in parseD2S.
+    let lastStashOff = -1, lastStashFloor = 0;
     for (let i = 0; i < endOff - itemStart - 4; i++) {
       const off = itemStart + i;
+      if (lastStashOff >= 0 && off - lastStashOff < lastStashFloor) continue;
       const b0 = buf[off], b2 = buf[off + 2], b4 = buf[off + 4];
       if ((b0 & 0xE0) === 0x00 && (b2 & 0x80) && (b4 & 0x05) === 0x05) {
         try {
@@ -16050,6 +16286,8 @@ function parseSharedStash() {
             isSharedStash: true,
             _propsDecoded: false,
           });
+          lastStashOff   = off;
+          lastStashFloor = Math.floor((bitAfterHuff + (simple ? 0 : 46)) / 8);
         } catch (e) {
           // Binary scan: most matching byte patterns are false positives, so huffman
           // decode / field reads throw constantly. Logging would flood the console.
