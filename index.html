@@ -95,6 +95,11 @@
   .progress-bar-inner { height: 100%; background: var(--d2-gold-dim); width: 0%; transition: width 0.15s ease; }
   .file-log { width: 400px; max-width: 90vw; max-height: 150px; overflow-y: auto; background: var(--d2-surface2); border: 1px solid var(--d2-border); border-radius: 2px; padding: 8px 12px; font-size: 12px; font-family: monospace; color: var(--d2-text-dim); display: flex; flex-direction: column; gap: 2px; }
   .log-ok   { color: var(--d2-green-bright); }
+
+  /* ── Installed-mod folder picker (loading + error views) ── */
+  .mod-folder-row { width: 400px; max-width: 90vw; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; }
+  .mod-folder-hint { flex-basis: 100%; font-size: 11px; line-height: 1.6; color: var(--d2-text-dim); text-align: center; }
+  .mod-folder-status { flex-basis: 100%; font-size: 11px; font-family: monospace; line-height: 1.5; color: var(--d2-green-bright); text-align: center; min-height: 1em; }
   .log-warn { color: #c8a030; }
   .log-err  { color: var(--d2-red-bright); }
 
@@ -969,6 +974,13 @@
     <div class="loading-sub" id="loadingSub">Connecting to repository...</div>
     <div class="progress-bar-outer"><div class="progress-bar-inner" id="progressBar"></div></div>
     <div class="file-log" id="fileLog"></div>
+    <div class="mod-folder-row">
+      <button class="btn" onclick="document.getElementById('modFolderInput').click()">Use my installed mod folder…</button>
+      <button class="btn" onclick="clearModFolder()">Use built-in data</button>
+      <input type="file" id="modFolderInput" webkitdirectory directory multiple hidden onchange="onModFolderPicked(this)">
+      <div class="mod-folder-hint">Reads the tables straight from your Reimagined install, so created items match the mod version you actually play. Nothing is uploaded.</div>
+      <div class="mod-folder-status" id="modFolderStatus"></div>
+    </div>
     <div class="ornament">— ✦ —</div>
   </div>
 
@@ -983,6 +995,9 @@
         Check your internet connection or repository access, then retry.
       </div><br>
       <button class="btn btn-warn" onclick="startBaseFileLoad()">Retry</button>
+      <button class="btn" onclick="document.getElementById('modFolderInput2').click()">Use my installed mod folder…</button>
+      <input type="file" id="modFolderInput2" webkitdirectory directory multiple hidden onchange="onModFolderPicked(this)">
+      <div class="mod-folder-status" id="modFolderStatus2"></div>
     </div>
   </div>
 
@@ -1004,6 +1019,13 @@
       </div>
     </div>
     <div id="recentFilesPanel" style="margin-top:12px;max-width:420px;display:none"></div>
+    <div class="mod-folder-row" style="margin-top:10px">
+      <button class="btn" onclick="document.getElementById('modFolderInput3').click()">Use my installed mod folder…</button>
+      <button class="btn" onclick="clearModFolder()">Use built-in data</button>
+      <input type="file" id="modFolderInput3" webkitdirectory directory multiple hidden onchange="onModFolderPicked(this)">
+      <div class="mod-folder-hint">Loads the tables from your own Reimagined install, so created items match the version you play. Needed when your game is older than the editor’s data — otherwise a new item can carry stats your game cannot read and it will refuse to load the character. Nothing is uploaded.</div>
+      <div class="mod-folder-status" id="modFolderStatus3"></div>
+    </div>
     <div class="ornament">— ✦ —</div>
     <button class="btn btn-primary" style="margin-top:8px;padding:10px 28px;font-size:12px" onclick="openNewCharModal()">Make a New Character</button>
   </div>
@@ -1228,8 +1250,31 @@
 // ═══════════════════════════════════════════════════════════
 //  CONSTANTS
 // ═══════════════════════════════════════════════════════════
-const BASE_URL  = 'https://raw.githubusercontent.com/D2R-Reimagined/d2r-reimagined-mod/next/data/global/excel/';
-const STRINGS_BASE = 'https://raw.githubusercontent.com/D2R-Reimagined/d2r-reimagined-mod/next/data/local/lng/strings/';
+// ── Mod data source: a RELEASE tag, never `next` ───────────────────────────
+// Item creation writes stat ids straight out of these tables, so data that is
+// ahead of the player's installed mod writes stats their game has no entry for —
+// the game then can't parse the item and refuses to load the character. That is
+// what broke characters given God's Word or Fortress of Morpheus: on `next` those
+// uniques pull in extra_stbounce and item_drop_only, which older games lack.
+//
+// `next` is doubly wrong to track. It is also mid-restructure (Nov 2026): it moved
+// the authored data to source/tables + source/strings as JSON records and dropped
+// data/global/excel entirely, and it carries an extra stat (teleport_nova) that
+// shifts item_drop_only from 442 to 443, so ids written from it match no release.
+// Releases still ship built TSV at the old paths, which is what we pin to.
+//
+// Bumping version = change MOD_REF, re-sync base/ from the same tag, and check the
+// id-resolved tables (uniqueitems, setitems, magicprefix/suffix, itemstatcost) for
+// inserted rows — an insert shifts every id after it and mis-names or corrupts
+// items written for an older save.
+const MOD_REF   = '3.1.1';   // latest release, 2026-10-30
+const MOD_ROOT  = 'https://raw.githubusercontent.com/D2R-Reimagined/d2r-reimagined-mod/' + MOD_REF + '/';
+// Releases serve built TSV; if a future release adopts `next`'s layout, point these
+// at source/tables + source/strings and set MOD_TABLE_EXT to '.json' — parseModTable
+// and _normalizeStringRecords already read both shapes.
+const MOD_TABLE_EXT = '.txt';
+const BASE_URL  = MOD_ROOT + 'data/global/excel/';
+const STRINGS_BASE = MOD_ROOT + 'data/local/lng/strings/';
 // Editor-specific static data that was formerly inlined into this HTML file —
 // now hosted as JSON alongside the base/ folder. Falls back to the bundled
 // local copies when GitHub is unreachable (same pattern as the mod txt data).
@@ -1246,6 +1291,18 @@ const STRING_FILES = [
   'levels.json',             // area/waypoint names (Rogue Encampment, Lut Gholein, etc.)
   'ui.json',                 // game UI strings
 ];
+
+// The mod repo's string files are now { schema: { locales }, records: [{ id, Key,
+// translations: { enUS, ... } }] } instead of a flat array of { id, Key, enUS, ... }.
+// Flatten the records back to the shape the loader and language switcher expect; a
+// file already in the old shape passes straight through, which is what base/ holds.
+function _normalizeStringRecords(parsed) {
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && Array.isArray(parsed.records)) {
+    return parsed.records.map(r => Object.assign({ id: r.id, Key: r.Key }, r.translations || {}));
+  }
+  return null;
+}
 
 // Flat map: string key -> cleaned localized string (populated at load time)
 let stringTable = {};
@@ -1495,6 +1552,36 @@ function nextFakeOffset() { return _nextFakeOffsetCounter--; }
 // ═══════════════════════════════════════════════════════════
 //  TSV PARSER
 // ═══════════════════════════════════════════════════════════
+// Accepts either the bundled TSV or the mod repo's authored JSON, and returns the
+// same { headers, rows } either way. The JSON form is
+//   { schema: { columns: [{ key, header }] }, records: [{ fields: { key: value } }] }
+// where a column missing from `fields` means empty, and schema.columns fixes the
+// column order that the TSV header row used to carry.
+function parseModTable(text) {
+  const t = text.replace(/^﻿/, '');
+  if (t.trimStart().startsWith('{')) {
+    const j = JSON.parse(t);
+    if (j && j.schema && Array.isArray(j.schema.columns) && Array.isArray(j.records)) {
+      const keys    = j.schema.columns.map(c => c.key);
+      const headers = j.schema.columns.map(c => c.header);
+      const rows = [];
+      for (const rec of j.records) {
+        const f = rec.fields || {};
+        const row = {};
+        headers.forEach((h, i) => {
+          const v = f[keys[i]];
+          row[h] = (v === undefined || v === null) ? '' : String(v).trim();
+        });
+        // Same skip parseTSV applies: D2 tables carry an 'Expansion' divider row.
+        if ((row[headers[0]] || '') === 'Expansion') continue;
+        rows.push(row);
+      }
+      return { headers, rows };
+    }
+  }
+  return parseTSV(t);
+}
+
 function parseTSV(text) {
   const lines = text.split(/\r?\n/);
   if (lines.length < 2) return { headers:[], rows:[] };
@@ -1525,10 +1612,13 @@ function fetchTimed(url, ms=12000) {
     .catch(err => { clearTimeout(timer); throw err; });
 }
 
+// A source may serve the file under a different name than base/ uses — the mod repo
+// publishes <name>.json where the bundled fallback has <name>.txt — so each source
+// carries an optional filename of its own.
 async function fetchFirstSource(file, sources) {
   let lastErr;
-  for (const [url, tag, ms] of sources) {
-    try { return { res: await fetchTimed(url + file, ms), tag }; }
+  for (const [url, tag, ms, name] of sources) {
+    try { return { res: await fetchTimed(url + (name || file), ms), tag }; }
     catch (err) { lastErr = err; }
   }
   throw lastErr;
@@ -1541,7 +1631,9 @@ let   usingFallback      = false;
 
 // Probe GitHub with a tight timeout; returns true if reachable
 async function probeGitHub() {
-  const probe = ALL_FILES[0];  // smallest/first file in the list
+  // Must use the name the MOD REPO serves, not base/'s .txt — probing a stale path
+  // makes every load claim GitHub is unreachable and fall back to bundled data.
+  const probe = ALL_FILES[0].replace(/[.]txt$/, MOD_TABLE_EXT);
   try {
     await fetchTimed(BASE_URL + probe, 5000);
     return true;
@@ -1575,6 +1667,90 @@ function confirmFallback() {
   });
 }
 
+// ── Load mod data from the player's own installed mod folder ────────────
+// Pinning to a release is only correct for players on that release. Anyone running
+// an older build gets data newer than their game, and item creation then writes
+// stat ids their game has no row for, which makes the character unloadable (see
+// MOD_REF above). The data that is always right is the data in their own install,
+// so let them point at it and skip ours entirely.
+//
+// It also removes the guesswork: with their tables loaded, SAVE_BITS *is* their
+// game's table, so _maxWritableStatId() is exact instead of inferred from the
+// save's encoding, and created items can never carry a stat the game lacks.
+//
+// Uses <input webkitdirectory> rather than showDirectoryPicker(): the editor is
+// commonly opened straight off disk as a file:// page, which is not a secure
+// context, so showDirectoryPicker() is unavailable there.
+let MOD_FOLDER_INDEX = null;   // basename -> [{ rel, file }]
+let MOD_FOLDER_LABEL = '';
+
+// Where the wanted files sit relative to whatever the user picked. They may hand us
+// the mod root, the .mpq folder, data/, excel/ itself, or the excel/base/ subfolder,
+// so match on path suffix rather than assuming a depth. Live excel/ is preferred
+// over excel/base/ because excel/ is what the game actually loads.
+const MOD_FOLDER_TABLE_DIRS  = ['data/global/excel/', 'global/excel/', 'excel/', 'base/'];
+const MOD_FOLDER_STRING_DIRS = ['data/local/lng/strings/', 'local/lng/strings/', 'lng/strings/', 'strings/'];
+
+function _buildModFolderIndex(fileList) {
+  const byName = new Map();
+  for (const f of fileList) {
+    // webkitRelativePath is always forward-slashed, per spec.
+    const rel  = (f.webkitRelativePath || f.name).toLowerCase();
+    const base = rel.slice(rel.lastIndexOf('/') + 1);
+    if (!byName.has(base)) byName.set(base, []);
+    byName.get(base).push({ rel, file: f });
+  }
+  return byName;
+}
+
+function _modFolderFind(index, name, dirs) {
+  const hits = index.get(name.toLowerCase());
+  if (!hits || !hits.length) return null;
+  for (const d of dirs) {
+    const hit = hits.find(h => h.rel.endsWith(d + name.toLowerCase()));
+    if (hit) return hit.file;
+  }
+  // One unambiguous match anywhere in the tree still beats data from a different
+  // mod version. Several matches with no recognised directory does not, because
+  // we cannot tell which copy the game actually loads.
+  return hits.length === 1 ? hits[0].file : null;
+}
+
+function _setModFolderStatus(msg) {
+  for (const id of ['modFolderStatus', 'modFolderStatus2', 'modFolderStatus3']) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = msg;
+  }
+}
+
+async function onModFolderPicked(input) {
+  const files = input && input.files ? Array.from(input.files) : [];
+  if (!files.length) return;
+  MOD_FOLDER_INDEX = _buildModFolderIndex(files);
+  MOD_FOLDER_LABEL = ((files[0].webkitRelativePath || '').split('/')[0]) || 'selected folder';
+  // Say what the folder can actually satisfy before committing to a reload, so a
+  // wrong folder reports that instead of silently loading nothing out of it.
+  const wanted = ALL_FILES.filter(f => !EDITOR_OWNED_FILES.has(f));
+  const haveTables  = wanted.filter(f => _modFolderFind(MOD_FOLDER_INDEX, f, MOD_FOLDER_TABLE_DIRS)).length;
+  const haveStrings = STRING_FILES.filter(f => _modFolderFind(MOD_FOLDER_INDEX, f, MOD_FOLDER_STRING_DIRS)).length;
+  input.value = '';
+  if (!haveTables) {
+    MOD_FOLDER_INDEX = null; MOD_FOLDER_LABEL = '';
+    _setModFolderStatus('No mod tables in that folder — pick the Reimagined mod folder itself, the one containing data/global/excel.');
+    return;
+  }
+  _setModFolderStatus('Using ' + MOD_FOLDER_LABEL + ' — ' + haveTables + '/' + wanted.length
+    + ' tables, ' + haveStrings + '/' + STRING_FILES.length + ' string files. Reloading…');
+  await startBaseFileLoad();
+}
+
+function clearModFolder() {
+  MOD_FOLDER_INDEX = null;
+  MOD_FOLDER_LABEL = '';
+  _setModFolderStatus('');
+  startBaseFileLoad();
+}
+
 async function startBaseFileLoad() {
   baseData = {}; baseReady = false; usingFallback = false;
   showOnly('loadingView');
@@ -1585,7 +1761,9 @@ async function startBaseFileLoad() {
   document.getElementById('openBtn').classList.add('disabled');
 
   // ── GitHub reachability probe ──
-  const ghReachable = await probeGitHub();
+  // A picked folder supplies the mod data, so GitHub is neither needed nor probed:
+  // an unreachable probe would otherwise divert this load into bundled mode.
+  const ghReachable = MOD_FOLDER_INDEX ? true : await probeGitHub();
   if (!ghReachable) {
     const useFallback = await confirmFallback();
     if (!useFallback) {
@@ -1612,14 +1790,22 @@ async function startBaseFileLoad() {
     // EDITOR_OWNED_FILES aren't part of the mod's data — asking the mod repo for
     // them just burns a round-trip on a guaranteed 404 and puts a red error in the
     // console on every load. Go straight to the editor repo, then local.
+    const modName = file.replace(/[.]txt$/, MOD_TABLE_EXT);
     const sources = usingFallback
       ? [[BASE_FALLBACK_URL, ' (local)', timeout]]
       : EDITOR_OWNED_FILES.has(file)
         ? [[EDITOR_DATA_URL, ' (editor repo)', 8000], [BASE_FALLBACK_URL, ' (local)', 8000]]
-        : [[srcBase, '', timeout], [EDITOR_DATA_URL, ' (editor repo)', 8000], [BASE_FALLBACK_URL, ' (local)', 8000]];
+        : [[srcBase, '', timeout, modName], [EDITOR_DATA_URL, ' (editor repo)', 8000], [BASE_FALLBACK_URL, ' (local)', 8000]];
     try {
-      const { res, tag } = await fetchFirstSource(file, sources);
-      baseData[file.replace('.txt','')] = parseTSV(await res.text());
+      // The folder is an override layer, not a replacement: whatever it does not
+      // carry still falls through to the network and then to bundled base/, so a
+      // partial folder degrades instead of failing outright.
+      const picked = (MOD_FOLDER_INDEX && !EDITOR_OWNED_FILES.has(file))
+        ? _modFolderFind(MOD_FOLDER_INDEX, file, MOD_FOLDER_TABLE_DIRS) : null;
+      let text, tag;
+      if (picked) { text = await picked.text(); tag = ' (your mod folder)'; }
+      else { const got = await fetchFirstSource(file, sources); text = await got.res.text(); tag = got.tag; }
+      baseData[file.replace('.txt','')] = parseModTable(text);
       addLog('ok', `✓ ${file}${tag}`);
       successCount++;
     } catch(err) {
@@ -1647,8 +1833,11 @@ async function startBaseFileLoad() {
   let strLoaded = 0;
   for (const file of STRING_FILES) {
     try {
-      const res = await fetchTimed(srcStr + file, timeout);
-      let text = await res.text();
+      const picked = MOD_FOLDER_INDEX
+        ? _modFolderFind(MOD_FOLDER_INDEX, file, MOD_FOLDER_STRING_DIRS) : null;
+      let text = picked ? await picked.text()
+                        : await (await fetchTimed(srcStr + file, timeout)).text();
+      const srcTag = picked ? ' (your mod folder)' : (usingFallback ? ' (local)' : '');
       if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
       let inString = false, escaped = false, clean = '';
       for (let ci = 0; ci < text.length; ci++) {
@@ -1666,7 +1855,7 @@ async function startBaseFileLoad() {
         clean += ch;
       }
       clean = clean.replace(/,\s*([}\]])/g, '$1');
-      const arr = JSON.parse(clean);
+      const arr = _normalizeStringRecords(JSON.parse(clean));
       if (Array.isArray(arr)) {
         let added = 0;
         for (const entry of arr) {
@@ -1688,7 +1877,7 @@ async function startBaseFileLoad() {
           }
         }
         strLoaded++;
-        addLog('ok', `✓ strings/${file}  (${added} keys)${usingFallback?' (local)':''}`);
+        addLog('ok', `✓ strings/${file}  (${added} keys)${srcTag}`);
       }
     } catch(err) {
       addLog('warn', `⚠ strings/${file} — ${err.name === 'AbortError' ? 'timeout' : err.message}`);
@@ -1731,8 +1920,13 @@ async function startBaseFileLoad() {
 
   showOnly('uploadView');
   renderRecentFiles();
+  _setModFolderStatus(MOD_FOLDER_INDEX
+    ? ('Using your mod folder: ' + MOD_FOLDER_LABEL)
+    : (usingFallback ? 'Using bundled data (offline)' : 'Using built-in data for mod ' + MOD_REF));
   const sk = warned.length > 0 ? Lfmt('ui_status_data_ready_note_skipped',' ({n} non-critical skipped)',{n:warned.length}) : '';
-  const src = usingFallback ? L('ui_status_data_ready_note_bundled','  ⚠ using bundled base files') : '';
+  const src = MOD_FOLDER_INDEX
+    ? Lfmt('ui_status_data_ready_note_folder','  ✓ using your mod folder ({name})', { name: MOD_FOLDER_LABEL })
+    : usingFallback ? L('ui_status_data_ready_note_bundled','  ⚠ using bundled base files') : '';
   setStatus(Lfmt('ui_status_data_ready','Reimagined data ready — {files} files + {strings} string tables loaded{suffix}',{files:successCount,strings:strLoaded,suffix:sk+src}), 'ready');
 }
 
@@ -2389,6 +2583,10 @@ function buildStatByNameMap() {
 // of hand-patching the arrays on each mod update.
 let STAT_SAVE_ADD_BY_ID = {};
 
+// Highest stat id in the itemstatcost.txt actually loaded. -1 until one is parsed,
+// in which case SAVE_BITS is still the built-in pre-load fallback.
+let STAT_TABLE_MAX_ID = -1;
+
 function _syncStatEncodingTables() {
   STAT_SAVE_ADD_BY_ID = {};
   let maxId = SAVE_BITS.length - 1;
@@ -2406,6 +2604,11 @@ function _syncStatEncodingTables() {
   }
   SAVE_BITS = bits;
   SAVE_PARAM_BITS = pbits;
+  // Deliberately from STAT_BY_NAME, not bits.length: bits carries forward entries
+  // from whatever table was loaded before, which may be a newer mod build.
+  let tableMax = -1;
+  for (const name in STAT_BY_NAME) tableMax = Math.max(tableMax, STAT_BY_NAME[name].id);
+  STAT_TABLE_MAX_ID = tableMax;
   console.log(`_syncStatEncodingTables: ${bits.length} stat slots, ${changed} differed from the built-in table`);
 }
 
@@ -2446,7 +2649,21 @@ const STAT_WIDTH_PROFILES = [
   // index (passive_dmg_pierce / hpregen_perlevel), which does not affect alignment.
   { name: 'reimagined-3.0.11',
     widths:  { 76: 6,  77: 6,  78: 7 },
-    saveAdd: { 76: 10, 77: 10 } },
+    saveAdd: { 76: 10, 77: 10 },
+    // 3.0.11's itemstatcost.txt has 437 rows, so 436 is the highest stat id that
+    // build can read. Writing above it is what breaks characters: 3.1.1 gave
+    // Fortress of Morpheus extra_stbounce (441) and God's Word droponly_weapons,
+    // so creating either on a 3.0.11 save wrote a 9-bit id the game has no entry
+    // for, and the game then refused to load the character at all.
+    maxStatId: 436,
+    // In range, yet still fatal: 3.1.x SWAPPED these two rows, so the same id means
+    // a different stat with a different width in each build. Writing 366 as
+    // passive_dmg_pierce (8 bits) hands a 3.0.11 game hpregen_perlevel (6 bits),
+    // and the 2-bit slip turns every later stat in the list into garbage - measured
+    // on Fortress of Morpheus, whose list stops terminating at exactly this stat.
+    // There is no safe rewrite: the profile only overrides widths, not which row an
+    // id names, so these simply cannot be written against a mismatched table.
+    unsafeStatIds: [366, 432] },
 ];
 let STAT_WIDTH_PROFILE = null;   // name of the adopted profile; null until decided
 
@@ -2483,6 +2700,39 @@ function _statProfileScore(buf, targets) {
     if (slack >= 1 && slack <= 8) ok++;
   }
   return ok;
+}
+
+// The highest stat id it is safe to WRITE. When a profile was adopted, the save
+// was made by that older build and its stat table is the binding limit — not the
+// table we loaded, which is newer and lists stats the game cannot parse. With no
+// profile the save matches the loaded table, so that table is the limit.
+function _maxWritableStatId() {
+  if (STAT_WIDTH_PROFILE) {
+    for (const p of STAT_WIDTH_PROFILES) {
+      if (p.name === STAT_WIDTH_PROFILE && typeof p.maxStatId === 'number') return p.maxStatId;
+    }
+  }
+  // The loaded table, not SAVE_BITS, which never shrinks between loads.
+  return STAT_TABLE_MAX_ID >= 0 ? STAT_TABLE_MAX_ID : SAVE_BITS.length - 1;
+}
+
+// Ids that are within range but mean something else in the save's own build.
+function _unsafeStatIds() {
+  if (STAT_WIDTH_PROFILE) {
+    for (const p of STAT_WIDTH_PROFILES) {
+      if (p.name === STAT_WIDTH_PROFILE) return p.unsafeStatIds || [];
+    }
+  }
+  return [];
+}
+
+// The single question every write path asks. Note this is only ever restrictive
+// when the loaded tables are NEWER than the save: load the player's own mod folder
+// and STAT_BY_NAME maps every stat to the id their game uses, so writes are correct
+// by construction and nothing needs blocking.
+function _statWritable(id) {
+  if ((id | 0) > _maxWritableStatId()) return false;
+  return _unsafeStatIds().indexOf(id | 0) < 0;
 }
 
 function _selectStatWidthProfile(buf, out) {
@@ -4860,13 +5110,13 @@ let SET_SPRITE_ASSETS    = {};
 let _uniqueNameById   = {};
 let _setNameByItemId  = {};
 // Source URL for the mod's HD item JSON files (sprite-path mappings).
-const REIMAGINED_HD_URL = 'https://raw.githubusercontent.com/D2R-Reimagined/d2r-reimagined-mod/next/data/hd/items/';
+const REIMAGINED_HD_URL = MOD_ROOT + 'data/hd/items/';
 // Sprite binaries: Reimagined migrated these off Git LFS — they're committed
 // as regular Git blobs now, served directly by raw.githubusercontent.com.
 // (Earlier the editor used media.githubusercontent.com/media/* to resolve LFS
 // pointers; with LFS removed that endpoint returns 404 for everything,
 // breaking custom-art rendering for items like Gem Bag and El'Druin.)
-const REIMAGINED_SPRITE_URL = 'https://raw.githubusercontent.com/D2R-Reimagined/d2r-reimagined-mod/next/data/hd/global/ui/items/';
+const REIMAGINED_SPRITE_URL = MOD_ROOT + 'data/hd/global/ui/items/';
 
 // Parse a Blizzard SpA1 sprite. See doc/SPRITES.md for the file layout.
 function parseSpA1(buf) {
@@ -6567,6 +6817,11 @@ function encodeExtendedItem(item) {
 
   // Helper: write a stat list (including follow stats) followed by the 511 terminator.
   // Shared between the main prop list and set-item partial bonus stat lists.
+  // Stats the player's game build has no row for. Dropping one makes the item
+  // weaker; writing one makes the character unloadable, so dropping wins — but
+  // say so rather than quietly handing back a different item than was asked for.
+  const maxWritable = _maxWritableStatId();
+  const droppedHighStats = [];
   const writeStatList = (statList) => {
     const statById = new Map();
     for (const s of statList) statById.set(s.id, s);
@@ -6575,6 +6830,11 @@ function encodeExtendedItem(item) {
       const writeKey = stat.id + '_' + (stat.param || 0);
       if (written.has(writeKey)) continue;
       if (stat.id < 0 || stat.id >= 511) continue;
+      if (!_statWritable(stat.id)) {
+        const nm = Object.keys(STAT_BY_NAME).find(k => STAT_BY_NAME[k].id === stat.id) || ('stat ' + stat.id);
+        if (!droppedHighStats.includes(nm)) droppedHighStats.push(nm);
+        continue;
+      }
       if (!stat.saveBits || stat.saveBits <= 0) continue;
       if (pos + 9 + stat.saveParamBits + stat.saveBits + 100 > buf.length * 8) break;
 
@@ -6659,6 +6919,14 @@ function encodeExtendedItem(item) {
       try { slotStats = buildStatListFromMods(slotMods, item.useMaxValues || false); } catch(e) { console.error('partial bonus buildStatList failed:', e); }
       writeStatList(slotStats);
     }
+  }
+
+  if (droppedHighStats.length) {
+    console.warn('item creation: dropped stats this mod build cannot read (max id '
+      + maxWritable + '): ' + droppedHighStats.join(', '));
+    showPopup(Lfmt('ui_item_stats_dropped',
+      'This item normally has {stats}, but the mod version this character was saved with does not have those stats. They were left off so the game can still load your character — update the mod to get the full item.',
+      { stats: droppedHighStats.join(', ') }));
   }
 
   // Trailing-bit pad: `(8 - endBit%8) || 8` after 511 terminator.
@@ -13102,6 +13370,23 @@ function _itemEditWriteBits(buf, byteOff, bitOff, value, width) {
 // fails consistency check, and rejects the join. Sort here so the encoded
 // list always matches what the game wrote when it rolled the item naturally.
 function _itemEditEncodePropList(mods) {
+  // Only stats being INTRODUCED are checked. A stat already on the item came out
+  // of this save's own bytes, so writing it back reproduces what the game itself
+  // wrote — measured: before this narrowing, the check rejected Chaostrip/amu@998,
+  // an item carrying stat 366 that round-tripped byte-identically. Blocking a stat
+  // the save demonstrably already stores protects nothing and breaks editing.
+  //
+  // Item creation has no such exemption, because there every stat is new; that is
+  // what stops God's Word and Fortress of Morpheus writing ids the game cannot read.
+  //
+  // An edit must not silently drop a stat the user can see in the dialog, so this
+  // refuses and explains rather than pruning.
+  const tooNew = mods.filter(m => m._isNew && !_statWritable(m.id));
+  if (tooNew.length) {
+    const names = tooNew.map(m => Object.keys(STAT_BY_NAME).find(k => STAT_BY_NAME[k].id === m.id) || ('stat ' + m.id));
+    throw new Error('this save was made with a different mod build, which cannot store ' + names.join(', ')
+      + ' — writing it would stop the game loading the character; remove it or update the mod');
+  }
   const bits = [];
   const pushBits = (val, n) => { for (let i = 0; i < n; i++) bits.push(((val >> i) & 1) ? 1 : 0); };
   // Stable-sort by stat ID; follow stats already sit at id+1/id+2 so they
